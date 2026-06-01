@@ -1,0 +1,47 @@
+import type { PageServerLoad, Actions } from './$types';
+import { providersRepository } from '$lib/server/repositories/providers';
+import { servicesRepository } from '$lib/server/repositories/services';
+import { fail, redirect } from '@sveltejs/kit';
+
+export const load: PageServerLoad = async () => {
+  const providers = providersRepository.getAll();
+  return {
+    providers
+  };
+};
+
+export const actions: Actions = {
+  createService: async ({ request }) => {
+    const formData = await request.formData();
+    const name = formData.get('name') as string;
+    const description = formData.get('description') as string;
+    const status = formData.get('status') as any;
+    const providerId = formData.get('providerId') as string;
+    const avgInputTokens = parseInt(formData.get('avgInputTokens') as string || '0', 10);
+    const avgOutputTokens = parseInt(formData.get('avgOutputTokens') as string || '0', 10);
+    const avgRequests = parseInt(formData.get('avgRequests') as string || '0', 10);
+    const fixedCostStr = formData.get('fixedCost') as string;
+    const fixedCost = fixedCostStr ? parseFloat(fixedCostStr) : null;
+
+    if (!name || !status) {
+      return fail(400, { error: 'Name and Status are required fields' });
+    }
+
+    try {
+      servicesRepository.create({
+        name,
+        description,
+        status,
+        provider_id: providerId || null,
+        avg_input_tokens: avgInputTokens,
+        avg_output_tokens: avgOutputTokens,
+        avg_requests_per_user_month: avgRequests,
+        fixed_cost_per_month: fixedCost
+      });
+    } catch (err: any) {
+      return fail(500, { error: err.message });
+    }
+
+    throw redirect(303, '/catalog/services');
+  }
+};
