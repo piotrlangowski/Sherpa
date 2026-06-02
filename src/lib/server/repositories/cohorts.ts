@@ -1,6 +1,7 @@
 import db from '../db';
 import type { CohortConfig } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { scenariosRepository } from './scenarios';
 
 export const cohortsRepository = {
   getAll(): CohortConfig[] {
@@ -126,6 +127,10 @@ export const cohortsRepository = {
       now,
       id
     );
+
+    // Invalidate cached results for scenarios using this cohort
+    const affectedScenarios = scenariosRepository.findScenarioIdsByCohortId(id);
+    scenariosRepository.invalidateResults(affectedScenarios);
   },
 
   delete(id: string): void {

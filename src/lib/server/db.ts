@@ -15,7 +15,9 @@ if (!fs.existsSync(dbDir)) {
 let db: Database.Database;
 
 try {
-  db = new Database(dbPath, { verbose: console.log });
+  db = new Database(dbPath, {
+    verbose: process.env.NODE_ENV === 'development' ? console.log : undefined
+  });
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   

@@ -1,6 +1,7 @@
 import db from '../db';
 import type { Provider } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { scenariosRepository } from './scenarios';
 
 export const providersRepository = {
   getAll(): Provider[] {
@@ -72,6 +73,10 @@ export const providersRepository = {
       SET name = ?, model_name = ?, input_price = ?, output_price = ?, is_predefined = ?, updated_at = ?
       WHERE id = ?
     `).run(name, model_name, input_price, output_price, is_predefined, now, id);
+
+    // Invalidate cached results for scenarios whose services use this provider
+    const affectedScenarios = scenariosRepository.findScenarioIdsByProviderId(id);
+    scenariosRepository.invalidateResults(affectedScenarios);
   },
 
   delete(id: string): void {

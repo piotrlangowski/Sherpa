@@ -268,6 +268,9 @@ export const scenariosRepository = {
           }
         }
       }
+
+      // Invalidate cached results – they are now stale
+      db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(id);
     })();
   },
 
@@ -325,5 +328,36 @@ export const scenariosRepository = {
       JSON.stringify(results.monthly_customers),
       now
     );
+  },
+
+  invalidateResults(scenarioIds: string[]): void {
+    if (scenarioIds.length === 0) return;
+    const placeholders = scenarioIds.map(() => '?').join(',');
+    db.prepare(`DELETE FROM scenario_results WHERE scenario_id IN (${placeholders})`).run(...scenarioIds);
+  },
+
+  findScenarioIdsByServiceId(serviceId: string): string[] {
+    return (db.prepare(`SELECT scenario_id FROM scenario_services WHERE service_id = ?`).all(serviceId) as any[])
+      .map(r => r.scenario_id);
+  },
+
+  findScenarioIdsByCohortId(cohortId: string): string[] {
+    return (db.prepare(`SELECT id FROM scenarios WHERE cohort_config_id = ?`).all(cohortId) as any[])
+      .map(r => r.id);
+  },
+
+  findScenarioIdsByCostItemId(costItemId: string): string[] {
+    return (db.prepare(`SELECT scenario_id FROM scenario_costs WHERE cost_item_id = ?`).all(costItemId) as any[])
+      .map(r => r.scenario_id);
+  },
+
+  findScenarioIdsByProviderId(providerId: string): string[] {
+    return (db.prepare(`
+      SELECT DISTINCT ss.scenario_id
+      FROM scenario_services ss
+      JOIN services s ON ss.service_id = s.id
+      WHERE s.provider_id = ?
+    `).all(providerId) as any[])
+      .map(r => r.scenario_id);
   }
 };

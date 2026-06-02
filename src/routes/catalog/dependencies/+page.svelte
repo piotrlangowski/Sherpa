@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { onMount } from 'svelte';
+  import { mode } from 'mode-watcher';
   import Button from '$lib/components/ui/button/button.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
@@ -90,13 +91,15 @@
       const option = {
         tooltip: {
           formatter: (params: any) => {
+            const isDark = mode.current === 'dark';
+            const tooltipTextColor = isDark ? 'text-slate-200' : 'text-slate-800';
             if (params.dataType === 'edge') {
-              return `<div class="px-2 py-1 text-xs text-slate-200">${params.data.name}</div>`;
+              return `<div class="px-2 py-1 text-xs ${tooltipTextColor}">${params.data.name}</div>`;
             }
-            return `<div class="px-2 py-1 text-xs text-slate-200">Service: ${params.name}</div>`;
+            return `<div class="px-2 py-1 text-xs ${tooltipTextColor}">Service: ${params.name}</div>`;
           },
-          backgroundColor: '#1e293b',
-          borderColor: '#475569',
+          backgroundColor: mode.current === 'dark' ? '#1e293b' : '#ffffff',
+          borderColor: mode.current === 'dark' ? '#475569' : '#e2e8f0',
           borderWidth: 1
         },
         series: [
@@ -140,8 +143,8 @@
   }
 
   $effect(() => {
-    // Re-render chart whenever graph nodes or links change
-    if (graphNodes.length >= 0 || graphLinks.length >= 0) {
+    // Re-render chart whenever graph nodes, links or theme mode changes
+    if (graphNodes.length >= 0 || graphLinks.length >= 0 || mode.current) {
       renderChart();
     }
   });

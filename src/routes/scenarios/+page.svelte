@@ -14,8 +14,48 @@
   import Calendar from '@lucide/svelte/icons/calendar';
   import Percent from '@lucide/svelte/icons/percent';
   import TrendingUp from '@lucide/svelte/icons/trending-up';
+  import Upload from '@lucide/svelte/icons/upload';
+
+  import * as Dialog from '$lib/components/ui/dialog/index.js';
 
   let { data } = $props();
+
+  let importDialogOpen = $state(false);
+  let importFile = $state<File | null>(null);
+  let isImporting = $state(false);
+  let importError = $state('');
+
+  async function handleImport() {
+    if (!importFile) return;
+    isImporting = true;
+    importError = '';
+
+    try {
+      const text = await importFile.text();
+      const jsonPayload = JSON.parse(text);
+
+      const res = await fetch('/api/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(jsonPayload)
+      });
+
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        throw new Error(resData.message || 'Import failed');
+      }
+
+      importDialogOpen = false;
+      // Redirect to the newly created scenario dashboard
+      window.location.href = `/scenarios/${resData.scenarioId}`;
+    } catch (err: any) {
+      importError = err.message || 'An error occurred during import.';
+    } finally {
+      isImporting = false;
+    }
+  }
 </script>
 
 <div class="space-y-6">
@@ -24,9 +64,14 @@
       <h2 class="text-2xl font-bold tracking-tight">Financial Projections & Scenarios</h2>
       <p class="text-muted-foreground text-sm">Create and evaluate different rollout scenarios to see simulated ROI.</p>
     </div>
-    <Button href="/scenarios/new">
-      <Plus class="h-4 w-4 mr-2" /> New Scenario
-    </Button>
+    <div class="flex items-center space-x-2">
+      <Button variant="outline" onclick={() => { importDialogOpen = true; importFile = null; importError = ''; }}>
+        <Upload class="h-4 w-4 mr-2" /> Import Scenario
+      </Button>
+      <Button href="/scenarios/new">
+        <Plus class="h-4 w-4 mr-2" /> New Scenario
+      </Button>
+    </div>
   </div>
 
   {#if data.scenarios.length === 0}
@@ -113,4 +158,49 @@
       {/each}
     </div>
   {/if}
+
+  <Dialog.Root bind:open={importDialogOpen}>
+    <Dialog.Content class="sm:max-w-[425px] bg-card border-border text-foreground">
+      <Dialog.Header>
+        <Dialog.Title>Import ROI Scenario</Dialog.Title>
+        <Dialog.Description>
+          Upload a JSON scenario configuration file to import it into your workspace.
+        </Dialog.Description>
+      </Dialog.Header>
+      <div class="grid gap-4 py-4">
+        <div class="flex flex-col gap-2">
+          <label for="import-file" class="text-sm font-medium">Select JSON File</label>
+          <input 
+            id="import-file" 
+            type="file" 
+            accept=".json"
+            class="flex h-10 w-full rounded-md border border-input bg-muted/20 px-3 py-2 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            onchange={(e) => {
+              const files = (e.target as HTMLInputElement).files;
+              if (files && files.length > 0) {
+                importFile = files[0];
+              }
+            }}
+          />
+        </div>
+        {#if importError}
+          <div class="text-sm text-destructive font-medium bg-destructive/10 border border-destructive/20 p-2.5 rounded-md">
+            {importError}
+          </div>
+        {/if}
+      </div>
+      <Dialog.Footer>
+        <Button variant="outline" onclick={() => importDialogOpen = false} disabled={isImporting}>
+          Cancel
+        </Button>
+        <Button onclick={handleImport} disabled={!importFile || isImporting}>
+          {#if isImporting}
+            Importing...
+          {:else}
+            Upload & Import
+          {/if}
+        </Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 </div>

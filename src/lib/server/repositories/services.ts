@@ -1,6 +1,7 @@
 import db from '../db';
 import type { Service, ServiceStatus, ServiceDependency, DependencyType } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { scenariosRepository } from './scenarios';
 
 export const servicesRepository = {
   getAll(): Service[] {
@@ -157,6 +158,10 @@ export const servicesRepository = {
       now,
       id
     );
+
+    // Invalidate cached results for scenarios using this service
+    const affectedScenarios = scenariosRepository.findScenarioIdsByServiceId(id);
+    scenariosRepository.invalidateResults(affectedScenarios);
   },
 
   delete(id: string): void {

@@ -21,8 +21,11 @@
   import Users2 from '@lucide/svelte/icons/users-2';
   import Wallet from '@lucide/svelte/icons/wallet';
   import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
+  import TrendingUp from '@lucide/svelte/icons/trending-up';
+  import ExportButton from '$lib/components/dashboard/ExportButton.svelte';
 
   import { appState } from '$lib/stores/app.svelte';
+  import { mode } from 'mode-watcher';
 
   let { data } = $props();
   const scenario = data.scenario;
@@ -44,38 +47,47 @@
   const chartOptions = $derived.by(() => {
     if (!timeline || timeline.length === 0) return {};
 
+    const isDark = mode.current === 'dark';
+    const textColor = isDark ? '#cbd5e1' : '#475569';
+    const axisColor = isDark ? '#94a3b8' : '#64748b';
+    const lineColor = isDark ? '#475569' : '#e2e8f0';
+    const splitLineColor = isDark ? 'rgba(71, 85, 105, 0.2)' : 'rgba(226, 232, 240, 0.6)';
+    const tooltipBg = isDark ? '#1e293b' : '#ffffff';
+    const tooltipBorder = isDark ? '#475569' : '#e2e8f0';
+    const tooltipText = isDark ? '#f8fafc' : '#0f172a';
+
     const monthsLabel = timeline.map((t: any) => `Month ${t.month}`);
 
     const cashflow = {
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
-        backgroundColor: '#1e293b',
-        borderColor: '#475569',
+        backgroundColor: tooltipBg,
+        borderColor: tooltipBorder,
         borderWidth: 1,
-        textStyle: { color: '#f8fafc' }
+        textStyle: { color: tooltipText }
       },
       legend: {
         data: ['MRR Revenue', 'OPEX Costs', 'CAPEX Costs', 'AI Token Costs', 'Net Cashflow'],
-        textStyle: { color: '#cbd5e1', fontSize: 11 },
+        textStyle: { color: textColor, fontSize: 11 },
         bottom: 0
       },
       grid: { left: '3%', right: '4%', top: '10%', bottom: '15%', containLabel: true },
       xAxis: {
         type: 'category',
         data: monthsLabel,
-        axisLabel: { color: '#94a3b8', fontSize: 10 },
-        axisLine: { lineStyle: { color: '#475569' } }
+        axisLabel: { color: axisColor, fontSize: 10 },
+        axisLine: { lineStyle: { color: lineColor } }
       },
       yAxis: {
         type: 'value',
         axisLabel: {
-          color: '#94a3b8',
+          color: axisColor,
           fontSize: 10,
           formatter: (value: number) => `$${formatNumber(value)}`
         },
-        axisLine: { lineStyle: { color: '#475569' } },
-        splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.2)' } }
+        axisLine: { lineStyle: { color: lineColor } },
+        splitLine: { lineStyle: { color: splitLineColor } }
       },
       series: [
         {
@@ -119,10 +131,10 @@
     const cumulative = {
       tooltip: {
         trigger: 'axis',
-        backgroundColor: '#1e293b',
-        borderColor: '#475569',
+        backgroundColor: tooltipBg,
+        borderColor: tooltipBorder,
         borderWidth: 1,
-        textStyle: { color: '#f8fafc' },
+        textStyle: { color: tooltipText },
         formatter: (params: any) => {
           const p = params[0];
           return `<div class="px-2 py-1 select-none text-xs">
@@ -135,18 +147,18 @@
       xAxis: {
         type: 'category',
         data: monthsLabel,
-        axisLabel: { color: '#94a3b8', fontSize: 10 },
-        axisLine: { lineStyle: { color: '#475569' } }
+        axisLabel: { color: axisColor, fontSize: 10 },
+        axisLine: { lineStyle: { color: lineColor } }
       },
       yAxis: {
         type: 'value',
         axisLabel: {
-          color: '#94a3b8',
+          color: axisColor,
           fontSize: 10,
           formatter: (value: number) => `$${formatNumber(value)}`
         },
-        axisLine: { lineStyle: { color: '#475569' } },
-        splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.2)' } }
+        axisLine: { lineStyle: { color: lineColor } },
+        splitLine: { lineStyle: { color: splitLineColor } }
       },
       series: [
         {
@@ -179,28 +191,28 @@
     const users = {
       tooltip: {
         trigger: 'axis',
-        backgroundColor: '#1e293b',
-        borderColor: '#475569',
+        backgroundColor: tooltipBg,
+        borderColor: tooltipBorder,
         borderWidth: 1,
-        textStyle: { color: '#f8fafc' }
+        textStyle: { color: tooltipText }
       },
       legend: {
         data: ['Active Customers', 'AI-Adopting Users'],
-        textStyle: { color: '#cbd5e1', fontSize: 11 },
+        textStyle: { color: textColor, fontSize: 11 },
         bottom: 0
       },
       grid: { left: '3%', right: '4%', top: '10%', bottom: '15%', containLabel: true },
       xAxis: {
         type: 'category',
         data: monthsLabel,
-        axisLabel: { color: '#94a3b8', fontSize: 10 },
-        axisLine: { lineStyle: { color: '#475569' } }
+        axisLabel: { color: axisColor, fontSize: 10 },
+        axisLine: { lineStyle: { color: lineColor } }
       },
       yAxis: {
         type: 'value',
-        axisLabel: { color: '#94a3b8', fontSize: 10 },
-        axisLine: { lineStyle: { color: '#475569' } },
-        splitLine: { lineStyle: { color: 'rgba(71, 85, 105, 0.2)' } }
+        axisLabel: { color: axisColor, fontSize: 10 },
+        axisLine: { lineStyle: { color: lineColor } },
+        splitLine: { lineStyle: { color: splitLineColor } }
       },
       series: [
         {
@@ -255,7 +267,7 @@
   }
 
   $effect(() => {
-    if (activeTab || timeline) {
+    if (activeTab || timeline || mode.current) {
       renderChart();
     }
   });
@@ -284,6 +296,10 @@
 
     <!-- Actions -->
     <div class="flex items-center space-x-2 shrink-0">
+      <ExportButton scenarioId={scenario.id} elementId="scenario-dashboard-container" filename="sherpa-scenario-{scenario.name.toLowerCase().replace(/\s+/g, '-')}" />
+      <Button href="/scenarios/{scenario.id}/sensitivity" variant="outline">
+        <TrendingUp class="h-4 w-4 mr-2" /> Run Sensitivity
+      </Button>
       <form method="POST" action="?/deleteScenario" use:enhance class="inline-block">
         <Button type="submit" variant="outline" class="text-destructive border-destructive/50 hover:bg-destructive hover:text-destructive-foreground">
           <Trash2 class="h-4 w-4 mr-2" /> Delete Scenario
@@ -303,7 +319,8 @@
       </CardContent>
     </Card>
   {:else}
-    <!-- KPI widgets grid -->
+    <div id="scenario-dashboard-container" class="space-y-6">
+      <!-- KPI widgets grid -->
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
       <!-- NPV -->
       <Card class="border-border bg-card/30 backdrop-blur-sm select-none p-4 flex flex-col justify-between shadow-sm">
@@ -501,6 +518,7 @@
           <p>Discounting is calculated on a monthly compounding basis. Projections assume linear rollout starting points matching the specified month offsets.</p>
         </CardFooter>
       </Card>
+    </div>
     </div>
   {/if}
 </div>

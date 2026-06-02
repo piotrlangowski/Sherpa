@@ -28,12 +28,11 @@
   });
 
   onMount(() => {
-    // Domyślnie włączamy ciemny motyw (dark mode), jak w wymaganiach
-    setMode('dark');
+    // Respect system preference or user setting, defaulting to light mode
   });
 </script>
 
-<ModeWatcher />
+<ModeWatcher defaultMode="light" />
 
 {#if appState.setupCompleted}
   <AppShell>

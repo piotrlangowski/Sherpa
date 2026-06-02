@@ -3,6 +3,10 @@
   import Breadcrumbs from './Breadcrumbs.svelte';
   import { appState } from '../../stores/app.svelte';
   import type { Snippet } from 'svelte';
+  import { mode, toggleMode } from 'mode-watcher';
+  import Sun from '@lucide/svelte/icons/sun';
+  import Moon from '@lucide/svelte/icons/moon';
+  import Button from '../ui/button/button.svelte';
   
   interface Props {
     children: Snippet;
@@ -35,6 +39,21 @@
         <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
           Local-First
         </span>
+
+        <!-- Theme Toggle Button -->
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          onclick={toggleMode} 
+          class="h-8 w-8 text-muted-foreground hover:text-foreground rounded-full transition-colors"
+          aria-label="Toggle theme"
+        >
+          {#if mode.current === 'dark'}
+            <Sun class="h-4.5 w-4.5 text-amber-400" />
+          {:else}
+            <Moon class="h-4.5 w-4.5 text-slate-700" />
+          {/if}
+        </Button>
       </div>
     </header>
 

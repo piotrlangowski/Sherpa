@@ -1,6 +1,7 @@
 import db from '../db';
 import type { CostItem, CostCategory, CostFrequency } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { scenariosRepository } from './scenarios';
 
 export const costsRepository = {
   getAll(): CostItem[] {
@@ -79,6 +80,10 @@ export const costsRepository = {
       SET name = ?, category = ?, subcategory = ?, amount = ?, frequency = ?, service_id = ?, updated_at = ?
       WHERE id = ?
     `).run(name, category, subcategory, amount, frequency, service_id || null, now, id);
+
+    // Invalidate cached results for scenarios using this cost item
+    const affectedScenarios = scenariosRepository.findScenarioIdsByCostItemId(id);
+    scenariosRepository.invalidateResults(affectedScenarios);
   },
 
   delete(id: string): void {

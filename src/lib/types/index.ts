@@ -140,7 +140,7 @@ export interface Scenario {
   
   // Relations
   cohort_config?: CohortConfig | null;
-  services?: Array<{ id: string; name: string; status: ServiceStatus; rollout_month: number }>;
+  services?: Array<Service & { rollout_month: number }>;
   packs?: Array<{ id: string; name: string; rollout_month: number }>;
   plans?: Array<{ id: string; name: string; rollout_month: number }>;
   costs?: CostItem[];
