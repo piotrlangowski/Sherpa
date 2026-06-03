@@ -5,7 +5,8 @@ export const SettingsSchema = z.object({
   currency: z.enum(['USD', 'EUR', 'PLN', 'GBP']),
   default_discount_rate: z.coerce.number().min(0).max(1),
   setup_completed: z.coerce.boolean(),
-  projection_horizon_months: z.coerce.number().int().min(12).max(120)
+  projection_horizon_months: z.coerce.number().int().min(12).max(120),
+  hubspot_access_token: z.string().optional()
 });
 
 export const ProviderSchema = z.object({
