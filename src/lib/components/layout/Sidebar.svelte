@@ -16,6 +16,7 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Compass from '@lucide/svelte/icons/compass';
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
+  import Database from '@lucide/svelte/icons/database';
 
   // Helper to determine if link is active
   function isActive(path: string, exact = false): boolean {
@@ -136,6 +137,20 @@
         Market
       </h3>
       <div class="mt-1 space-y-0.5">
+        <a
+          href="/market/client-base"
+          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
+            {isActive('/market/client-base')
+              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
+              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
+        >
+          <div class="flex items-center space-x-3">
+            <Database class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
+            <span>Client Base</span>
+          </div>
+          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
+        </a>
+
         <a
           href="/market/verticals"
           class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200

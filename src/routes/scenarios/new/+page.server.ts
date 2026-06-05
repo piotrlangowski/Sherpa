@@ -1,4 +1,6 @@
 import type { PageServerLoad, Actions } from './$types';
+import { clientBaseRepository } from '$lib/server/repositories/client-base';
+import { verticalsRepository } from '$lib/server/repositories/verticals';
 import { cohortsRepository } from '$lib/server/repositories/cohorts';
 import { servicesRepository } from '$lib/server/repositories/services';
 import { packsRepository } from '$lib/server/repositories/packs';
@@ -9,6 +11,8 @@ import { runAndSaveScenario } from '$lib/server/services/financial-engine';
 import { fail, redirect } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async () => {
+  const clientBase = clientBaseRepository.get();
+  const verticals = verticalsRepository.getAll();
   const cohorts = cohortsRepository.getAll();
   const services = servicesRepository.getAll();
   const packs = packsRepository.getAll();
@@ -16,6 +20,8 @@ export const load: PageServerLoad = async () => {
   const costs = costsRepository.getAll();
 
   return {
+    clientBase,
+    verticals,
     cohorts,
     services,
     packs,
@@ -31,7 +37,26 @@ export const actions: Actions = {
     const description = formData.get('description') as string;
     const projectionMonths = parseInt(formData.get('projectionMonths') as string || '36', 10);
     const discountRate = parseFloat(formData.get('discountRate') as string || '10') / 100;
-    const cohortConfigId = formData.get('cohortConfigId') as string;
+    const scopeType = formData.get('scopeType') as 'all_clients' | 'verticals' | 'cohorts';
+    
+    let verticalIds: string[] = [];
+    if (scopeType === 'verticals') {
+      verticalIds = formData.getAll('verticalIds') as string[];
+    }
+    
+    let cohortConfigIds: string[] = [];
+    if (scopeType === 'cohorts') {
+      cohortConfigIds = formData.getAll('cohortConfigIds') as string[];
+    }
+
+    const scopeOverridesJSON = formData.get('scopeOverridesJSON') as string;
+    let scopeOverrides = [];
+    if (scopeOverridesJSON) {
+      try {
+        scopeOverrides = JSON.parse(scopeOverridesJSON);
+      } catch (e) {}
+    }
+
     const costIds = formData.getAll('costIds') as string[];
 
     // Parse rollout schedules for Services
@@ -59,8 +84,8 @@ export const actions: Actions = {
       return fail(400, { error: 'Scenario name is required' });
     }
 
-    if (!cohortConfigId) {
-      return fail(400, { error: 'Customer cohort configuration is required' });
+    if (!scopeType) {
+      return fail(400, { error: 'Scope type is required' });
     }
 
     let scenarioId = '';
@@ -71,7 +96,10 @@ export const actions: Actions = {
         description: description || '',
         projection_months: projectionMonths,
         discount_rate: discountRate,
-        cohort_config_id: cohortConfigId,
+        scope_type: scopeType,
+        vertical_ids: verticalIds,
+        cohort_config_ids: cohortConfigIds,
+        scope_overrides: scopeOverrides,
         services,
         packs,
         plans,

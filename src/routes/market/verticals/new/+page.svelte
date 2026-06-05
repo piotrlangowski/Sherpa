@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
@@ -25,8 +26,18 @@
 
   // Validate SAM/SOM logic client-side
   $effect(() => {
-    if (sam > tam) sam = tam;
-    if (som > sam) som = sam;
+    // Read all three as tracked dependencies so the effect re-runs on any change
+    const _tam = tam;
+    const _sam = sam;
+    const _som = som;
+
+    // Wrap writes in untrack() to prevent the write from re-triggering this effect
+    untrack(() => {
+      const clampedSam = _sam > _tam ? _tam : _sam;
+      const clampedSom = _som > clampedSam ? clampedSam : _som;
+      if (clampedSam !== _sam) sam = clampedSam;
+      if (clampedSom !== _som) som = clampedSom;
+    });
   });
 </script>
 

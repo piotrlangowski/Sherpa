@@ -13,19 +13,57 @@
   import Alert from '$lib/components/ui/alert/alert.svelte';
   import AlertTitle from '$lib/components/ui/alert/alert-title.svelte';
   import AlertDescription from '$lib/components/ui/alert/alert-description.svelte';
+  import Input from '$lib/components/ui/input/input.svelte';
   
   // Lucide Icons
   import GitFork from '@lucide/svelte/icons/git-fork';
   import Plus from '@lucide/svelte/icons/plus';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Info from '@lucide/svelte/icons/info';
+  import Search from '@lucide/svelte/icons/search';
 
   let { data, form } = $props();
 
+  // State controls for list
+  let searchQuery = $state('');
+  let sortBy = $state('source_asc');
+  let typeFilter = $state('all');
+
+  let filteredDependencies = $derived(
+    data.dependencies
+      .filter((dep: any) => {
+        const matchesSearch = 
+          dep.source_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          dep.target_name.toLowerCase().includes(searchQuery.toLowerCase());
+          
+        const matchesType = typeFilter === 'all' || dep.dependency_type === typeFilter;
+        return matchesSearch && matchesType;
+      })
+      .sort((a: any, b: any) => {
+        if (sortBy === 'source_asc') return a.source_name.localeCompare(b.source_name);
+        if (sortBy === 'source_desc') return b.source_name.localeCompare(a.source_name);
+        if (sortBy === 'target_asc') return a.target_name.localeCompare(b.target_name);
+        if (sortBy === 'target_desc') return b.target_name.localeCompare(a.target_name);
+        return 0;
+      })
+  );
+
   let chartElement: HTMLDivElement | undefined = $state();
   let chartInstance: any = null;
+  let resizeListener: (() => void) | null = null;
   let showAddDialog = $state(false);
   let isSaving = $state(false);
+
+  function cleanupChart() {
+    if (chartInstance) {
+      chartInstance.dispose();
+      chartInstance = null;
+    }
+    if (resizeListener) {
+      window.removeEventListener('resize', resizeListener);
+      resizeListener = null;
+    }
+  }
 
   // Form State
   let sourceId = $state('');
@@ -82,9 +120,9 @@
     if (!chartElement || typeof window === 'undefined') return;
 
     import('echarts').then((echarts) => {
-      if (chartInstance) {
-        chartInstance.dispose();
-      }
+      cleanupChart();
+      
+      if (!chartElement) return;
 
       chartInstance = echarts.init(chartElement);
       
@@ -131,14 +169,10 @@
       chartInstance.setOption(option);
 
       // Handle window resize
-      const handleResize = () => {
+      resizeListener = () => {
         chartInstance?.resize();
       };
-      window.addEventListener('resize', handleResize);
-      
-      return () => {
-        window.removeEventListener('resize', handleResize);
-      };
+      window.addEventListener('resize', resizeListener);
     });
   }
 
@@ -152,7 +186,7 @@
   onMount(() => {
     renderChart();
     return () => {
-      chartInstance?.dispose();
+      cleanupChart();
     };
   });
 </script>
@@ -211,35 +245,78 @@
         <CardDescription>A tabular breakdown of active graph edges.</CardDescription>
       </CardHeader>
       
-      <CardContent class="py-4 overflow-y-auto max-h-[350px] space-y-3">
-        {#if data.dependencies.length === 0}
-          <div class="text-center py-10 text-muted-foreground/60 text-sm italic select-none">
-            No dependency links configured.
-          </div>
-        {:else}
-          <div class="divide-y divide-border space-y-2.5">
-            {#each data.dependencies as dep}
-              <div class="flex items-center justify-between text-sm pt-2 select-none">
-                <div class="space-y-0.5 max-w-[200px]">
-                  <span class="font-semibold text-foreground block truncate">{dep.source_name}</span>
-                  <span class="text-[10px] text-muted-foreground flex items-center space-x-1">
-                    <span class="inline-block px-1.5 py-0.5 rounded bg-muted font-bold text-[9px] uppercase tracking-wider">
-                      {dep.dependency_type}
-                    </span>
-                    <span>→ {dep.target_name}</span>
-                  </span>
-                </div>
-                
-                <form method="POST" action="?/deleteDependency" use:enhance>
-                  <input type="hidden" name="id" value={dep.id} />
-                  <Button type="submit" variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-destructive">
-                    <Trash2 class="h-4 w-4" />
-                  </Button>
-                </form>
-              </div>
-            {/each}
+      <CardContent class="py-4 space-y-3">
+        {#if data.dependencies.length > 0}
+          <div class="space-y-2 pb-3 border-b border-border/60">
+            <!-- Search -->
+            <div class="relative">
+              <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Find links..."
+                class="pl-8 h-8 text-xs bg-background/50 border-border"
+                bind:value={searchQuery}
+              />
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <!-- Sort -->
+              <select
+                bind:value={sortBy}
+                class="w-full bg-background/50 border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="source_asc">Source (A-Z)</option>
+                <option value="source_desc">Source (Z-A)</option>
+                <option value="target_asc">Target (A-Z)</option>
+                <option value="target_desc">Target (Z-A)</option>
+              </select>
+              <!-- Type Filter -->
+              <select
+                bind:value={typeFilter}
+                class="w-full bg-background/50 border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="all">All Types</option>
+                <option value="requires">Requires</option>
+                <option value="enhanced_by">Enhanced By</option>
+                <option value="replaces">Replaces</option>
+              </select>
+            </div>
           </div>
         {/if}
+
+        <div class="overflow-y-auto max-h-[250px] space-y-3">
+          {#if data.dependencies.length === 0}
+            <div class="text-center py-10 text-muted-foreground/60 text-sm italic select-none">
+              No dependency links configured.
+            </div>
+          {:else if filteredDependencies.length === 0}
+            <div class="text-center py-10 text-muted-foreground/60 text-sm italic select-none">
+              No matching links found.
+            </div>
+          {:else}
+            <div class="divide-y divide-border space-y-2.5">
+              {#each filteredDependencies as dep}
+                <div class="flex items-center justify-between text-sm pt-2 select-none">
+                  <div class="space-y-0.5 max-w-[200px]">
+                    <span class="font-semibold text-foreground block truncate">{dep.source_name}</span>
+                    <span class="text-[10px] text-muted-foreground flex items-center space-x-1">
+                      <span class="inline-block px-1.5 py-0.5 rounded bg-muted font-bold text-[9px] uppercase tracking-wider">
+                        {dep.dependency_type}
+                      </span>
+                      <span>→ {dep.target_name}</span>
+                    </span>
+                  </div>
+                  
+                  <form method="POST" action="?/deleteDependency" use:enhance>
+                    <input type="hidden" name="id" value={dep.id} />
+                    <Button type="submit" variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-destructive">
+                      <Trash2 class="h-4 w-4" />
+                    </Button>
+                  </form>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </CardContent>
       
       <!-- Graph help note -->

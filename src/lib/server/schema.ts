@@ -163,7 +163,29 @@ export function runMigrations(db: Database): void {
       )
     `).run();
 
-    // 10. Scenarios
+    // 10. Client Base (singleton — the company's entire customer base)
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS client_base (
+        id                          TEXT PRIMARY KEY DEFAULT 'singleton',
+        total_users                 INTEGER DEFAULT 0,
+        default_arpu                REAL DEFAULT 100,
+        default_monthly_churn_rate  REAL DEFAULT 0.05,
+        default_monthly_acquisition INTEGER DEFAULT 0,
+        default_acquisition_growth_rate REAL DEFAULT 0,
+        default_ai_adoption_rate    REAL DEFAULT 0.30,
+        default_retention_floor     REAL DEFAULT 0.60,
+        default_expansion_rate      REAL DEFAULT 0.02,
+        updated_at                  TEXT NOT NULL
+      )
+    `).run();
+
+    // Ensure singleton row exists
+    db.prepare(`
+      INSERT OR IGNORE INTO client_base (id, updated_at)
+      VALUES ('singleton', datetime('now'))
+    `).run();
+
+    // 11. Scenarios
     db.prepare(`
       CREATE TABLE IF NOT EXISTS scenarios (
         id                     TEXT PRIMARY KEY,
@@ -171,10 +193,51 @@ export function runMigrations(db: Database): void {
         description            TEXT,
         projection_months      INTEGER DEFAULT 36,
         discount_rate          REAL DEFAULT 0.10,
-        cohort_config_id       TEXT REFERENCES cohort_configs(id) ON DELETE SET NULL,
+        scope_type             TEXT NOT NULL DEFAULT 'cohorts',
         created_at             TEXT NOT NULL,
         updated_at             TEXT NOT NULL
       )
+    `).run();
+
+    // 11a. Scenario — Verticals (M:N) — used when scope_type='verticals'
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS scenario_verticals (
+        scenario_id TEXT REFERENCES scenarios(id) ON DELETE CASCADE,
+        vertical_id TEXT REFERENCES verticals(id) ON DELETE CASCADE,
+        PRIMARY KEY (scenario_id, vertical_id)
+      )
+    `).run();
+
+    // 11b. Scenario — Cohorts (M:N) — used when scope_type='cohorts'
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS scenario_cohorts (
+        scenario_id      TEXT REFERENCES scenarios(id) ON DELETE CASCADE,
+        cohort_config_id TEXT REFERENCES cohort_configs(id) ON DELETE CASCADE,
+        PRIMARY KEY (scenario_id, cohort_config_id)
+      )
+    `).run();
+
+    // 11c. Scenario Scope Overrides — behavioral parameter overrides per scope level
+    // Inheritance cascade: cohort override → vertical override → base override → catalog defaults
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS scenario_scope_overrides (
+        id                      TEXT PRIMARY KEY,
+        scenario_id             TEXT NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
+        target_type             TEXT NOT NULL,
+        target_id               TEXT,
+        monthly_churn_rate      REAL,
+        monthly_acquisition     INTEGER,
+        acquisition_growth_rate REAL,
+        ai_adoption_rate        REAL,
+        retention_floor         REAL,
+        expansion_rate          REAL,
+        arpu_override           REAL
+      )
+    `).run();
+
+    db.prepare(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_scenario_scope_overrides_unique 
+      ON scenario_scope_overrides(scenario_id, target_type, COALESCE(target_id, ''))
     `).run();
 
     db.prepare(`
@@ -212,7 +275,7 @@ export function runMigrations(db: Database): void {
       )
     `).run();
 
-    // 11. Scenario Results
+    // 12. Scenario Results
     db.prepare(`
       CREATE TABLE IF NOT EXISTS scenario_results (
         id              TEXT PRIMARY KEY,
@@ -229,4 +292,61 @@ export function runMigrations(db: Database): void {
       )
     `).run();
   })();
+
+  // --- Data migrations (run outside main transaction to be idempotent) ---
+  runDataMigrations(db);
+}
+
+/**
+ * Idempotent data migrations.
+ * Handles upgrading an existing DB from the old single-cohort model
+ * to the new multi-cohort scope model.
+ */
+function runDataMigrations(db: Database): void {
+  // Migration 1: Add scope_type column to scenarios if it doesn't exist
+  // (for databases created before this schema version)
+  const scenarioColumns = (db.prepare("PRAGMA table_info(scenarios)").all() as any[])
+    .map(c => c.name);
+
+  if (!scenarioColumns.includes('scope_type')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'cohorts'").run();
+  }
+
+  // Migration 2: Migrate old cohort_config_id → scenario_cohorts junction
+  if (scenarioColumns.includes('cohort_config_id')) {
+    const oldScenarios = db.prepare(`
+      SELECT id, cohort_config_id FROM scenarios
+      WHERE cohort_config_id IS NOT NULL
+    `).all() as any[];
+
+    if (oldScenarios.length > 0) {
+      const insertJunction = db.prepare(`
+        INSERT OR IGNORE INTO scenario_cohorts (scenario_id, cohort_config_id)
+        VALUES (?, ?)
+      `);
+
+      const insertOverride = db.prepare(`
+        INSERT OR IGNORE INTO scenario_scope_overrides
+          (id, scenario_id, target_type, target_id,
+           monthly_churn_rate, monthly_acquisition, acquisition_growth_rate,
+           ai_adoption_rate, retention_floor, expansion_rate, arpu_override)
+        SELECT
+          lower(hex(randomblob(16))),
+          ?, 'cohort', ?,
+          c.monthly_churn_rate, c.monthly_acquisition, c.acquisition_growth_rate,
+          c.ai_adoption_rate, c.retention_floor, c.monthly_expansion_rate, c.base_arpu
+        FROM cohort_configs c WHERE c.id = ?
+      `);
+
+      db.transaction(() => {
+        for (const s of oldScenarios) {
+          insertJunction.run(s.id, s.cohort_config_id);
+          insertOverride.run(s.id, s.cohort_config_id, s.cohort_config_id);
+        }
+      })();
+    }
+
+    // Note: We cannot DROP COLUMN in SQLite < 3.35, so we leave cohort_config_id in place
+    // and simply stop writing to it. New scenarios will use scenario_cohorts instead.
+  }
 }

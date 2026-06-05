@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { mode } from 'mode-watcher';
   import { formatCurrency, formatPercent, formatNumber, formatMonths } from '$lib/utils/format';
   import Button from '$lib/components/ui/button/button.svelte';
@@ -31,6 +31,18 @@
 
   let chartElement: HTMLDivElement | undefined = $state();
   let chartInstance: any = null;
+  let resizeListener: (() => void) | null = null;
+
+  function cleanupChart() {
+    if (chartInstance) {
+      chartInstance.dispose();
+      chartInstance = null;
+    }
+    if (resizeListener) {
+      window.removeEventListener('resize', resizeListener);
+      resizeListener = null;
+    }
+  }
 
   // Compute ECharts option for Tornado Chart
   const chartOption = $derived.by(() => {
@@ -156,21 +168,20 @@
   function renderChart() {
     if (!chartElement || typeof window === 'undefined' || !sensitivityData) return;
 
-    import('echarts').then((echarts) => {
-      if (chartInstance) {
-        chartInstance.dispose();
-      }
+    tick().then(() => {
+      import('echarts').then((echarts) => {
+        cleanupChart();
 
-      chartInstance = echarts.init(chartElement);
-      chartInstance.setOption(chartOption);
+        if (!chartElement) return;
 
-      const handleResize = () => {
-        chartInstance?.resize();
-      };
-      window.addEventListener('resize', handleResize);
-      return () => {
-        window.removeEventListener('resize', handleResize);
-      };
+        chartInstance = echarts.init(chartElement);
+        chartInstance.setOption(chartOption);
+
+        resizeListener = () => {
+          chartInstance?.resize();
+        };
+        window.addEventListener('resize', resizeListener);
+      });
     });
   }
 
@@ -183,7 +194,7 @@
   onMount(() => {
     renderChart();
     return () => {
-      chartInstance?.dispose();
+      cleanupChart();
     };
   });
 </script>

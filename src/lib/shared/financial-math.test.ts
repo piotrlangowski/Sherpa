@@ -208,7 +208,8 @@ describe('Financial Math Module Tests', () => {
       name: 'Test Scenario',
       projection_months: 12,
       discount_rate: 0.10,
-      cohort_config: cohort,
+      scope_type: 'cohorts',
+      scope_cohorts: [cohort],
       services: [serviceWithProvider, serviceWithoutProviderId, serviceWithUnknownProvider],
       costs: [costCapex, costOpexMonthly, costOpexYearly]
     };
@@ -225,7 +226,7 @@ describe('Financial Math Module Tests', () => {
     });
 
     it('should throw error if scenario lacks cohort config', () => {
-      const invalidScenario = { ...scenario, cohort_config: null };
+      const invalidScenario = { ...scenario, scope_cohorts: [] as any };
       expect(() => calculateScenario(invalidScenario, [provider])).toThrow();
     });
   });
@@ -279,7 +280,8 @@ describe('Financial Math Module Tests', () => {
       name: 'Test Scenario',
       projection_months: 12,
       discount_rate: 0.10,
-      cohort_config: cohort,
+      scope_type: 'cohorts',
+      scope_cohorts: [cohort],
       services: [service],
       costs: [costCapex]
     };
@@ -298,7 +300,7 @@ describe('Financial Math Module Tests', () => {
     });
 
     it('should handle empty cohort config', () => {
-      const invalidScenario = { ...scenario, cohort_config: null };
+      const invalidScenario = { ...scenario, scope_cohorts: [] as any };
       const results = runSensitivityAnalysis(invalidScenario, [provider]);
       expect(results.results.length).toBe(0);
     });

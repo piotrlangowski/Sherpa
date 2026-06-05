@@ -24,4 +24,5 @@ vite.config.ts.timestamp-*
 
 # Claude Code
 everything-claude-code/
-
+.agent/
+.claude/

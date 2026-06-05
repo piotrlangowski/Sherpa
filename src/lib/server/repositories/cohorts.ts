@@ -63,6 +63,38 @@ export const cohortsRepository = {
     };
   },
 
+  getByVerticalIds(verticalIds: string[]): CohortConfig[] {
+    if (verticalIds.length === 0) return [];
+    const placeholders = verticalIds.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition, 
+             c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu, c.created_at, c.updated_at,
+             v.name as vertical_name
+      FROM cohort_configs c
+      LEFT JOIN verticals v ON c.vertical_id = v.id
+      WHERE c.vertical_id IN (${placeholders})
+      ORDER BY c.name ASC
+    `).all(...verticalIds) as any[];
+    
+    return rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      vertical_id: r.vertical_id,
+      current_users: r.current_users,
+      monthly_acquisition: r.monthly_acquisition,
+      acquisition_growth_rate: r.acquisition_growth_rate,
+      monthly_churn_rate: r.monthly_churn_rate,
+      retention_floor: r.retention_floor,
+      monthly_expansion_rate: r.monthly_expansion_rate,
+      ai_adoption_rate: r.ai_adoption_rate,
+      base_arpu: r.base_arpu,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      vertical_name: r.vertical_name || undefined
+    }));
+  },
+
   create(data: Omit<CohortConfig, 'id' | 'created_at' | 'updated_at'>): CohortConfig {
     const id = uuidv4();
     const now = new Date().toISOString();
@@ -135,7 +167,8 @@ export const cohortsRepository = {
 
   delete(id: string): void {
     db.transaction(() => {
-      db.prepare("UPDATE scenarios SET cohort_config_id = NULL WHERE cohort_config_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_cohorts WHERE cohort_config_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_scope_overrides WHERE target_type = 'cohort' AND target_id = ?").run(id);
       db.prepare("DELETE FROM cohort_configs WHERE id = ?").run(id);
     })();
   }

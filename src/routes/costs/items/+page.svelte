@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { untrack } from 'svelte';
   import { formatCurrency } from '$lib/utils/format';
   import { COST_SUBCATEGORIES } from '$lib/utils/constants';
   import Button from '$lib/components/ui/button/button.svelte';
@@ -45,13 +46,20 @@
 
   // Auto-adjust default frequency and subcategory when category changes
   $effect(() => {
-    if (category === 'capex') {
-      frequency = 'one_time';
-      subcategory = 'development';
-    } else {
-      frequency = 'monthly';
-      subcategory = 'personnel';
-    }
+    // Only track `category` as a dependency — the trigger
+    const _category = category;
+
+    // Wrap writes to frequency and subcategory in untrack() so they don't
+    // re-trigger this effect (frequency and subcategory are $state too)
+    untrack(() => {
+      if (_category === 'capex') {
+        frequency = 'one_time';
+        subcategory = 'development';
+      } else {
+        frequency = 'monthly';
+        subcategory = 'personnel';
+      }
+    });
   });
 
   // Derived Totals

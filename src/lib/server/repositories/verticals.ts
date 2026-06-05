@@ -143,6 +143,8 @@ export const verticalsRepository = {
       db.prepare("DELETE FROM vertical_plans WHERE vertical_id = ?").run(id);
       db.prepare("DELETE FROM vertical_packs WHERE vertical_id = ?").run(id);
       db.prepare("UPDATE cohort_configs SET vertical_id = NULL WHERE vertical_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_verticals WHERE vertical_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_scope_overrides WHERE target_type = 'vertical' AND target_id = ?").run(id);
       db.prepare("DELETE FROM verticals WHERE id = ?").run(id);
     })();
   }

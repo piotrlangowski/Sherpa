@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { onMount } from 'svelte';
   import { formatNumber, formatCurrency, formatPercent } from '$lib/utils/format';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
@@ -11,6 +12,14 @@
   import CardContent from '$lib/components/ui/card/card-content.svelte';
   import CardFooter from '$lib/components/ui/card/card-footer.svelte';
 
+  // Table components
+  import Table from '$lib/components/ui/table/table.svelte';
+  import TableBody from '$lib/components/ui/table/table-body.svelte';
+  import TableCell from '$lib/components/ui/table/table-cell.svelte';
+  import TableHead from '$lib/components/ui/table/table-head.svelte';
+  import TableHeader from '$lib/components/ui/table/table-header.svelte';
+  import TableRow from '$lib/components/ui/table/table-row.svelte';
+
   // Lucide Icons
   import Plus from '@lucide/svelte/icons/plus';
   import Edit2 from '@lucide/svelte/icons/edit-2';
@@ -18,6 +27,9 @@
   import Users2 from '@lucide/svelte/icons/users-2';
   import BarChart4 from '@lucide/svelte/icons/bar-chart-4';
   import Info from '@lucide/svelte/icons/info';
+  import LayoutGrid from '@lucide/svelte/icons/layout-grid';
+  import List from '@lucide/svelte/icons/list';
+  import Search from '@lucide/svelte/icons/search';
 
   let { data } = $props();
 
@@ -69,6 +81,54 @@
     baseArpu = cohort.base_arpu;
     showDialog = true;
   };
+
+  // State controls for collection
+  let viewMode = $state<'card' | 'list'>('list');
+  let searchQuery = $state('');
+  let sortBy = $state('name_asc');
+  let verticalFilter = $state('all');
+
+  onMount(() => {
+    const saved = localStorage.getItem('sherpa_view_mode_cohorts');
+    if (saved === 'card' || saved === 'list') {
+      viewMode = saved;
+    }
+  });
+
+  function setViewMode(mode: 'card' | 'list') {
+    viewMode = mode;
+    localStorage.setItem('sherpa_view_mode_cohorts', mode);
+  }
+
+  // Derived filtered array
+  let filteredCohorts = $derived(
+    data.cohorts
+      .filter((cohort: any) => {
+        const matchesSearch = 
+          cohort.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (cohort.vertical_name && cohort.vertical_name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+        const matchesVertical = 
+          verticalFilter === 'all' ||
+          (verticalFilter === 'global' && !cohort.vertical_id) ||
+          (cohort.vertical_id === verticalFilter);
+
+        return matchesSearch && matchesVertical;
+      })
+      .sort((a: any, b: any) => {
+        if (sortBy === 'name_asc') return a.name.localeCompare(b.name);
+        if (sortBy === 'name_desc') return b.name.localeCompare(a.name);
+        if (sortBy === 'users_desc') return b.current_users - a.current_users;
+        if (sortBy === 'users_asc') return a.current_users - b.current_users;
+        if (sortBy === 'acquisition_desc') return b.monthly_acquisition - a.monthly_acquisition;
+        if (sortBy === 'acquisition_asc') return a.monthly_acquisition - b.monthly_acquisition;
+        if (sortBy === 'churn_desc') return b.monthly_churn_rate - a.monthly_churn_rate;
+        if (sortBy === 'churn_asc') return a.monthly_churn_rate - b.monthly_churn_rate;
+        if (sortBy === 'arpu_desc') return b.base_arpu - a.base_arpu;
+        if (sortBy === 'arpu_asc') return a.base_arpu - b.base_arpu;
+        return 0;
+      })
+  );
 </script>
 
 <div class="space-y-6">
@@ -95,67 +155,210 @@
       </CardContent>
     </Card>
   {:else}
-    <div class="overflow-x-auto rounded-lg border border-border bg-card/25 backdrop-blur-sm shadow-sm select-none">
-      <table class="w-full text-left border-collapse text-sm">
-        <thead>
-          <tr class="border-b border-border bg-black/20 text-muted-foreground font-semibold">
-            <th class="p-4">Cohort Name & Vertical</th>
-            <th class="p-4 text-right">Starting Users</th>
-            <th class="p-4 text-right">Monthly Acquisition</th>
-            <th class="p-4 text-right">Churn (Floor)</th>
-            <th class="p-4 text-right">Expansion Rate</th>
-            <th class="p-4 text-right">AI Adoption</th>
-            <th class="p-4 text-right">Base ARPU</th>
-            <th class="p-4 text-center">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-border/60">
-          {#each data.cohorts as cohort}
-            <tr class="hover:bg-white/5 transition-all duration-150">
-              <td class="p-4">
-                <div class="font-bold text-foreground">{cohort.name}</div>
-                {#if cohort.vertical_name}
-                  <span class="text-xs text-primary font-medium">{cohort.vertical_name}</span>
-                {:else}
-                  <span class="text-[10px] text-muted-foreground italic">No vertical assigned</span>
-                {/if}
-              </td>
-              <td class="p-4 text-right font-mono font-medium">{formatNumber(cohort.current_users)}</td>
-              <td class="p-4 text-right font-mono">
-                {formatNumber(cohort.monthly_acquisition)} /mo
-                {#if cohort.acquisition_growth_rate > 0}
-                  <span class="text-xs text-emerald-400 font-semibold">(+{formatPercent(cohort.acquisition_growth_rate)})</span>
-                {/if}
-              </td>
-              <td class="p-4 text-right font-mono">
-                <span class="text-rose-400 font-medium">{formatPercent(cohort.monthly_churn_rate)}</span>
-                <span class="text-xs text-muted-foreground">({formatPercent(cohort.retention_floor)})</span>
-              </td>
-              <td class="p-4 text-right font-mono text-emerald-400 font-medium">+{formatPercent(cohort.monthly_expansion_rate)}/mo</td>
-              <td class="p-4 text-right font-mono font-semibold text-primary">{formatPercent(cohort.ai_adoption_rate)}</td>
-              <td class="p-4 text-right font-mono font-bold">{formatCurrency(cohort.base_arpu, 'USD')}</td>
-              <td class="p-4 text-center space-x-1">
-                <Button variant="ghost" size="icon" onclick={() => openEditDialog(cohort)} class="h-8 w-8 hover:bg-white/5">
-                  <Edit2 class="h-3.5 w-3.5" />
-                </Button>
-                <form method="POST" action="?/deleteCohort" use:enhance class="inline-block">
-                  <input type="hidden" name="id" value={cohort.id} />
-                  <Button type="submit" variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive">
-                    <Trash2 class="h-3.5 w-3.5" />
-                  </Button>
-                </form>
-              </td>
-            </tr>
+    <!-- Controls Row -->
+    <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-card/20 border border-border/80 p-3 rounded-xl backdrop-blur-xs select-none">
+      <div class="flex flex-1 flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+        <!-- Quick Find Search -->
+        <div class="relative flex-1 max-w-md">
+          <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder="Quick find cohorts..."
+            class="pl-9 bg-background/50 border-border"
+            bind:value={searchQuery}
+          />
+        </div>
+
+        <!-- Sort Select -->
+        <select
+          bind:value={sortBy}
+          class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        >
+          <option value="name_asc">Name (A - Z)</option>
+          <option value="name_desc">Name (Z - A)</option>
+          <option value="users_desc">Starting Users (Highest)</option>
+          <option value="users_asc">Starting Users (Lowest)</option>
+          <option value="acquisition_desc">Acquisition (Highest)</option>
+          <option value="acquisition_asc">Acquisition (Lowest)</option>
+          <option value="churn_desc">Churn Rate (Highest)</option>
+          <option value="churn_asc">Churn Rate (Lowest)</option>
+          <option value="arpu_desc">ARPU (Highest)</option>
+          <option value="arpu_asc">ARPU (Lowest)</option>
+        </select>
+
+        <!-- Vertical Filter -->
+        <select
+          bind:value={verticalFilter}
+          class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        >
+          <option value="all">All Verticals</option>
+          <option value="global">Global (No Vertical)</option>
+          {#each data.verticals as vertical}
+            <option value={vertical.id}>{vertical.name}</option>
           {/each}
-        </tbody>
-      </table>
+        </select>
+      </div>
+
+      <!-- View Toggle -->
+      <div class="flex items-center space-x-1 border border-border rounded-lg p-1 bg-muted/20 self-end md:self-auto">
+        <Button
+          variant={viewMode === 'card' ? 'secondary' : 'ghost'}
+          size="sm"
+          class="h-8 px-3.5"
+          onclick={() => setViewMode('card')}
+        >
+          <LayoutGrid class="h-4 w-4 mr-1.5 opacity-80" /> Card
+        </Button>
+        <Button
+          variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+          size="sm"
+          class="h-8 px-3.5"
+          onclick={() => setViewMode('list')}
+        >
+          <List class="h-4 w-4 mr-1.5 opacity-80" /> List
+        </Button>
+      </div>
     </div>
+
+    <!-- Display -->
+    {#if filteredCohorts.length === 0}
+      <div class="py-16 text-center border border-dashed border-border rounded-lg bg-card/5">
+        <p class="text-sm text-muted-foreground select-none">No cohorts found matching the search criteria.</p>
+      </div>
+    {:else if viewMode === 'card'}
+      <!-- Card Grid View -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-200">
+        {#each filteredCohorts as cohort (cohort.id)}
+          <Card class="border-border bg-card/45 backdrop-blur-sm shadow-sm flex flex-col justify-between hover:border-primary/20 transition-all duration-300 group">
+            <CardHeader class="pb-3 border-b border-border bg-black/5">
+              <div class="flex items-center space-x-2.5 text-primary">
+                <Users2 class="h-5 w-5 group-hover:scale-105 transition-transform" />
+                <div class="truncate flex-1">
+                  <CardTitle class="text-base font-bold text-foreground line-clamp-1">{cohort.name}</CardTitle>
+                  {#if cohort.vertical_name}
+                    <span class="text-[10px] text-primary font-medium">{cohort.vertical_name}</span>
+                  {:else}
+                    <span class="text-[10px] text-muted-foreground italic">No vertical assigned</span>
+                  {/if}
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent class="py-4 space-y-3.5 text-sm select-none flex-1">
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-muted-foreground">Starting Active Customers</span>
+                <span class="font-mono text-xs font-semibold text-foreground">{formatNumber(cohort.current_users)}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-muted-foreground">Monthly Acquisition</span>
+                <span class="font-mono text-xs text-foreground">
+                  {formatNumber(cohort.monthly_acquisition)} /mo
+                  {#if cohort.acquisition_growth_rate > 0}
+                    <span class="text-[10px] text-emerald-400 font-semibold">(+{formatPercent(cohort.acquisition_growth_rate)})</span>
+                  {/if}
+                </span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-muted-foreground">Churn Rate (Floor)</span>
+                <span class="font-mono text-xs text-rose-400 font-semibold">
+                  {formatPercent(cohort.monthly_churn_rate)}
+                  <span class="text-[10px] text-muted-foreground font-normal">({formatPercent(cohort.retention_floor)})</span>
+                </span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-muted-foreground">ARPU Expansion</span>
+                <span class="font-mono text-xs text-emerald-400 font-semibold">+{formatPercent(cohort.monthly_expansion_rate)}/mo</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-muted-foreground">AI Adoption Rate</span>
+                <span class="font-mono text-xs font-bold text-primary">{formatPercent(cohort.ai_adoption_rate)}</span>
+              </div>
+              <div class="flex items-center justify-between pt-1 border-t border-border/40">
+                <span class="text-xs text-muted-foreground font-semibold">Starting Base ARPU</span>
+                <span class="font-mono text-xs font-black text-foreground">{formatCurrency(cohort.base_arpu, 'USD')}</span>
+              </div>
+            </CardContent>
+
+            <CardFooter class="border-t border-border bg-black/5 py-3 flex justify-end space-x-2">
+              <Button variant="outline" size="sm" onclick={() => openEditDialog(cohort)}>
+                <Edit2 class="h-3.5 w-3.5 mr-1.5" /> Edit
+              </Button>
+              <form method="POST" action="?/deleteCohort" use:enhance class="inline-block">
+                <input type="hidden" name="id" value={cohort.id} />
+                <Button type="submit" variant="outline" size="sm" class="text-destructive border-destructive/50 hover:bg-destructive hover:text-destructive-foreground">
+                  <Trash2 class="h-3.5 w-3.5 mr-1.5" /> Delete
+                </Button>
+              </form>
+            </CardFooter>
+          </Card>
+        {/each}
+      </div>
+    {:else}
+      <!-- Dense List (Table) View -->
+      <div class="overflow-x-auto rounded-lg border border-border bg-card/25 backdrop-blur-sm shadow-sm select-none animate-in fade-in duration-200">
+        <Table>
+          <TableHeader class="bg-black/15">
+            <TableRow>
+              <TableHead class="text-foreground font-bold">Cohort Name & Vertical</TableHead>
+              <TableHead class="text-foreground font-bold text-right">Starting Users</TableHead>
+              <TableHead class="text-foreground font-bold text-right">Monthly Acquisition</TableHead>
+              <TableHead class="text-foreground font-bold text-right">Churn (Floor)</TableHead>
+              <TableHead class="text-foreground font-bold text-right">Expansion Rate</TableHead>
+              <TableHead class="text-foreground font-bold text-right">AI Adoption</TableHead>
+              <TableHead class="text-foreground font-bold text-right">Base ARPU</TableHead>
+              <TableHead class="text-foreground font-bold text-center">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {#each filteredCohorts as cohort (cohort.id)}
+              <TableRow class="hover:bg-white/5 transition-all">
+                <TableCell>
+                  <div class="font-bold text-foreground">{cohort.name}</div>
+                  {#if cohort.vertical_name}
+                    <span class="text-xs text-primary font-medium">{cohort.vertical_name}</span>
+                  {:else}
+                    <span class="text-[10px] text-muted-foreground italic">No vertical assigned</span>
+                  {/if}
+                </TableCell>
+                <TableCell class="text-right font-mono font-medium">{formatNumber(cohort.current_users)}</TableCell>
+                <TableCell class="text-right font-mono">
+                  {formatNumber(cohort.monthly_acquisition)} /mo
+                  {#if cohort.acquisition_growth_rate > 0}
+                    <span class="text-xs text-emerald-400 font-semibold">(+{formatPercent(cohort.acquisition_growth_rate)})</span>
+                  {/if}
+                </TableCell>
+                <TableCell class="text-right font-mono">
+                  <span class="text-rose-400 font-medium">{formatPercent(cohort.monthly_churn_rate)}</span>
+                  <span class="text-xs text-muted-foreground">({formatPercent(cohort.retention_floor)})</span>
+                </TableCell>
+                <TableCell class="text-right font-mono text-emerald-400 font-medium">+{formatPercent(cohort.monthly_expansion_rate)}/mo</TableCell>
+                <TableCell class="text-right font-mono font-semibold text-primary">{formatPercent(cohort.ai_adoption_rate)}</TableCell>
+                <TableCell class="text-right font-mono font-bold">{formatCurrency(cohort.base_arpu, 'USD')}</TableCell>
+                <TableCell class="text-center">
+                  <div class="flex items-center justify-center gap-1">
+                    <Button variant="ghost" size="icon" onclick={() => openEditDialog(cohort)} class="h-8 w-8 hover:bg-white/5">
+                      <Edit2 class="h-3.5 w-3.5" />
+                    </Button>
+                    <form method="POST" action="?/deleteCohort" use:enhance class="inline-block">
+                      <input type="hidden" name="id" value={cohort.id} />
+                      <Button type="submit" variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive">
+                        <Trash2 class="h-3.5 w-3.5" />
+                      </Button>
+                    </form>
+                  </div>
+                </TableCell>
+              </TableRow>
+            {/each}
+          </TableBody>
+        </Table>
+      </div>
+    {/if}
   {/if}
 </div>
 
 <!-- Modal Dialog Overlay for Add/Edit Cohort -->
 {#if showDialog}
-  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
     <Card class="w-full max-w-2xl border-border shadow-2xl bg-card">
       <CardHeader class="border-b border-border bg-black/10">
         <div class="flex items-center space-x-2 text-primary">

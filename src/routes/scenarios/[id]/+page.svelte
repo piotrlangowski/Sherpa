@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { formatCurrency, formatPercent, formatMonths, formatNumber } from '$lib/utils/format';
   import Button from '$lib/components/ui/button/button.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
@@ -42,6 +42,18 @@
   let activeTab = $state<'cashflow' | 'cumulative' | 'users'>('cashflow');
   let chartElement: HTMLDivElement | undefined = $state();
   let chartInstance: any = null;
+  let resizeListener: (() => void) | null = null;
+
+  function cleanupChart() {
+    if (chartInstance) {
+      chartInstance.dispose();
+      chartInstance = null;
+    }
+    if (resizeListener) {
+      window.removeEventListener('resize', resizeListener);
+      resizeListener = null;
+    }
+  }
 
   // Derive ECharts Options based on timeline data
   const chartOptions = $derived.by(() => {
@@ -238,31 +250,30 @@
   });
 
   function renderChart() {
-    if (!chartElement || typeof window === 'undefined' || timeline.length === 0) return;
+    if (!chartElement) return;
 
-    import('echarts').then((echarts) => {
-      if (chartInstance) {
-        chartInstance.dispose();
-      }
+    tick().then(() => {
+      import('echarts').then((echarts) => {
+        cleanupChart();
+        
+        if (!chartElement) return;
 
-      chartInstance = echarts.init(chartElement);
-      const options = chartOptions as any;
+        chartInstance = echarts.init(chartElement);
+        const options = chartOptions as any;
 
-      if (activeTab === 'cashflow') {
-        chartInstance.setOption(options.cashflow);
-      } else if (activeTab === 'cumulative') {
-        chartInstance.setOption(options.cumulative);
-      } else {
-        chartInstance.setOption(options.users);
-      }
+        if (activeTab === 'cashflow') {
+          chartInstance.setOption(options.cashflow);
+        } else if (activeTab === 'cumulative') {
+          chartInstance.setOption(options.cumulative);
+        } else {
+          chartInstance.setOption(options.users);
+        }
 
-      const handleResize = () => {
-        chartInstance?.resize();
-      };
-      window.addEventListener('resize', handleResize);
-      return () => {
-        window.removeEventListener('resize', handleResize);
-      };
+        resizeListener = () => {
+          chartInstance?.resize();
+        };
+        window.addEventListener('resize', resizeListener);
+      });
     });
   }
 
@@ -275,7 +286,7 @@
   onMount(() => {
     renderChart();
     return () => {
-      chartInstance?.dispose();
+      cleanupChart();
     };
   });
 </script>
@@ -444,22 +455,65 @@
             </div>
           </div>
 
-          <!-- Cohort details -->
-          {#if scenario.cohort_config}
-            <div class="space-y-2">
-              <span class="text-[10px] uppercase font-bold text-muted-foreground/80 flex items-center">
-                <Users2 class="h-3.5 w-3.5 mr-1 text-primary opacity-80" /> Target Customer Cohort
-              </span>
-              <div class="pl-4.5 border-l border-border/60 space-y-1 text-muted-foreground font-medium">
-                <div>Cohort: <strong class="text-foreground">{scenario.cohort_config.name}</strong></div>
-                <div>Starting Users: <strong class="text-foreground">{formatNumber(scenario.cohort_config.current_users)}</strong></div>
-                <div>Acquisition: <strong class="text-foreground">{scenario.cohort_config.monthly_acquisition} /mo (+{Math.round(scenario.cohort_config.acquisition_growth_rate*100)}%)</strong></div>
-                <div>Monthly Churn: <strong class="text-rose-400">{Math.round(scenario.cohort_config.monthly_churn_rate*100)}% (Floor: {Math.round(scenario.cohort_config.retention_floor*100)}%)</strong></div>
-                <div>AI Adoption: <strong class="text-primary">{Math.round(scenario.cohort_config.ai_adoption_rate*100)}%</strong></div>
-                <div>Base ARPU: <strong class="text-foreground">${scenario.cohort_config.base_arpu}/mo</strong></div>
+          <!-- Target Scope -->
+          <div class="space-y-2">
+            <span class="text-[10px] uppercase font-bold text-muted-foreground/80 flex items-center">
+              <Users2 class="h-3.5 w-3.5 mr-1 text-primary opacity-80" /> Target Audience Scope
+            </span>
+            <div class="pl-4.5 border-l border-border/60 space-y-2 text-muted-foreground font-medium">
+              <div>
+                Scope Type: 
+                <strong class="text-foreground capitalize">
+                  {#if scenario.scope_type === 'all_clients'}
+                    Global Client Base
+                  {:else}
+                    {scenario.scope_type}
+                  {/if}
+                </strong>
               </div>
+
+              {#if scenario.scope_type === 'verticals' && scenario.scope_verticals && scenario.scope_verticals.length > 0}
+                <div class="text-xs">
+                  <div class="mb-1 text-muted-foreground">Targeted Verticals:</div>
+                  <div class="flex flex-wrap gap-1">
+                    {#each scenario.scope_verticals as v}
+                      <Badge variant="outline" class="bg-black/10 py-0 text-[10px]">{v.name}</Badge>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
+              {#if scenario.scope_type === 'cohorts' && scenario.scope_cohorts && scenario.scope_cohorts.length > 0}
+                <div class="text-xs">
+                  <div class="mb-1 text-muted-foreground">Targeted Cohorts:</div>
+                  <div class="flex flex-wrap gap-1">
+                    {#each scenario.scope_cohorts as c}
+                      <Badge variant="outline" class="bg-black/10 py-0 text-[10px]">{c.name}</Badge>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
+              {#if scenario.scope_overrides && scenario.scope_overrides.length > 0}
+                <div class="mt-2 text-xs">
+                  <div class="mb-1 text-amber-500 font-bold">Parameter Overrides Applied:</div>
+                  <div class="space-y-1">
+                    {#each scenario.scope_overrides as ov}
+                      <div class="bg-muted/40 p-1.5 rounded text-[10px]">
+                        <strong>{ov.target_type === 'all_clients' ? 'Global Base' : ov.target_id}</strong>
+                        <div class="grid grid-cols-2 gap-x-2">
+                          {#if ov.arpu_override !== null}<span>ARPU: ${ov.arpu_override}</span>{/if}
+                          {#if ov.monthly_churn_rate !== null}<span>Churn: {ov.monthly_churn_rate * 100}%</span>{/if}
+                          {#if ov.ai_adoption_rate !== null}<span>Adoption: {ov.ai_adoption_rate * 100}%</span>{/if}
+                          {#if ov.monthly_acquisition !== null}<span>Acq: {ov.monthly_acquisition}/mo</span>{/if}
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
             </div>
-          {/if}
+          </div>
 
           <!-- Rollout scheduler items -->
           <div class="space-y-2">

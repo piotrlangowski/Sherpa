@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { onMount } from 'svelte';
   import { formatCurrency } from '$lib/utils/format';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
@@ -23,7 +24,9 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Server from '@lucide/svelte/icons/server';
-  import Sparkles from '@lucide/svelte/icons/sparkles';
+  import LayoutGrid from '@lucide/svelte/icons/layout-grid';
+  import List from '@lucide/svelte/icons/list';
+  import Search from '@lucide/svelte/icons/search';
 
   let { data, form } = $props();
 
@@ -71,6 +74,53 @@
       isUpdatingPrices = false;
     }
   }
+
+  // State controls for collection
+  let viewMode = $state<'card' | 'list'>('list');
+  let searchQuery = $state('');
+  let sortBy = $state('provider_asc');
+  let typeFilter = $state('all');
+
+  onMount(() => {
+    const saved = localStorage.getItem('sherpa_view_mode_providers');
+    if (saved === 'card' || saved === 'list') {
+      viewMode = saved;
+    }
+  });
+
+  function setViewMode(mode: 'card' | 'list') {
+    viewMode = mode;
+    localStorage.setItem('sherpa_view_mode_providers', mode);
+  }
+
+  // Derived filtered array
+  let filteredProviders = $derived(
+    data.providers
+      .filter((provider: any) => {
+        const matchesSearch = 
+          provider.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          provider.model_name.toLowerCase().includes(searchQuery.toLowerCase());
+
+        const matchesType = 
+          typeFilter === 'all' ||
+          (typeFilter === 'standard' && provider.is_predefined) ||
+          (typeFilter === 'custom' && !provider.is_predefined);
+
+        return matchesSearch && matchesType;
+      })
+      .sort((a: any, b: any) => {
+        if (sortBy === 'provider_asc') return a.name.localeCompare(b.name);
+        if (sortBy === 'provider_desc') return b.name.localeCompare(a.name);
+        if (sortBy === 'model_asc') return a.model_name.localeCompare(b.model_name);
+        if (sortBy === 'model_desc') return b.model_name.localeCompare(a.model_name);
+        if (sortBy === 'input_desc') return b.input_price - a.input_price;
+        if (sortBy === 'input_asc') return a.input_price - b.input_price;
+        if (sortBy === 'output_desc') return b.output_price - a.output_price;
+        if (sortBy === 'output_asc') return a.output_price - b.output_price;
+        if (sortBy === 'updated_desc') return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        return 0;
+      })
+  );
 </script>
 
 <div class="space-y-6">
@@ -91,75 +141,206 @@
     </div>
   </div>
 
-  <Card class="border-border">
-    <CardHeader>
-      <CardTitle>Token Price Sheet</CardTitle>
-      <CardDescription>Prices are defined per 1,000,000 (1M) tokens in USD.</CardDescription>
-    </CardHeader>
-    
-    <CardContent class="p-0">
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm text-left border-collapse">
-          <thead class="bg-muted/40 border-y border-border text-xs text-muted-foreground font-semibold uppercase tracking-wider">
-            <tr>
-              <th class="px-6 py-4">Provider</th>
-              <th class="px-6 py-4">Model Name</th>
-              <th class="px-6 py-4 text-right">Input Price (per 1M)</th>
-              <th class="px-6 py-4 text-right">Output Price (per 1M)</th>
-              <th class="px-6 py-4">Type</th>
-              <th class="px-6 py-4">Last Updated</th>
-              <th class="px-6 py-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-border">
-            {#each data.providers as provider}
-              <tr class="hover:bg-muted/30 transition-colors">
-                <td class="px-6 py-4 font-semibold text-foreground flex items-center space-x-2.5">
-                  <Server class="h-4 w-4 text-primary" />
-                  <span>{provider.name}</span>
-                </td>
-                <td class="px-6 py-4 font-mono text-muted-foreground">{provider.model_name}</td>
-                <td class="px-6 py-4 text-right">{formatCurrency(provider.input_price, 'USD', 2)}</td>
-                <td class="px-6 py-4 text-right">{formatCurrency(provider.output_price, 'USD', 2)}</td>
-                <td class="px-6 py-4">
-                  {#if provider.is_predefined}
-                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      Standard
-                    </span>
-                  {:else}
-                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                      Custom
-                    </span>
-                  {/if}
-                </td>
-                <td class="px-6 py-4 text-xs text-muted-foreground/80">
-                  {new Date(provider.updated_at).toLocaleDateString()}
-                </td>
-                <td class="px-6 py-4 text-right space-x-1">
-                  <Button variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-foreground" onclick={() => openEdit(provider)}>
-                    <Edit2 class="h-4 w-4" />
-                  </Button>
-                  {#if !provider.is_predefined}
-                    <form method="POST" action="?/deleteProvider" use:enhance class="inline-block">
-                      <input type="hidden" name="id" value={provider.id} />
-                      <Button type="submit" variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-destructive">
-                        <Trash2 class="h-4 w-4" />
-                      </Button>
-                    </form>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+  <!-- Controls Row -->
+  <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-card/20 border border-border/80 p-3 rounded-xl backdrop-blur-xs select-none">
+    <div class="flex flex-1 flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+      <!-- Quick Find Search -->
+      <div class="relative flex-1 max-w-md">
+        <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          type="text"
+          placeholder="Quick find providers or models..."
+          class="pl-9 bg-background/50 border-border"
+          bind:value={searchQuery}
+        />
       </div>
-    </CardContent>
-  </Card>
+
+      <!-- Sort Select -->
+      <select
+        bind:value={sortBy}
+        class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+      >
+        <option value="provider_asc">Provider (A - Z)</option>
+        <option value="provider_desc">Provider (Z - A)</option>
+        <option value="model_asc">Model Name (A - Z)</option>
+        <option value="model_desc">Model Name (Z - A)</option>
+        <option value="input_desc">Input Price (Highest)</option>
+        <option value="input_asc">Input Price (Lowest)</option>
+        <option value="output_desc">Output Price (Highest)</option>
+        <option value="output_asc">Output Price (Lowest)</option>
+        <option value="updated_desc">Last Updated (Newest)</option>
+      </select>
+
+      <!-- Type Filter -->
+      <select
+        bind:value={typeFilter}
+        class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+      >
+        <option value="all">All Types</option>
+        <option value="standard">Standard</option>
+        <option value="custom">Custom</option>
+      </select>
+    </div>
+
+    <!-- View Toggle -->
+    <div class="flex items-center space-x-1 border border-border rounded-lg p-1 bg-muted/20 self-end md:self-auto">
+      <Button
+        variant={viewMode === 'card' ? 'secondary' : 'ghost'}
+        size="sm"
+        class="h-8 px-3.5"
+        onclick={() => setViewMode('card')}
+      >
+        <LayoutGrid class="h-4 w-4 mr-1.5 opacity-80" /> Card
+      </Button>
+      <Button
+        variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+        size="sm"
+        class="h-8 px-3.5"
+        onclick={() => setViewMode('list')}
+      >
+        <List class="h-4 w-4 mr-1.5 opacity-80" /> List
+      </Button>
+    </div>
+  </div>
+
+  <!-- Display -->
+  {#if filteredProviders.length === 0}
+    <div class="py-16 text-center border border-dashed border-border rounded-lg bg-card/5">
+      <p class="text-sm text-muted-foreground select-none">No custom or standard models found matching search criteria.</p>
+    </div>
+  {:else if viewMode === 'card'}
+    <!-- Card Grid View -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-200">
+      {#each filteredProviders as provider (provider.id)}
+        <Card class="border-border bg-card/45 backdrop-blur-sm shadow-sm flex flex-col justify-between hover:border-primary/20 transition-all duration-300 group">
+          <CardHeader class="pb-3 border-b border-border bg-black/5">
+            <div class="flex justify-between items-start">
+              <div class="flex items-center space-x-2.5 text-primary">
+                <Server class="h-5 w-5 group-hover:scale-105 transition-transform" />
+                <CardTitle class="text-base font-bold text-foreground line-clamp-1">{provider.name}</CardTitle>
+              </div>
+              {#if provider.is_predefined}
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider select-none">
+                  Standard
+                </span>
+              {:else}
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase tracking-wider select-none">
+                  Custom
+                </span>
+              {/if}
+            </div>
+            <CardDescription class="mt-1 font-mono text-xs text-muted-foreground truncate select-all">{provider.model_name}</CardDescription>
+          </CardHeader>
+
+          <CardContent class="py-4 space-y-3.5 text-sm select-none flex-1">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-muted-foreground">Input Price</span>
+              <span class="font-mono text-xs font-bold text-foreground">
+                {formatCurrency(provider.input_price, 'USD', 2)}
+                <span class="text-[10px] text-muted-foreground font-normal">/1M</span>
+              </span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-muted-foreground">Output Price</span>
+              <span class="font-mono text-xs font-bold text-foreground">
+                {formatCurrency(provider.output_price, 'USD', 2)}
+                <span class="text-[10px] text-muted-foreground font-normal">/1M</span>
+              </span>
+            </div>
+            <div class="flex items-center justify-between pt-1 border-t border-border/40">
+              <span class="text-xs text-muted-foreground">Last Updated</span>
+              <span class="text-xs text-muted-foreground/80">{new Date(provider.updated_at).toLocaleDateString()}</span>
+            </div>
+          </CardContent>
+
+          <CardFooter class="border-t border-border bg-black/5 py-3 flex justify-end space-x-2">
+            <Button variant="outline" size="sm" onclick={() => openEdit(provider)}>
+              <Edit2 class="h-3.5 w-3.5 mr-1.5" /> Edit
+            </Button>
+            {#if !provider.is_predefined}
+              <form method="POST" action="?/deleteProvider" use:enhance class="inline-block">
+                <input type="hidden" name="id" value={provider.id} />
+                <Button type="submit" variant="outline" size="sm" class="text-destructive border-destructive/50 hover:bg-destructive hover:text-destructive-foreground">
+                  <Trash2 class="h-3.5 w-3.5 mr-1.5" /> Delete
+                </Button>
+              </form>
+            {/if}
+          </CardFooter>
+        </Card>
+      {/each}
+    </div>
+  {:else}
+    <!-- Dense List (Table) View -->
+    <Card class="border-border animate-in fade-in duration-200">
+      <CardHeader>
+        <CardTitle>Token Price Sheet</CardTitle>
+        <CardDescription>Prices are defined per 1,000,000 (1M) tokens in USD.</CardDescription>
+      </CardHeader>
+      
+      <CardContent class="p-0">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm text-left border-collapse">
+            <thead class="bg-muted/40 border-y border-border text-xs text-muted-foreground font-semibold uppercase tracking-wider">
+              <tr>
+                <th class="px-6 py-4">Provider</th>
+                <th class="px-6 py-4">Model Name</th>
+                <th class="px-6 py-4 text-right">Input Price (per 1M)</th>
+                <th class="px-6 py-4 text-right">Output Price (per 1M)</th>
+                <th class="px-6 py-4">Type</th>
+                <th class="px-6 py-4">Last Updated</th>
+                <th class="px-6 py-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              {#each filteredProviders as provider}
+                <tr class="hover:bg-muted/30 transition-colors">
+                  <td class="px-6 py-4 font-semibold text-foreground flex items-center space-x-2.5">
+                    <Server class="h-4 w-4 text-primary" />
+                    <span>{provider.name}</span>
+                  </td>
+                  <td class="px-6 py-4 font-mono text-muted-foreground">{provider.model_name}</td>
+                  <td class="px-6 py-4 text-right">{formatCurrency(provider.input_price, 'USD', 2)}</td>
+                  <td class="px-6 py-4 text-right">{formatCurrency(provider.output_price, 'USD', 2)}</td>
+                  <td class="px-6 py-4">
+                    {#if provider.is_predefined}
+                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        Standard
+                      </span>
+                    {:else}
+                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        Custom
+                      </span>
+                    {/if}
+                  </td>
+                  <td class="px-6 py-4 text-xs text-muted-foreground/80">
+                    {new Date(provider.updated_at).toLocaleDateString()}
+                  </td>
+                  <td class="px-6 py-4 text-right space-x-1">
+                    <Button variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-foreground" onclick={() => openEdit(provider)}>
+                      <Edit2 class="h-4 w-4" />
+                    </Button>
+                    {#if !provider.is_predefined}
+                      <form method="POST" action="?/deleteProvider" use:enhance class="inline-block">
+                        <input type="hidden" name="id" value={provider.id} />
+                        <Button type="submit" variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-destructive">
+                          <Trash2 class="h-4 w-4" />
+                        </Button>
+                      </form>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  {/if}
 </div>
 
 <!-- Edit / Create Provider Dialog -->
 {#if showEditDialog}
-  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
     <Card class="w-full max-w-md border-border shadow-2xl bg-card">
       <form method="POST" action="?/saveProvider" use:enhance={() => {
         isSaving = true;
@@ -194,11 +375,11 @@
           <div class="grid grid-cols-2 gap-4">
             <div class="space-y-1.5">
               <Label for="inputPrice">Input Price ($/1M)</Label>
-              <Input id="inputPrice" name="inputPrice" type="number" step="0.0001" min="0" bind:value={inputPrice} required class="bg-background/50 text-right" />
+              <Input id="inputPrice" name="inputPrice" type="number" step="0.0001" min="0" bind:value={inputPrice} required class="bg-background/50 text-right font-mono" />
             </div>
             <div class="space-y-1.5">
               <Label for="outputPrice">Output Price ($/1M)</Label>
-              <Input id="outputPrice" name="outputPrice" type="number" step="0.0001" min="0" bind:value={outputPrice} required class="bg-background/50 text-right" />
+              <Input id="outputPrice" name="outputPrice" type="number" step="0.0001" min="0" bind:value={outputPrice} required class="bg-background/50 text-right font-mono" />
             </div>
           </div>
         </CardContent>
@@ -213,3 +394,4 @@
     </Card>
   </div>
 {/if}
+

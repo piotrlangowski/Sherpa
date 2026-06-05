@@ -13,7 +13,9 @@ export const load: PageServerLoad = async () => {
       description: s.description,
       projection_months: s.projection_months,
       discount_rate: s.discount_rate,
-      cohort_config: s.cohort_config,
+      scope_type: s.scope_type,
+      scope_verticals: s.scope_verticals,
+      scope_cohorts: s.scope_cohorts,
       results: results || null
     };
   });

@@ -66,6 +66,14 @@ const CostItemSchema = z.object({
   service_name: z.string().optional()
 });
 
+const VerticalSchema = z.object({
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  tam_users: z.number().optional(),
+  sam_users: z.number().optional(),
+  som_users: z.number().optional()
+});
+
 const CohortConfigSchema = z.object({
   name: z.string(),
   current_users: z.number(),
@@ -76,13 +84,19 @@ const CohortConfigSchema = z.object({
   monthly_expansion_rate: z.number(),
   ai_adoption_rate: z.number(),
   base_arpu: z.number(),
-  vertical: z.object({
-    name: z.string(),
-    description: z.string().nullable().optional(),
-    tam_users: z.number().optional(),
-    sam_users: z.number().optional(),
-    som_users: z.number().optional()
-  }).optional()
+  vertical: VerticalSchema.optional()
+});
+
+const ScopeOverrideSchema = z.object({
+  target_type: z.enum(['all_clients', 'vertical', 'cohort']),
+  target_name: z.string().nullable().optional(), // We use name for matching during import
+  monthly_churn_rate: z.number().nullable().optional(),
+  monthly_acquisition: z.number().nullable().optional(),
+  acquisition_growth_rate: z.number().nullable().optional(),
+  ai_adoption_rate: z.number().nullable().optional(),
+  retention_floor: z.number().nullable().optional(),
+  expansion_rate: z.number().nullable().optional(),
+  arpu_override: z.number().nullable().optional()
 });
 
 const ScenarioSchema = z.object({
@@ -90,7 +104,10 @@ const ScenarioSchema = z.object({
   description: z.string().nullable().optional(),
   projection_months: z.number(),
   discount_rate: z.number(),
-  cohort_config: CohortConfigSchema.nullable().optional(),
+  scope_type: z.enum(['all_clients', 'verticals', 'cohorts']),
+  scope_verticals: z.array(VerticalSchema).optional(),
+  scope_cohorts: z.array(CohortConfigSchema).optional(),
+  scope_overrides: z.array(ScopeOverrideSchema).optional(),
   services: z.array(ServiceSchema).optional(),
   packs: z.array(PackSchema).optional(),
   plans: z.array(PlanSchema).optional(),
@@ -144,17 +161,17 @@ export const POST: RequestHandler = async ({ request }) => {
         }
       }
 
-      // 2. Import Vertical & Cohort Configuration
-      let cohortConfigId: string | null = null;
-      if (scenario.cohort_config) {
-        let verticalId: string | null = null;
-        if (scenario.cohort_config.vertical) {
-          const v = scenario.cohort_config.vertical;
+      // 2. Import Verticals
+      const verticalIdMap = new Map<string, string>();
+      const verticalIds: string[] = [];
+      if (scenario.scope_verticals) {
+        for (const v of scenario.scope_verticals) {
           const existingV = db.prepare('SELECT id FROM verticals WHERE name = ?')
             .get(v.name) as { id: string } | undefined;
 
+          let vId = '';
           if (existingV) {
-            verticalId = existingV.id;
+            vId = existingV.id;
           } else {
             const createdV = verticalsRepository.create({
               name: v.name,
@@ -163,34 +180,69 @@ export const POST: RequestHandler = async ({ request }) => {
               sam_users: v.sam_users ?? 0,
               som_users: v.som_users ?? 0
             });
-            verticalId = createdV.id;
+            vId = createdV.id;
           }
-        }
-
-        const cc = scenario.cohort_config;
-        const existingCc = db.prepare('SELECT id FROM cohort_configs WHERE name = ?')
-          .get(cc.name) as { id: string } | undefined;
-
-        if (existingCc) {
-          cohortConfigId = existingCc.id;
-        } else {
-          const createdCc = cohortsRepository.create({
-            name: cc.name,
-            vertical_id: verticalId,
-            current_users: cc.current_users,
-            monthly_acquisition: cc.monthly_acquisition,
-            acquisition_growth_rate: cc.acquisition_growth_rate,
-            monthly_churn_rate: cc.monthly_churn_rate,
-            retention_floor: cc.retention_floor,
-            monthly_expansion_rate: cc.monthly_expansion_rate,
-            ai_adoption_rate: cc.ai_adoption_rate,
-            base_arpu: cc.base_arpu
-          });
-          cohortConfigId = createdCc.id;
+          verticalIdMap.set(v.name, vId);
+          verticalIds.push(vId);
         }
       }
 
-      // 3. Import Services & Resolve Dependencies
+      // 3. Import Cohorts
+      const cohortIdMap = new Map<string, string>();
+      const cohortIds: string[] = [];
+      if (scenario.scope_cohorts) {
+        for (const cc of scenario.scope_cohorts) {
+          let vId: string | null = null;
+          if (cc.vertical) {
+            if (verticalIdMap.has(cc.vertical.name)) {
+              vId = verticalIdMap.get(cc.vertical.name)!;
+            } else {
+              const existingV = db.prepare('SELECT id FROM verticals WHERE name = ?')
+                .get(cc.vertical.name) as { id: string } | undefined;
+              if (existingV) {
+                vId = existingV.id;
+                verticalIdMap.set(cc.vertical.name, vId);
+              } else {
+                const createdV = verticalsRepository.create({
+                  name: cc.vertical.name,
+                  description: cc.vertical.description || '',
+                  tam_users: cc.vertical.tam_users ?? 0,
+                  sam_users: cc.vertical.sam_users ?? 0,
+                  som_users: cc.vertical.som_users ?? 0
+                });
+                vId = createdV.id;
+                verticalIdMap.set(cc.vertical.name, vId);
+              }
+            }
+          }
+
+          const existingCc = db.prepare('SELECT id FROM cohort_configs WHERE name = ?')
+            .get(cc.name) as { id: string } | undefined;
+
+          let cId = '';
+          if (existingCc) {
+            cId = existingCc.id;
+          } else {
+            const createdCc = cohortsRepository.create({
+              name: cc.name,
+              vertical_id: vId,
+              current_users: cc.current_users,
+              monthly_acquisition: cc.monthly_acquisition,
+              acquisition_growth_rate: cc.acquisition_growth_rate,
+              monthly_churn_rate: cc.monthly_churn_rate,
+              retention_floor: cc.retention_floor,
+              monthly_expansion_rate: cc.monthly_expansion_rate,
+              ai_adoption_rate: cc.ai_adoption_rate,
+              base_arpu: cc.base_arpu
+            });
+            cId = createdCc.id;
+          }
+          cohortIdMap.set(cc.name, cId);
+          cohortIds.push(cId);
+        }
+      }
+
+      // 4. Import Services & Resolve Dependencies
       const serviceIdMap = new Map<string, string>(); // service name -> database ID
       const serviceRollouts: { id: string; rollout_month: number }[] = [];
       const serviceDepsToCreate: { sourceName: string; targetName: string; type: 'requires' | 'enhanced_by' | 'replaces' }[] = [];
@@ -254,14 +306,13 @@ export const POST: RequestHandler = async ({ request }) => {
                 dependency_type: dep.type
               });
             } catch (err) {
-              // Catch and log cyclic dependencies or other validation issues, do not crash import
               console.error(`Skipped dependency creation from ${dep.sourceName} to ${dep.targetName}:`, err);
             }
           }
         }
       }
 
-      // 4. Import Packs
+      // 5. Import Packs
       const packIdMap = new Map<string, string>(); // pack name -> database ID
       const packRollouts: { id: string; rollout_month: number }[] = [];
       if (scenario.packs) {
@@ -296,7 +347,7 @@ export const POST: RequestHandler = async ({ request }) => {
         }
       }
 
-      // 5. Import Plans
+      // 6. Import Plans
       const planRollouts: { id: string; rollout_month: number }[] = [];
       if (scenario.plans) {
         for (const pl of scenario.plans) {
@@ -341,7 +392,7 @@ export const POST: RequestHandler = async ({ request }) => {
         }
       }
 
-      // 6. Import Cost Items
+      // 7. Import Cost Items
       const costIds: string[] = [];
       if (scenario.costs) {
         for (const c of scenario.costs) {
@@ -367,7 +418,7 @@ export const POST: RequestHandler = async ({ request }) => {
         }
       }
 
-      // 7. Find Unique Name for Scenario
+      // 8. Find Unique Name for Scenario
       let baseName = scenario.name;
       if (db.prepare('SELECT id FROM scenarios WHERE name = ?').get(baseName)) {
         baseName = `${baseName} (Imported)`;
@@ -380,13 +431,40 @@ export const POST: RequestHandler = async ({ request }) => {
         counter++;
       }
 
-      // 8. Create the Scenario
+      // 9. Prepare Overrides
+      const overrides: any[] = [];
+      if (scenario.scope_overrides) {
+        for (const ov of scenario.scope_overrides) {
+          let targetId = null;
+          if (ov.target_name) {
+            if (ov.target_type === 'vertical') targetId = verticalIdMap.get(ov.target_name) || null;
+            if (ov.target_type === 'cohort') targetId = cohortIdMap.get(ov.target_name) || null;
+          }
+          
+          overrides.push({
+            target_type: ov.target_type,
+            target_id: targetId,
+            monthly_churn_rate: ov.monthly_churn_rate,
+            monthly_acquisition: ov.monthly_acquisition,
+            acquisition_growth_rate: ov.acquisition_growth_rate,
+            ai_adoption_rate: ov.ai_adoption_rate,
+            retention_floor: ov.retention_floor,
+            expansion_rate: ov.expansion_rate,
+            arpu_override: ov.arpu_override
+          });
+        }
+      }
+
+      // 10. Create the Scenario
       const createdScenario = scenariosRepository.create({
         name: uniqueName,
         description: scenario.description || '',
         projection_months: scenario.projection_months,
         discount_rate: scenario.discount_rate,
-        cohort_config_id: cohortConfigId,
+        scope_type: scenario.scope_type,
+        vertical_ids: verticalIds,
+        cohort_config_ids: cohortIds,
+        overrides: overrides,
         services: serviceRollouts,
         packs: packRollouts,
         plans: planRollouts,

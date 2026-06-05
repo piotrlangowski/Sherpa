@@ -6,6 +6,8 @@ import { packsRepository } from '../repositories/packs';
 import { plansRepository } from '../repositories/plans';
 import { calculateScenario } from './financial-engine';
 
+import type { Vertical, CohortConfig, ScopeOverride, Service, Pack, Plan, CostItem, Provider } from '$lib/types';
+
 export interface ScenarioExportSnapshot {
   version: string;
   exportedAt: string;
@@ -14,13 +16,15 @@ export interface ScenarioExportSnapshot {
     description: string;
     projection_months: number;
     discount_rate: number;
-    cohort_config: any;
-    vertical: any;
-    services: any[];
-    packs: any[];
-    plans: any[];
-    costs: any[];
-    providers: any[];
+    scope_type: string;
+    scope_verticals: Vertical[];
+    scope_cohorts: CohortConfig[];
+    scope_overrides: ScopeOverride[];
+    services: (Service & { rollout_month?: number })[];
+    packs: (Pack & { rollout_month?: number })[];
+    plans: (Plan & { rollout_month?: number })[];
+    costs: CostItem[];
+    providers: Provider[];
   };
 }
 
@@ -33,15 +37,8 @@ export function exportScenarioToJSON(scenarioId: string): string {
     throw new Error(`Scenario not found: ${scenarioId}`);
   }
 
-  // Fetch full cohort config and vertical
-  let cohortConfig = null;
-  let vertical = null;
-  if (scenario.cohort_config_id) {
-    cohortConfig = cohortsRepository.getById(scenario.cohort_config_id);
-    if (cohortConfig && cohortConfig.vertical_id) {
-      vertical = verticalsRepository.getById(cohortConfig.vertical_id);
-    }
-  }
+  // No longer fetching legacy cohortConfig.
+  // The new model fetches scope_verticals, scope_cohorts, and scope_overrides automatically via repository.
 
   // Fetch full services & providers
   const services = [];
@@ -97,8 +94,10 @@ export function exportScenarioToJSON(scenarioId: string): string {
       description: scenario.description,
       projection_months: scenario.projection_months,
       discount_rate: scenario.discount_rate,
-      cohort_config: cohortConfig,
-      vertical,
+      scope_type: scenario.scope_type,
+      scope_verticals: scenario.scope_verticals || [],
+      scope_cohorts: scenario.scope_cohorts || [],
+      scope_overrides: scenario.scope_overrides || [],
       services,
       packs,
       plans,

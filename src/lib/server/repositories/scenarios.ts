@@ -1,96 +1,144 @@
 import db from '../db';
-import type { Scenario, ScenarioResult } from '../../types';
+import type { Scenario, ScenarioResult, ScopeType, ScopeOverride } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
 
 export const scenariosRepository = {
   getAll(): Scenario[] {
     const rows = db.prepare(`
-      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.cohort_config_id, s.created_at, s.updated_at,
-             c.name as cohort_config_name,
+      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.created_at, s.updated_at,
              r.payback_months, r.npv, r.irr_annual, r.tco, r.roi_percent
       FROM scenarios s
-      LEFT JOIN cohort_configs c ON s.cohort_config_id = c.id
       LEFT JOIN scenario_results r ON s.id = r.scenario_id
       ORDER BY s.updated_at DESC
     `).all() as any[];
 
+    if (rows.length === 0) return [];
+
+    const scenarioIds = rows.map((r: any) => r.id);
+    const placeholders = scenarioIds.map(() => '?').join(',');
+
+    const serviceRows = db.prepare(`
+      SELECT ss.scenario_id, s.id, s.name, s.status, ss.rollout_month
+      FROM services s
+      JOIN scenario_services ss ON s.id = ss.service_id
+      WHERE ss.scenario_id IN (${placeholders})
+    `).all(...scenarioIds) as any[];
+
+    const packRows = db.prepare(`
+      SELECT sp.scenario_id, p.id, p.name, sp.rollout_month
+      FROM packs p
+      JOIN scenario_packs sp ON p.id = sp.pack_id
+      WHERE sp.scenario_id IN (${placeholders})
+    `).all(...scenarioIds) as any[];
+
+    const planRows = db.prepare(`
+      SELECT spl.scenario_id, pl.id, pl.name, spl.rollout_month
+      FROM plans pl
+      JOIN scenario_plans spl ON pl.id = spl.plan_id
+      WHERE spl.scenario_id IN (${placeholders})
+    `).all(...scenarioIds) as any[];
+
+    const verticalRows = db.prepare(`
+      SELECT sv.scenario_id, v.id, v.name
+      FROM verticals v
+      JOIN scenario_verticals sv ON v.id = sv.vertical_id
+      WHERE sv.scenario_id IN (${placeholders})
+    `).all(...scenarioIds) as any[];
+
+    const cohortRows = db.prepare(`
+      SELECT sc.scenario_id, c.id, c.name, v.name as vertical_name
+      FROM cohort_configs c
+      JOIN scenario_cohorts sc ON c.id = sc.cohort_config_id
+      LEFT JOIN verticals v ON c.vertical_id = v.id
+      WHERE sc.scenario_id IN (${placeholders})
+    `).all(...scenarioIds) as any[];
+
+    const groupByScenario = (arr: any[]) => {
+      const map: Record<string, any[]> = {};
+      for (const row of arr) {
+        if (!map[row.scenario_id]) map[row.scenario_id] = [];
+        const { scenario_id, ...data } = row;
+        map[scenario_id].push(data);
+      }
+      return map;
+    };
+
+    const srvMap = groupByScenario(serviceRows);
+    const pckMap = groupByScenario(packRows);
+    const plnMap = groupByScenario(planRows);
+    const vrtMap = groupByScenario(verticalRows);
+    const cohMap = groupByScenario(cohortRows);
+
     return rows.map(r => {
-      // Load services
-      const serviceRows = db.prepare(`
-        SELECT s.id, s.name, s.status, ss.rollout_month
-        FROM services s
-        JOIN scenario_services ss ON s.id = ss.service_id
-        WHERE ss.scenario_id = ?
-      `).all(r.id) as any[];
-
-      // Load packs
-      const packRows = db.prepare(`
-        SELECT p.id, p.name, sp.rollout_month
-        FROM packs p
-        JOIN scenario_packs sp ON p.id = sp.pack_id
-        WHERE sp.scenario_id = ?
-      `).all(r.id) as any[];
-
-      // Load plans
-      const planRows = db.prepare(`
-        SELECT pl.id, pl.name, spl.rollout_month
-        FROM plans pl
-        JOIN scenario_plans spl ON pl.id = spl.plan_id
-        WHERE spl.scenario_id = ?
-      `).all(r.id) as any[];
-
       return {
         id: r.id,
         name: r.name,
         description: r.description || '',
         projection_months: r.projection_months,
         discount_rate: r.discount_rate,
-        cohort_config_id: r.cohort_config_id,
+        scope_type: r.scope_type as ScopeType,
         created_at: r.created_at,
         updated_at: r.updated_at,
-        cohort_config: r.cohort_config_id ? {
-          id: r.cohort_config_id,
-          name: r.cohort_config_name,
-          vertical_id: '',
-          current_users: 0,
-          monthly_acquisition: 0,
-          acquisition_growth_rate: 0,
-          monthly_churn_rate: 0,
-          retention_floor: 0,
-          monthly_expansion_rate: 0,
-          ai_adoption_rate: 0,
-          base_arpu: 0,
-          created_at: '',
-          updated_at: ''
-        } : null,
-        services: serviceRows,
-        packs: packRows,
-        plans: planRows,
-        results: r.payback_months !== undefined ? {
+        scope_verticals: vrtMap[r.id] || [],
+        scope_cohorts: cohMap[r.id] || [],
+        scope_overrides: [], // Not loaded in getAll to keep it light
+        services: srvMap[r.id] || [],
+        packs: pckMap[r.id] || [],
+        plans: plnMap[r.id] || [],
+        costs: [],
+        results: r.payback_months !== undefined && r.payback_months !== null ? {
+          id: r.id,
+          scenario_id: r.id,
           payback_months: r.payback_months,
           npv: r.npv,
           irr_annual: r.irr_annual,
           tco: r.tco,
-          roi_percent: r.roi_percent
+          roi_percent: r.roi_percent,
+          monthly_cashflows: [],
+          monthly_mrr: [],
+          monthly_customers: [],
+          calculated_at: r.updated_at
         } : undefined
-      } as any;
+      } as Scenario;
     });
   },
 
   getById(id: string): Scenario | null {
     const r = db.prepare(`
-      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.cohort_config_id, s.created_at, s.updated_at,
-             c.name as cohort_config_name, c.vertical_id as cohort_vertical_id, c.current_users as cohort_current_users,
-             c.monthly_acquisition as cohort_monthly_acquisition, c.acquisition_growth_rate as cohort_acquisition_growth_rate,
-             c.monthly_churn_rate as cohort_monthly_churn_rate, c.retention_floor as cohort_retention_floor,
-             c.monthly_expansion_rate as cohort_monthly_expansion_rate, c.ai_adoption_rate as cohort_ai_adoption_rate,
-             c.base_arpu as cohort_base_arpu
+      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.created_at, s.updated_at
       FROM scenarios s
-      LEFT JOIN cohort_configs c ON s.cohort_config_id = c.id
       WHERE s.id = ?
     `).get(id) as any;
 
     if (!r) return null;
+
+    // Load verticals
+    const verticalRows = db.prepare(`
+      SELECT v.* 
+      FROM verticals v
+      JOIN scenario_verticals sv ON v.id = sv.vertical_id
+      WHERE sv.scenario_id = ?
+    `).all(id) as any[];
+
+    // Load cohorts
+    const cohortRows = db.prepare(`
+      SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition, 
+             c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu, c.created_at, c.updated_at,
+             v.name as vertical_name
+      FROM cohort_configs c
+      JOIN scenario_cohorts sc ON c.id = sc.cohort_config_id
+      LEFT JOIN verticals v ON c.vertical_id = v.id
+      WHERE sc.scenario_id = ?
+    `).all(id) as any[];
+
+    // Load scope overrides
+    const overrideRows = db.prepare(`
+      SELECT id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
+             acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override
+      FROM scenario_scope_overrides
+      WHERE scenario_id = ?
+    `).all(id) as any[];
 
     // Load services in scenario
     const serviceRows = db.prepare(`
@@ -134,32 +182,24 @@ export const scenariosRepository = {
       description: r.description || '',
       projection_months: r.projection_months,
       discount_rate: r.discount_rate,
-      cohort_config_id: r.cohort_config_id,
+      scope_type: r.scope_type as ScopeType,
       created_at: r.created_at,
       updated_at: r.updated_at,
-      cohort_config: r.cohort_config_id ? {
-        id: r.cohort_config_id,
-        name: r.cohort_config_name,
-        vertical_id: r.cohort_vertical_id,
-        current_users: r.cohort_current_users,
-        monthly_acquisition: r.cohort_monthly_acquisition,
-        acquisition_growth_rate: r.cohort_acquisition_growth_rate,
-        monthly_churn_rate: r.cohort_monthly_churn_rate,
-        retention_floor: r.cohort_retention_floor,
-        monthly_expansion_rate: r.cohort_monthly_expansion_rate,
-        ai_adoption_rate: r.cohort_ai_adoption_rate,
-        base_arpu: r.cohort_base_arpu,
-        created_at: '',
-        updated_at: ''
-      } : null,
+      scope_verticals: verticalRows,
+      scope_cohorts: cohortRows,
+      scope_overrides: overrideRows,
       services: serviceRows,
       packs: packRows,
       plans: planRows,
       costs: costRows
-    } as any;
+    } as Scenario;
   },
 
-  create(data: Omit<Scenario, 'id' | 'created_at' | 'updated_at' | 'services' | 'packs' | 'plans' | 'costs' | 'results'> & {
+  create(data: Omit<Scenario, 'id' | 'created_at' | 'updated_at' | 'services' | 'packs' | 'plans' | 'costs' | 'results' | 'scope_verticals' | 'scope_cohorts' | 'scope_overrides'> & {
+    scope_type: ScopeType;
+    vertical_ids?: string[];
+    cohort_config_ids?: string[];
+    scope_overrides?: Omit<ScopeOverride, 'id' | 'scenario_id'>[];
     services?: { id: string; rollout_month: number }[];
     packs?: { id: string; rollout_month: number }[];
     plans?: { id: string; rollout_month: number }[];
@@ -170,43 +210,66 @@ export const scenariosRepository = {
 
     db.transaction(() => {
       db.prepare(`
-        INSERT INTO scenarios (id, name, description, projection_months, discount_rate, cohort_config_id, created_at, updated_at)
+        INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, data.name, data.description || null, data.projection_months, data.discount_rate, data.cohort_config_id || null, now, now);
+      `).run(id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, now, now);
+
+      if (data.vertical_ids && data.vertical_ids.length > 0) {
+        const insertLink = db.prepare("INSERT INTO scenario_verticals (scenario_id, vertical_id) VALUES (?, ?)");
+        for (const vId of data.vertical_ids) insertLink.run(id, vId);
+      }
+
+      if (data.cohort_config_ids && data.cohort_config_ids.length > 0) {
+        const insertLink = db.prepare("INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)");
+        for (const cId of data.cohort_config_ids) insertLink.run(id, cId);
+      }
+
+      if (data.scope_overrides && data.scope_overrides.length > 0) {
+        const insertOverride = db.prepare(`
+          INSERT INTO scenario_scope_overrides (
+            id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
+            acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const ov of data.scope_overrides) {
+          insertOverride.run(
+            uuidv4(), id, ov.target_type, ov.target_id || null, 
+            ov.monthly_churn_rate ?? null, ov.monthly_acquisition ?? null,
+            ov.acquisition_growth_rate ?? null, ov.ai_adoption_rate ?? null,
+            ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null
+          );
+        }
+      }
 
       if (data.services && data.services.length > 0) {
         const insertServiceLink = db.prepare("INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)");
-        for (const s of data.services) {
-          insertServiceLink.run(id, s.id, s.rollout_month);
-        }
+        for (const s of data.services) insertServiceLink.run(id, s.id, s.rollout_month);
       }
 
       if (data.packs && data.packs.length > 0) {
         const insertPackLink = db.prepare("INSERT INTO scenario_packs (scenario_id, pack_id, rollout_month) VALUES (?, ?, ?)");
-        for (const p of data.packs) {
-          insertPackLink.run(id, p.id, p.rollout_month);
-        }
+        for (const p of data.packs) insertPackLink.run(id, p.id, p.rollout_month);
       }
 
       if (data.plans && data.plans.length > 0) {
         const insertPlanLink = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month) VALUES (?, ?, ?)");
-        for (const pl of data.plans) {
-          insertPlanLink.run(id, pl.id, pl.rollout_month);
-        }
+        for (const pl of data.plans) insertPlanLink.run(id, pl.id, pl.rollout_month);
       }
 
       if (data.cost_ids && data.cost_ids.length > 0) {
         const insertCostLink = db.prepare("INSERT INTO scenario_costs (scenario_id, cost_item_id) VALUES (?, ?)");
-        for (const cId of data.cost_ids) {
-          insertCostLink.run(id, cId);
-        }
+        for (const cId of data.cost_ids) insertCostLink.run(id, cId);
       }
     })();
 
     return this.getById(id)!;
   },
 
-  update(id: string, data: Partial<Omit<Scenario, 'id' | 'created_at' | 'updated_at' | 'services' | 'packs' | 'plans' | 'costs' | 'results'>> & {
+  update(id: string, data: Partial<Omit<Scenario, 'id' | 'created_at' | 'updated_at' | 'services' | 'packs' | 'plans' | 'costs' | 'results' | 'scope_verticals' | 'scope_cohorts' | 'scope_overrides'>> & {
+    scope_type?: ScopeType;
+    vertical_ids?: string[];
+    cohort_config_ids?: string[];
+    scope_overrides?: Omit<ScopeOverride, 'id' | 'scenario_id'>[];
     services?: { id: string; rollout_month: number }[];
     packs?: { id: string; rollout_month: number }[];
     plans?: { id: string; rollout_month: number }[];
@@ -219,54 +282,68 @@ export const scenariosRepository = {
     const description = data.description !== undefined ? data.description : current.description;
     const projection_months = data.projection_months !== undefined ? data.projection_months : current.projection_months;
     const discount_rate = data.discount_rate !== undefined ? data.discount_rate : current.discount_rate;
-    const cohort_config_id = data.cohort_config_id !== undefined ? data.cohort_config_id : current.cohort_config_id;
+    const scope_type = data.scope_type !== undefined ? data.scope_type : current.scope_type;
     const now = new Date().toISOString();
 
     db.transaction(() => {
       db.prepare(`
         UPDATE scenarios
-        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, cohort_config_id = ?, updated_at = ?
+        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, description || null, projection_months, discount_rate, cohort_config_id || null, now, id);
+      `).run(name, description || null, projection_months, discount_rate, scope_type, now, id);
+
+      if (data.vertical_ids !== undefined) {
+        db.prepare("DELETE FROM scenario_verticals WHERE scenario_id = ?").run(id);
+        const insertLink = db.prepare("INSERT INTO scenario_verticals (scenario_id, vertical_id) VALUES (?, ?)");
+        for (const vId of data.vertical_ids) insertLink.run(id, vId);
+      }
+
+      if (data.cohort_config_ids !== undefined) {
+        db.prepare("DELETE FROM scenario_cohorts WHERE scenario_id = ?").run(id);
+        const insertLink = db.prepare("INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)");
+        for (const cId of data.cohort_config_ids) insertLink.run(id, cId);
+      }
+
+      if (data.scope_overrides !== undefined) {
+        db.prepare("DELETE FROM scenario_scope_overrides WHERE scenario_id = ?").run(id);
+        const insertOverride = db.prepare(`
+          INSERT INTO scenario_scope_overrides (
+            id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
+            acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const ov of data.scope_overrides) {
+          insertOverride.run(
+            uuidv4(), id, ov.target_type, ov.target_id || null, 
+            ov.monthly_churn_rate ?? null, ov.monthly_acquisition ?? null,
+            ov.acquisition_growth_rate ?? null, ov.ai_adoption_rate ?? null,
+            ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null
+          );
+        }
+      }
 
       if (data.services !== undefined) {
         db.prepare("DELETE FROM scenario_services WHERE scenario_id = ?").run(id);
-        if (data.services.length > 0) {
-          const insertServiceLink = db.prepare("INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)");
-          for (const s of data.services) {
-            insertServiceLink.run(id, s.id, s.rollout_month);
-          }
-        }
+        const insertServiceLink = db.prepare("INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)");
+        for (const s of data.services) insertServiceLink.run(id, s.id, s.rollout_month);
       }
 
       if (data.packs !== undefined) {
         db.prepare("DELETE FROM scenario_packs WHERE scenario_id = ?").run(id);
-        if (data.packs.length > 0) {
-          const insertPackLink = db.prepare("INSERT INTO scenario_packs (scenario_id, pack_id, rollout_month) VALUES (?, ?, ?)");
-          for (const p of data.packs) {
-            insertPackLink.run(id, p.id, p.rollout_month);
-          }
-        }
+        const insertPackLink = db.prepare("INSERT INTO scenario_packs (scenario_id, pack_id, rollout_month) VALUES (?, ?, ?)");
+        for (const p of data.packs) insertPackLink.run(id, p.id, p.rollout_month);
       }
 
       if (data.plans !== undefined) {
         db.prepare("DELETE FROM scenario_plans WHERE scenario_id = ?").run(id);
-        if (data.plans.length > 0) {
-          const insertPlanLink = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month) VALUES (?, ?, ?)");
-          for (const pl of data.plans) {
-            insertPlanLink.run(id, pl.id, pl.rollout_month);
-          }
-        }
+        const insertPlanLink = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month) VALUES (?, ?, ?)");
+        for (const pl of data.plans) insertPlanLink.run(id, pl.id, pl.rollout_month);
       }
 
       if (data.cost_ids !== undefined) {
         db.prepare("DELETE FROM scenario_costs WHERE scenario_id = ?").run(id);
-        if (data.cost_ids.length > 0) {
-          const insertCostLink = db.prepare("INSERT INTO scenario_costs (scenario_id, cost_item_id) VALUES (?, ?)");
-          for (const cId of data.cost_ids) {
-            insertCostLink.run(id, cId);
-          }
-        }
+        const insertCostLink = db.prepare("INSERT INTO scenario_costs (scenario_id, cost_item_id) VALUES (?, ?)");
+        for (const cId of data.cost_ids) insertCostLink.run(id, cId);
       }
 
       // Invalidate cached results – they are now stale
@@ -280,6 +357,9 @@ export const scenariosRepository = {
       db.prepare("DELETE FROM scenario_packs WHERE scenario_id = ?").run(id);
       db.prepare("DELETE FROM scenario_plans WHERE scenario_id = ?").run(id);
       db.prepare("DELETE FROM scenario_costs WHERE scenario_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_verticals WHERE scenario_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_cohorts WHERE scenario_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_scope_overrides WHERE scenario_id = ?").run(id);
       db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(id);
       db.prepare("DELETE FROM scenarios WHERE id = ?").run(id);
     })();
@@ -341,9 +421,14 @@ export const scenariosRepository = {
       .map(r => r.scenario_id);
   },
 
+  findScenarioIdsByVerticalId(verticalId: string): string[] {
+    return (db.prepare(`SELECT scenario_id FROM scenario_verticals WHERE vertical_id = ?`).all(verticalId) as any[])
+      .map(r => r.scenario_id);
+  },
+
   findScenarioIdsByCohortId(cohortId: string): string[] {
-    return (db.prepare(`SELECT id FROM scenarios WHERE cohort_config_id = ?`).all(cohortId) as any[])
-      .map(r => r.id);
+    return (db.prepare(`SELECT scenario_id FROM scenario_cohorts WHERE cohort_config_id = ?`).all(cohortId) as any[])
+      .map(r => r.scenario_id);
   },
 
   findScenarioIdsByCostItemId(costItemId: string): string[] {
