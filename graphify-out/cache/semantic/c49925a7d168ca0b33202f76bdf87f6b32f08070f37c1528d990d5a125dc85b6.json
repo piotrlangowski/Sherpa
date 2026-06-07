@@ -1,0 +1,1 @@
+{"nodes": [{"id": "routes__layout_server_load", "label": "load", "file_type": "code", "source_file": "src/routes/+layout.server.ts"}], "edges": [{"source": "routes__layout_server_load", "target": "repositories_settings_settingsrepository", "relation": "calls", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "src/routes/+layout.server.ts"}], "hyperedges": []}

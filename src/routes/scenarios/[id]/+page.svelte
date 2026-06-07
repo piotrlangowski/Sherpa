@@ -22,6 +22,7 @@
   import Wallet from '@lucide/svelte/icons/wallet';
   import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
   import TrendingUp from '@lucide/svelte/icons/trending-up';
+  import Edit2 from '@lucide/svelte/icons/edit-2';
   import ExportButton from '$lib/components/dashboard/ExportButton.svelte';
 
   import { appState } from '$lib/stores/app.svelte';
@@ -308,6 +309,9 @@
     <!-- Actions -->
     <div class="flex items-center space-x-2 shrink-0">
       <ExportButton scenarioId={scenario.id} elementId="scenario-dashboard-container" filename="sherpa-scenario-{scenario.name.toLowerCase().replace(/\s+/g, '-')}" />
+      <Button href="/scenarios/{scenario.id}/edit" variant="outline">
+        <Edit2 class="h-4 w-4 mr-2" /> Edit Scenario
+      </Button>
       <Button href="/scenarios/{scenario.id}/sensitivity" variant="outline">
         <TrendingUp class="h-4 w-4 mr-2" /> Run Sensitivity
       </Button>
