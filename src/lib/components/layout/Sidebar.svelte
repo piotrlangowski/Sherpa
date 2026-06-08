@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page, navigating } from '$app/stores';
+  import { untrack } from 'svelte';
   import { appState } from '../../stores/app.svelte';
   
   // Lucide Icons
@@ -32,17 +33,25 @@
   let showCompletedGlow = $state(false);
 
   $effect(() => {
-    if (isUpdating) {
-      wasUpdating = true;
-      showCompletedGlow = false;
-    } else if (wasUpdating) {
-      wasUpdating = false;
-      showCompletedGlow = true;
-      const timer = setTimeout(() => {
+    const updating = isUpdating;
+    let timer: NodeJS.Timeout | undefined;
+
+    untrack(() => {
+      if (updating) {
+        wasUpdating = true;
         showCompletedGlow = false;
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
+      } else if (wasUpdating) {
+        wasUpdating = false;
+        showCompletedGlow = true;
+        timer = setTimeout(() => {
+          showCompletedGlow = false;
+        }, 1500);
+      }
+    });
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   });
 </script>
 
