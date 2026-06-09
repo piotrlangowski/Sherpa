@@ -25,9 +25,9 @@
   import Info from '@lucide/svelte/icons/info';
 
   let { data } = $props();
-  const scenario = data.scenario;
-  const sensitivityData = data.sensitivityData;
-  const variationPct = data.variationPct;
+  let scenario = $derived(data.scenario);
+  let sensitivityData = $derived(data.sensitivityData);
+  let variationPct = $derived(data.variationPct);
 
   let chartElement: HTMLDivElement | undefined = $state();
   let chartInstance: any = null;
