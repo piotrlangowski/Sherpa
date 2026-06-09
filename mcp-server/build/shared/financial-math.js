@@ -6,6 +6,48 @@
  * and the MCP Server, eliminating code duplication.
  */
 // ============================================================
+// Scope Override Cascade
+// ============================================================
+/**
+ * Applies a three-level override cascade (global → vertical → cohort) to a list of CohortConfigs.
+ * Pure function — callers are responsible for loading the correct cohorts and overrides from DB.
+ */
+export function applyScopeOverrides(cohorts, overrides) {
+    if (cohorts.length === 0)
+        return [];
+    const applyOverride = (config, override) => {
+        if (!override)
+            return config;
+        const c = { ...config };
+        if (override.monthly_churn_rate !== null && override.monthly_churn_rate !== undefined)
+            c.monthly_churn_rate = override.monthly_churn_rate;
+        if (override.monthly_acquisition !== null && override.monthly_acquisition !== undefined)
+            c.monthly_acquisition = override.monthly_acquisition;
+        if (override.acquisition_growth_rate !== null && override.acquisition_growth_rate !== undefined)
+            c.acquisition_growth_rate = override.acquisition_growth_rate;
+        if (override.ai_adoption_rate !== null && override.ai_adoption_rate !== undefined)
+            c.ai_adoption_rate = override.ai_adoption_rate;
+        if (override.retention_floor !== null && override.retention_floor !== undefined)
+            c.retention_floor = override.retention_floor;
+        if (override.expansion_rate !== null && override.expansion_rate !== undefined)
+            c.monthly_expansion_rate = override.expansion_rate;
+        if (override.arpu_override !== null && override.arpu_override !== undefined)
+            c.base_arpu = override.arpu_override;
+        return c;
+    };
+    const globalOverride = overrides.find(o => o.target_type === 'all_clients');
+    const verticalOverrides = new Map(overrides.filter(o => o.target_type === 'vertical').map(o => [o.target_id, o]));
+    const cohortOverrides = new Map(overrides.filter(o => o.target_type === 'cohort').map(o => [o.target_id, o]));
+    return cohorts.map(cohort => {
+        let c = { ...cohort };
+        c = applyOverride(c, globalOverride);
+        if (c.vertical_id)
+            c = applyOverride(c, verticalOverrides.get(c.vertical_id));
+        c = applyOverride(c, cohortOverrides.get(c.id));
+        return c;
+    });
+}
+// ============================================================
 // Cohort Model
 // ============================================================
 /**
@@ -207,13 +249,13 @@ export function calculateTCO(timeline) {
  * rather than querying the database directly.
  */
 export function calculateScenario(scenario, allProviders) {
-    const projectionMonths = scenario.projection_months || 36;
-    const annualDiscountRate = scenario.discount_rate || 0.10;
-    if (!scenario.cohort_config) {
-        throw new Error(`Scenario '${scenario.name}' lacks a cohort configuration.`);
+    const projectionMonths = scenario.projection_months ?? 36;
+    const annualDiscountRate = scenario.discount_rate ?? 0.10;
+    if (!scenario.scope_cohorts || scenario.scope_cohorts.length === 0) {
+        throw new Error(`Scenario '${scenario.name}' has no cohort configurations.`);
     }
-    // 1. Generate cohort revenue timeline
-    const cohortResult = buildCohortModel(scenario.cohort_config, projectionMonths);
+    // 1. Generate cohort revenue timelines (one per cohort)
+    const cohortResults = scenario.scope_cohorts.map(cc => buildCohortModel(cc, projectionMonths));
     // 2. Build provider lookup map
     const providersMap = new Map();
     for (const prov of allProviders) {
@@ -223,10 +265,18 @@ export function calculateScenario(scenario, allProviders) {
     let cumulativeCashFlow = 0;
     // 3. Loop through projection months
     for (let t = 0; t < projectionMonths; t++) {
-        const cohortMonth = cohortResult.timeline[t];
-        const activeCustomers = cohortMonth.activeCustomers;
-        const activeAiUsers = cohortMonth.activeAiUsers;
-        const revenue = cohortMonth.mrr;
+        let activeCustomers = 0;
+        let activeAiUsers = 0;
+        let revenue = 0;
+        // Aggregate over all cohort models for month t
+        for (const res of cohortResults) {
+            const monthData = res.timeline[t];
+            if (monthData) {
+                activeCustomers += monthData.activeCustomers;
+                activeAiUsers += monthData.activeAiUsers;
+                revenue += monthData.mrr;
+            }
+        }
         let opex = 0;
         let capex = 0;
         let tokenCosts = 0;
@@ -324,35 +374,38 @@ function cloneScenario(scenario) {
  * Pure function – requires providers to be passed in.
  */
 export function runSensitivityAnalysis(scenario, allProviders, variationPercent = 0.1) {
-    const baseResult = calculateScenario(scenario, allProviders);
-    const baseNpv = baseResult.npv;
-    const results = [];
-    const cohort = scenario.cohort_config;
-    if (!cohort) {
+    if (!scenario.scope_cohorts || scenario.scope_cohorts.length === 0) {
         return {
             scenarioId: scenario.id,
-            baseNpv,
-            baseIrr: baseResult.irrAnnual,
-            basePayback: baseResult.paybackMonths,
+            baseNpv: 0,
+            baseIrr: null,
+            basePayback: null,
             results: []
         };
     }
+    const baseResult = calculateScenario(scenario, allProviders);
+    const baseNpv = baseResult.npv;
+    const results = [];
+    // Helper to format percentage change
+    const varLabelLow = `-${(variationPercent * 100).toFixed(0)}%`;
+    const varLabelHigh = `+${(variationPercent * 100).toFixed(0)}%`;
     // 1. Churn Rate (Negative Impact: Higher churn => Lower NPV)
     {
-        const baseVal = cohort.monthly_churn_rate;
-        const lowVal = baseVal * (1 - variationPercent);
-        const highVal = baseVal * (1 + variationPercent);
         const cloneLow = cloneScenario(scenario);
-        cloneLow.cohort_config.monthly_churn_rate = lowVal;
+        for (const cc of cloneLow.scope_cohorts) {
+            cc.monthly_churn_rate = cc.monthly_churn_rate * (1 - variationPercent);
+        }
         const resLow = calculateScenario(cloneLow, allProviders);
         const cloneHigh = cloneScenario(scenario);
-        cloneHigh.cohort_config.monthly_churn_rate = highVal;
+        for (const cc of cloneHigh.scope_cohorts) {
+            cc.monthly_churn_rate = cc.monthly_churn_rate * (1 + variationPercent);
+        }
         const resHigh = calculateScenario(cloneHigh, allProviders);
         results.push({
             parameter: 'Monthly Churn Rate',
             key: 'churn_rate',
-            lowValueText: `${(lowVal * 100).toFixed(1)}%`,
-            highValueText: `${(highVal * 100).toFixed(1)}%`,
+            lowValueText: varLabelLow,
+            highValueText: varLabelHigh,
             lowNpv: resLow.npv,
             highNpv: resHigh.npv,
             lowIrr: resLow.irrAnnual,
@@ -364,20 +417,21 @@ export function runSensitivityAnalysis(scenario, allProviders, variationPercent 
     }
     // 2. Monthly Acquisition (Positive Impact: Higher acq => Higher NPV)
     {
-        const baseVal = cohort.monthly_acquisition;
-        const lowVal = baseVal * (1 - variationPercent);
-        const highVal = baseVal * (1 + variationPercent);
         const cloneLow = cloneScenario(scenario);
-        cloneLow.cohort_config.monthly_acquisition = lowVal;
+        for (const cc of cloneLow.scope_cohorts) {
+            cc.monthly_acquisition = cc.monthly_acquisition * (1 - variationPercent);
+        }
         const resLow = calculateScenario(cloneLow, allProviders);
         const cloneHigh = cloneScenario(scenario);
-        cloneHigh.cohort_config.monthly_acquisition = highVal;
+        for (const cc of cloneHigh.scope_cohorts) {
+            cc.monthly_acquisition = cc.monthly_acquisition * (1 + variationPercent);
+        }
         const resHigh = calculateScenario(cloneHigh, allProviders);
         results.push({
             parameter: 'New Monthly Customers',
             key: 'acquisition',
-            lowValueText: Math.round(lowVal).toString(),
-            highValueText: Math.round(highVal).toString(),
+            lowValueText: varLabelLow,
+            highValueText: varLabelHigh,
             lowNpv: resLow.npv,
             highNpv: resHigh.npv,
             lowIrr: resLow.irrAnnual,
@@ -389,20 +443,21 @@ export function runSensitivityAnalysis(scenario, allProviders, variationPercent 
     }
     // 3. Base ARPU (Positive Impact: Higher ARPU => Higher NPV)
     {
-        const baseVal = cohort.base_arpu;
-        const lowVal = baseVal * (1 - variationPercent);
-        const highVal = baseVal * (1 + variationPercent);
         const cloneLow = cloneScenario(scenario);
-        cloneLow.cohort_config.base_arpu = lowVal;
+        for (const cc of cloneLow.scope_cohorts) {
+            cc.base_arpu = cc.base_arpu * (1 - variationPercent);
+        }
         const resLow = calculateScenario(cloneLow, allProviders);
         const cloneHigh = cloneScenario(scenario);
-        cloneHigh.cohort_config.base_arpu = highVal;
+        for (const cc of cloneHigh.scope_cohorts) {
+            cc.base_arpu = cc.base_arpu * (1 + variationPercent);
+        }
         const resHigh = calculateScenario(cloneHigh, allProviders);
         results.push({
             parameter: 'Base ARPU',
             key: 'arpu',
-            lowValueText: `$${lowVal.toFixed(2)}`,
-            highValueText: `$${highVal.toFixed(2)}`,
+            lowValueText: varLabelLow,
+            highValueText: varLabelHigh,
             lowNpv: resLow.npv,
             highNpv: resHigh.npv,
             lowIrr: resLow.irrAnnual,
@@ -414,20 +469,21 @@ export function runSensitivityAnalysis(scenario, allProviders, variationPercent 
     }
     // 4. AI Adoption Rate
     {
-        const baseVal = cohort.ai_adoption_rate;
-        const lowVal = baseVal * (1 - variationPercent);
-        const highVal = baseVal * (1 + variationPercent);
         const cloneLow = cloneScenario(scenario);
-        cloneLow.cohort_config.ai_adoption_rate = lowVal;
+        for (const cc of cloneLow.scope_cohorts) {
+            cc.ai_adoption_rate = cc.ai_adoption_rate * (1 - variationPercent);
+        }
         const resLow = calculateScenario(cloneLow, allProviders);
         const cloneHigh = cloneScenario(scenario);
-        cloneHigh.cohort_config.ai_adoption_rate = highVal;
+        for (const cc of cloneHigh.scope_cohorts) {
+            cc.ai_adoption_rate = cc.ai_adoption_rate * (1 + variationPercent);
+        }
         const resHigh = calculateScenario(cloneHigh, allProviders);
         results.push({
             parameter: 'AI Adoption Rate',
             key: 'adoption',
-            lowValueText: `${(lowVal * 100).toFixed(1)}%`,
-            highValueText: `${(highVal * 100).toFixed(1)}%`,
+            lowValueText: varLabelLow,
+            highValueText: varLabelHigh,
             lowNpv: resLow.npv,
             highNpv: resHigh.npv,
             lowIrr: resLow.irrAnnual,
@@ -439,7 +495,7 @@ export function runSensitivityAnalysis(scenario, allProviders, variationPercent 
     }
     // 5. Discount Rate (Negative Impact: Higher discount => Lower NPV)
     {
-        const baseVal = scenario.discount_rate || 0.10;
+        const baseVal = scenario.discount_rate ?? 0.10;
         const lowVal = baseVal * (1 - variationPercent);
         const highVal = baseVal * (1 + variationPercent);
         const cloneLow = cloneScenario(scenario);

@@ -81,9 +81,11 @@ Sherpa/
 ├── data/
 │   └── sherpa.db             # Baza danych SQLite (generowana automatycznie)
 ├── svelte.config.js
-├── vite.config.ts
-└── tailwind.config.js
+└── vite.config.ts
 ```
+
+> **Tailwind CSS v4** — konfiguracja i motyw OKLCH zdefiniowane w `src/routes/layout.css` (brak pliku `tailwind.config.js`).
+
 
 ---
 

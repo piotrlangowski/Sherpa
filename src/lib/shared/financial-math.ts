@@ -10,6 +10,7 @@ import type {
   Provider,
   Scenario,
   CohortConfig,
+  ScopeOverride,
   MonthlyBreakdown,
   CalculationResult,
   CohortTimelineResult,
@@ -17,6 +18,43 @@ import type {
   SensitivityParamResult,
   SensitivityAnalysisResult
 } from './types.js';
+
+// ============================================================
+// Scope Override Cascade
+// ============================================================
+
+/**
+ * Applies a three-level override cascade (global → vertical → cohort) to a list of CohortConfigs.
+ * Pure function — callers are responsible for loading the correct cohorts and overrides from DB.
+ */
+export function applyScopeOverrides(cohorts: CohortConfig[], overrides: ScopeOverride[]): CohortConfig[] {
+  if (cohorts.length === 0) return [];
+
+  const applyOverride = (config: CohortConfig, override: ScopeOverride | undefined): CohortConfig => {
+    if (!override) return config;
+    const c = { ...config };
+    if (override.monthly_churn_rate !== null && override.monthly_churn_rate !== undefined) c.monthly_churn_rate = override.monthly_churn_rate;
+    if (override.monthly_acquisition !== null && override.monthly_acquisition !== undefined) c.monthly_acquisition = override.monthly_acquisition;
+    if (override.acquisition_growth_rate !== null && override.acquisition_growth_rate !== undefined) c.acquisition_growth_rate = override.acquisition_growth_rate;
+    if (override.ai_adoption_rate !== null && override.ai_adoption_rate !== undefined) c.ai_adoption_rate = override.ai_adoption_rate;
+    if (override.retention_floor !== null && override.retention_floor !== undefined) c.retention_floor = override.retention_floor;
+    if (override.expansion_rate !== null && override.expansion_rate !== undefined) c.monthly_expansion_rate = override.expansion_rate;
+    if (override.arpu_override !== null && override.arpu_override !== undefined) c.base_arpu = override.arpu_override;
+    return c;
+  };
+
+  const globalOverride = overrides.find(o => o.target_type === 'all_clients');
+  const verticalOverrides = new Map(overrides.filter(o => o.target_type === 'vertical').map(o => [o.target_id, o]));
+  const cohortOverrides = new Map(overrides.filter(o => o.target_type === 'cohort').map(o => [o.target_id, o]));
+
+  return cohorts.map(cohort => {
+    let c = { ...cohort };
+    c = applyOverride(c, globalOverride);
+    if (c.vertical_id) c = applyOverride(c, verticalOverrides.get(c.vertical_id));
+    c = applyOverride(c, cohortOverrides.get(c.id));
+    return c;
+  });
+}
 
 // ============================================================
 // Cohort Model

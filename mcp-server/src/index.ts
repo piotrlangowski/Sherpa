@@ -7,13 +7,15 @@ import db from "./db.js";
 import {
   calculateScenario,
   runSensitivityAnalysis,
-  buildCohortModel
+  buildCohortModel,
+  applyScopeOverrides
 } from "./shared/financial-math.js";
 import type {
   Scenario,
   Provider,
   Service,
   CohortConfig,
+  ScopeOverride,
   CostItem,
   CalculationResult
 } from "./shared/types.js";
@@ -33,30 +35,60 @@ function getProviders(): Provider[] {
   `).all() as any[];
 }
 
-// Helper: Load a full scenario object with nested configs, services, and costs
+// Helper: Load a full scenario using the current multi-cohort schema (scope_type + junctions)
 function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
-    SELECT id, name, description, projection_months, discount_rate, cohort_config_id
+    SELECT id, name, description, projection_months, discount_rate, scope_type
     FROM scenarios
     WHERE id = ?
   `).get(scenarioId) as any;
 
   if (!s) return null;
 
-  // Load cohort config
-  if (s.cohort_config_id) {
-    s.cohort_config = db.prepare(`
-      SELECT id, name, vertical_id, current_users, monthly_acquisition, 
-             acquisition_growth_rate, monthly_churn_rate, retention_floor, 
+  // Resolve cohorts based on scope_type
+  let baseCohorts: CohortConfig[] = [];
+  if (s.scope_type === 'all_clients') {
+    baseCohorts = db.prepare(`
+      SELECT id, name, vertical_id, current_users, monthly_acquisition,
+             acquisition_growth_rate, monthly_churn_rate, retention_floor,
              monthly_expansion_rate, ai_adoption_rate, base_arpu
       FROM cohort_configs
-      WHERE id = ?
-    `).get(s.cohort_config_id);
+    `).all() as any[];
+  } else if (s.scope_type === 'verticals') {
+    baseCohorts = db.prepare(`
+      SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition,
+             c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor,
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu
+      FROM cohort_configs c
+      JOIN verticals v ON c.vertical_id = v.id
+      JOIN scenario_verticals sv ON sv.vertical_id = v.id
+      WHERE sv.scenario_id = ?
+    `).all(scenarioId) as any[];
+  } else {
+    // scope_type = 'cohorts' (default)
+    baseCohorts = db.prepare(`
+      SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition,
+             c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor,
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu
+      FROM cohort_configs c
+      JOIN scenario_cohorts sc ON sc.cohort_config_id = c.id
+      WHERE sc.scenario_id = ?
+    `).all(scenarioId) as any[];
   }
+
+  // Load scope overrides and apply cascade
+  const overrides = db.prepare(`
+    SELECT id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
+           acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override
+    FROM scenario_scope_overrides
+    WHERE scenario_id = ?
+  `).all(scenarioId) as ScopeOverride[];
+
+  s.scope_cohorts = applyScopeOverrides(baseCohorts, overrides);
 
   // Load services
   s.services = db.prepare(`
-    SELECT s.id, s.name, s.description, s.status, s.provider_id, 
+    SELECT s.id, s.name, s.description, s.status, s.provider_id,
            s.avg_input_tokens, s.avg_output_tokens, s.avg_requests_per_user_month,
            s.fixed_cost_per_month, ss.rollout_month
     FROM services s
@@ -419,7 +451,7 @@ server.tool(
   async () => {
     try {
       const scenarios = db.prepare(`
-        SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.cohort_config_id, s.created_at, s.updated_at,
+        SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.created_at, s.updated_at,
                r.payback_months, r.npv, r.irr_annual, r.tco, r.roi_percent
         FROM scenarios s
         LEFT JOIN scenario_results r ON s.id = r.scenario_id
@@ -477,11 +509,15 @@ server.tool(
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate, cc.monthly_churn_rate, cc.retention_floor, cc.monthly_expansion_rate, cc.ai_adoption_rate, cc.base_arpu, now, now);
 
-        // Create scenario
+        // Create scenario (multi-cohort schema)
         db.prepare(`
-          INSERT INTO scenarios (id, name, description, projection_months, discount_rate, cohort_config_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(scenarioId, args.name, args.description || null, args.projection_months, args.discount_rate, cohortId, now, now);
+          INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?)
+        `).run(scenarioId, args.name, args.description || null, args.projection_months, args.discount_rate, now, now);
+
+        // Link cohort via junction
+        db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`)
+          .run(scenarioId, cohortId);
 
         // Map services
         if (args.services) {
@@ -778,9 +814,12 @@ server.tool(
         `).run(cohortId, `${scenarioName} Cohort`, null, currentUsers, monthlyAcquisition, acquisitionGrowthRate, monthlyChurnRate, retentionFloor, monthlyExpansionRate, aiAdoptionRate, baseArpu, now, now);
 
         db.prepare(`
-          INSERT INTO scenarios (id, name, description, projection_months, discount_rate, cohort_config_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(scenarioId, scenarioName, args.description, projectionMonths, discountRate, cohortId, now, now);
+          INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?)
+        `).run(scenarioId, scenarioName, args.description, projectionMonths, discountRate, now, now);
+
+        db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`)
+          .run(scenarioId, cohortId);
 
         if (serviceRollouts.length > 0) {
           const insertLink = db.prepare("INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)");

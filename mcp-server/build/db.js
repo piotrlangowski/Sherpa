@@ -2,23 +2,20 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+// Canonical path: build/ sits at mcp-server/build/, so ../../data/sherpa.db resolves to <project-root>/data/sherpa.db
+const canonicalPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../data/sherpa.db');
 const dbPaths = [
     process.env.SHERPA_DB_PATH,
-    '/Users/piotrlangowski/Documents/Sherpa/data/sherpa.db',
-    path.join(process.cwd(), '../data/sherpa.db'),
+    canonicalPath,
     path.join(process.cwd(), 'data/sherpa.db'),
-    path.join(path.dirname(fileURLToPath(import.meta.url)), '../../data/sherpa.db')
+    path.join(process.cwd(), '../data/sherpa.db'),
 ].filter(Boolean);
-let dbPath = '';
+let dbPath = canonicalPath;
 for (const p of dbPaths) {
     if (fs.existsSync(p)) {
         dbPath = p;
         break;
     }
-}
-// Fallback to absolute default
-if (!dbPath) {
-    dbPath = '/Users/piotrlangowski/Documents/Sherpa/data/sherpa.db';
 }
 // Always log to stderr in MCP servers to avoid stdout JSON-RPC corruption
 console.error(`MCP connecting to database at: ${dbPath}`);

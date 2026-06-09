@@ -6,9 +6,10 @@ import {
   calculateTCO,
   buildCohortModel,
   calculateScenario,
-  runSensitivityAnalysis
+  runSensitivityAnalysis,
+  applyScopeOverrides
 } from './financial-math.js';
-import type { Provider, Scenario, CohortConfig, CostItem, Service } from './types.js';
+import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride } from './types.js';
 
 describe('Financial Math Module Tests', () => {
   describe('calculateNPV', () => {
@@ -303,6 +304,87 @@ describe('Financial Math Module Tests', () => {
       const invalidScenario = { ...scenario, scope_cohorts: [] as any };
       const results = runSensitivityAnalysis(invalidScenario, [provider]);
       expect(results.results.length).toBe(0);
+    });
+  });
+
+  describe('applyScopeOverrides', () => {
+    const baseCohort: CohortConfig = {
+      id: 'c1',
+      name: 'Base',
+      vertical_id: 'v1',
+      current_users: 1000,
+      monthly_acquisition: 100,
+      acquisition_growth_rate: 0.01,
+      monthly_churn_rate: 0.05,
+      retention_floor: 0.60,
+      monthly_expansion_rate: 0.02,
+      ai_adoption_rate: 0.30,
+      base_arpu: 100
+    };
+
+    it('should return cohorts unchanged when no overrides', () => {
+      const result = applyScopeOverrides([baseCohort], []);
+      expect(result[0]).toEqual(baseCohort);
+    });
+
+    it('should return empty array when cohorts empty', () => {
+      expect(applyScopeOverrides([], [])).toEqual([]);
+    });
+
+    it('should apply global override', () => {
+      const override: ScopeOverride = {
+        id: 'o1', scenario_id: 's1', target_type: 'all_clients', target_id: null,
+        monthly_churn_rate: 0.02, monthly_acquisition: null, acquisition_growth_rate: null,
+        ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null
+      };
+      const result = applyScopeOverrides([baseCohort], [override]);
+      expect(result[0].monthly_churn_rate).toBe(0.02);
+      expect(result[0].base_arpu).toBe(100); // unchanged
+    });
+
+    it('should apply vertical override after global', () => {
+      const global: ScopeOverride = {
+        id: 'o1', scenario_id: 's1', target_type: 'all_clients', target_id: null,
+        monthly_churn_rate: 0.02, monthly_acquisition: null, acquisition_growth_rate: null,
+        ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null
+      };
+      const vertical: ScopeOverride = {
+        id: 'o2', scenario_id: 's1', target_type: 'vertical', target_id: 'v1',
+        monthly_churn_rate: 0.03, monthly_acquisition: null, acquisition_growth_rate: null,
+        ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null
+      };
+      const result = applyScopeOverrides([baseCohort], [global, vertical]);
+      // vertical wins over global for this cohort
+      expect(result[0].monthly_churn_rate).toBe(0.03);
+    });
+
+    it('should apply cohort override last, overriding global and vertical', () => {
+      const global: ScopeOverride = {
+        id: 'o1', scenario_id: 's1', target_type: 'all_clients', target_id: null,
+        monthly_churn_rate: 0.02, monthly_acquisition: null, acquisition_growth_rate: null,
+        ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null
+      };
+      const cohortLevel: ScopeOverride = {
+        id: 'o2', scenario_id: 's1', target_type: 'cohort', target_id: 'c1',
+        monthly_churn_rate: 0.01, monthly_acquisition: 200, acquisition_growth_rate: null,
+        ai_adoption_rate: 0.5, retention_floor: null, expansion_rate: 0.03, arpu_override: 150
+      };
+      const result = applyScopeOverrides([baseCohort], [global, cohortLevel]);
+      expect(result[0].monthly_churn_rate).toBe(0.01);
+      expect(result[0].monthly_acquisition).toBe(200);
+      expect(result[0].ai_adoption_rate).toBe(0.5);
+      expect(result[0].monthly_expansion_rate).toBe(0.03);
+      expect(result[0].base_arpu).toBe(150);
+    });
+
+    it('should not mutate the original cohort objects', () => {
+      const override: ScopeOverride = {
+        id: 'o1', scenario_id: 's1', target_type: 'all_clients', target_id: null,
+        monthly_churn_rate: 0.01, monthly_acquisition: null, acquisition_growth_rate: null,
+        ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null
+      };
+      applyScopeOverrides([baseCohort], [override]);
+      expect(baseCohort.monthly_churn_rate).toBe(0.05); // original unchanged
     });
   });
 });
