@@ -37,7 +37,7 @@
 
     try {
       // Import html2canvas dynamically to ensure it doesn't run during SSR
-      const { default: html2canvas } = await import('html2canvas');
+      const { default: html2canvas } = await import('html2canvas-pro');
 
       // Capture the canvas with optimized rendering properties
       // Determine background color based on active theme
