@@ -10,10 +10,32 @@
       .filter((segment) => segment !== '')
       .map((segment, index, arr) => {
         const href = '/' + arr.slice(0, index + 1).join('/');
-        const label = segment
-          .split('-')
-          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-          .join(' ');
+        let label = segment;
+
+        if (segment === $page.params.id) {
+          if ($page.data.scenario?.name && $page.data.scenario?.id === segment) {
+            label = $page.data.scenario.name;
+          } else if ($page.data.plan?.name && $page.data.plan?.id === segment) {
+            label = $page.data.plan.name;
+          } else if ($page.data.pack?.name && $page.data.pack?.id === segment) {
+            label = $page.data.pack.name;
+          } else if ($page.data.service?.name && $page.data.service?.id === segment) {
+            label = $page.data.service.name;
+          } else if ($page.data.vertical?.name && $page.data.vertical?.id === segment) {
+            label = $page.data.vertical.name;
+          } else {
+            label = segment
+              .split('-')
+              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ');
+          }
+        } else {
+          label = segment
+            .split('-')
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+        }
+
         return { label, href };
       })
   );
