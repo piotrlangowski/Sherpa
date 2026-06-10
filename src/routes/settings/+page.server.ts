@@ -10,8 +10,7 @@ export const load: PageServerLoad = async () => {
       currency: settings.currency,
       defaultDiscountRate: settings.default_discount_rate,
       setupCompleted: settings.setup_completed,
-      projectionHorizonMonths: settings.projection_horizon_months,
-      hubspotAccessToken: settings.hubspot_access_token
+      projectionHorizonMonths: settings.projection_horizon_months
     }
   };
 };
@@ -23,7 +22,6 @@ export const actions: Actions = {
     const currency = formData.get('currency') as any;
     const defaultDiscountRate = parseFloat(formData.get('defaultDiscountRate') as string);
     const projectionHorizonMonths = parseInt(formData.get('projectionHorizonMonths') as string, 10);
-    const hubspotAccessToken = formData.get('hubspotAccessToken') as string;
 
     if (!companyName) {
       return fail(400, { error: 'Company name is required' });
@@ -34,8 +32,7 @@ export const actions: Actions = {
         company_name: companyName,
         currency,
         default_discount_rate: defaultDiscountRate,
-        projection_horizon_months: projectionHorizonMonths,
-        hubspot_access_token: hubspotAccessToken
+        projection_horizon_months: projectionHorizonMonths
       });
       return { success: true };
     } catch (err: any) {

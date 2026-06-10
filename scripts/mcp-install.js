@@ -89,15 +89,27 @@ try {
     config.mcpServers = {};
   }
 
-  // Register the server with absolute paths
-  config.mcpServers['sherpa-roi-calculator'] = {
+  // Drop the legacy entry name so the dev registration is not duplicated
+  if (config.mcpServers['sherpa-roi-calculator']) {
+    delete config.mcpServers['sherpa-roi-calculator'];
+    console.log('🧹 Removed legacy "sherpa-roi-calculator" entry.');
+  }
+
+  // Register the DEV server: runs from the repo build and explicitly pins the
+  // repo database via SHERPA_DB_PATH, so it shares data with `npm run dev`.
+  // The packaged .mcpb extension ("Sherpa") uses the OS user data dir instead —
+  // keeping dev and test environments separate.
+  config.mcpServers['sherpa-dev'] = {
     command: 'node',
     args: [mcpServerBuild],
-    cwd: projectRoot
+    cwd: projectRoot,
+    env: {
+      SHERPA_DB_PATH: path.join(projectRoot, 'data', 'sherpa.db')
+    }
   };
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-  console.log('\x1b[32m%s\x1b[0m', '🚀 Successfully registered "sherpa-roi-calculator" in Claude Desktop config!');
+  console.log('\x1b[32m%s\x1b[0m', '🚀 Successfully registered "sherpa-dev" in Claude Desktop config!');
   console.log('\x1b[36m%s\x1b[0m', '\nℹ️  Notice: Restart your Claude Desktop application to load the MCP server.\n');
 } catch (err) {
   console.error('\x1b[31m%s\x1b[0m', `❌ Error updating Claude Desktop config: ${err.message}`);

@@ -25,6 +25,10 @@ import type {
 const server = new McpServer({
   name: "sherpa-roi-calculator",
   version: "1.0.0"
+}, {
+  capabilities: {
+    prompts: {}
+  }
 });
 
 // Helper: Query all providers from database
@@ -1005,6 +1009,223 @@ server.resource(
         }]
       };
     }
+  }
+);
+
+// ============================================================
+// PROMPTS DEFINITION
+// ============================================================
+
+server.prompt(
+  "sherpa-catalog-manager",
+  "Manages the AI service catalog, feature packs, and pricing plans. Use when adding or updating services, model parameters (input/output token costs), or pricing tiers.",
+  {},
+  async () => {
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `## Core Concepts
+
+**Sherpa Catalog Structure**:
+1. **AI Services**: Individual AI features (e.g. Chatbot, Translator, Semantic Search). Each service defines:
+    - Input tokens (\`avg_input_tokens\`) and Output tokens (\`avg_output_tokens\`) per request.
+    - Expected monthly requests per user (\`avg_requests_per_user_month\`).
+    - Fixed monthly costs (\`fixed_cost_per_month\`).
+    - A Provider (\`provider_id\`) which determines the pricing tier for LLM tokens.
+2. **Feature Packs**: Bundles of AI services (e.g., "AI Basics Pack" containing Chatbot and Translation, "AI Advanced Pack" containing Semantic Search).
+3. **Pricing Plans**: SaaS subscription plans (e.g. Starter, Growth, Enterprise). A plan has a monthly subscription base price (\`base_price\`) and maps to one or more Feature Packs or individual AI Services.
+4. **Global Settings**: Global parameters like \`company_name\`, \`currency\`, \`default_discount_rate\`, and default \`projection_horizon_months\`.
+
+## Workflow Patterns
+
+### 1. Catalog Management (Services)
+- **List services**: Use \`list_services\` to inspect current items in the catalog and retrieve their \`provider_id\` values.
+- **Create service**: Use \`create_service\` to register a new service.
+  - Arguments: \`{ name, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, status, fixed_cost_per_month }\`
+- **Update service**: Use \`update_service\` to edit service specifications (e.g. if the team optimizes prompt sizes, lowering \`avg_input_tokens\`).
+
+### 2. Feature Packaging (Packs)
+- **List Packs**: Use \`list_packs\` to see existing groups.
+- **Create Pack**: Use \`create_pack\` to group multiple services.
+  - Arguments: \`{ name, description, service_ids: ["id1", "id2", ...] }\`
+
+### 3. Subscription & Pricing Setup (Plans)
+- **List Plans**: Use \`list_plans\` to see existing tiers.
+- **Create Plan**: Use \`create_plan\` to link pricing to packs.
+  - Arguments: \`{ name, base_price, pack_ids: ["pack1", ...], service_ids: ["service1", ...] }\`
+
+### 4. Global Settings CRUD
+- **Get Settings**: Use \`get_settings\` to retrieve company details.
+- **Update Settings**: Use \`update_settings\` to adjust corporate WACC / default discount rates or projection horizons.
+
+## Design Tips
+
+1. **Status**: A service's status can be \`"planned"\` or \`"existing"\`. Existing services are already running, whereas planned services indicate features to be rolled out.
+2. **Model Cost Estimates**: If creating a service and the provider is unknown, search or prompt the user for the best matching predefined provider (e.g., OpenAI GPT-4o, Anthropic Claude 3.5 Sonnet) from the database providers list.`
+          }
+        }
+      ]
+    };
+  }
+);
+
+server.prompt(
+  "sherpa-financial-analyst",
+  "Calculates and analyzes ROI, NPV, IRR, TCO, and sensitivity for Sherpa scenarios. Use when the user requests financial metrics, performance forecasts, or parameter sensitivity.",
+  {},
+  async () => {
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `## Core Concepts
+
+**Financial Engine Metrics**:
+- **NPV (Net Present Value)**: The total present value of discounted net cash flows. A positive NPV indicates that the project is profitable given the discount rate (WACC).
+- **IRR (Internal Rate of Return)**: The annualized return rate of the project. Compare this against the hurdle rate/WACC.
+- **Payback Period**: The number of months it takes for cumulative net cash flow to turn positive. Calculated using linear interpolation.
+- **TCO (Total Cost of Ownership)**: Includes all Capex/Opex infrastructure, development costs, and LLM model usage (input and output token fees).
+- **ROI%**: Procentowy zwrot z inwestycji, szacowany jako \`(Suma przychodów z projektu - TCO) / TCO\`.
+
+## Workflow Patterns
+
+### 1. Triggering Calculations & Fetching Results
+To analyze a scenario, first run the calculations to ensure the cached values are up-to-date, then fetch the detailed monthly logs if necessary.
+
+1. **Calculate ROI**: Use \`calculate_roi\` with the scenario \`id\`.
+    - Tool: \`calculate_roi\`
+    - Arguments: \`{ id: "scenario-uuid" }\`
+2. **Retrieve Detailed Timeline**: Query the scenario results resource to inspect monthly cashflows, customer growth, and MRR.
+    - Resource URI: \`sherpa://scenarios/{id}/results\`
+
+### 2. Sensitivity Analysis (Tornado Data)
+Evaluate how fluctuations in the model parameters impact the scenario's NPV. This is useful for identifying financial risks.
+
+- **Tool**: \`run_sensitivity\`
+- **Arguments**: \`{ id: "scenario-uuid", variation_percent: 0.10 }\` (default variations are ±10%)
+- **Analysis**:
+  - Compare the **Impact Range** of each variable.
+  - Variables with the largest impact range represent the highest risk and leverage.
+  - Common critical variables: \`churn\`, \`arpu\`, \`adoption\`, and \`token costs\`.
+
+## Reporting Guidelines
+
+When reporting to CPOs or RevOps:
+1. **Summary Table**: Present the high-level metrics clearly (NPV, IRR, Payback, TCO, ROI%).
+2. **Timeline Narrative**: Mention when the project breaks even (Payback Period).
+3. **Risk Mitigation**: Use sensitivity data to point out which parameters the product team must optimize (e.g., "A 10% increase in Churn drops NPV by $50k, making customer retention the highest leverage factor").`
+          }
+        }
+      ]
+    };
+  }
+);
+
+server.prompt(
+  "sherpa-scenario-comparator",
+  "Compares different SaaS ROI scenarios and calculates opportunity costs. Use when comparing options (e.g. low-tier chatbot vs premium copilot) or querying the dashboard summary.",
+  {},
+  async () => {
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `## Core Concepts
+
+**Opportunity Cost in Sherpa**: When evaluating multiple product strategies, choosing a sub-optimal scenario instead of the one with the highest NPV results in an opportunity cost.
+- **Delta NPV ($\Delta$ NPV)**: The difference in Net Present Value between the highest-NPV scenario and a given alternative.
+- **Tradeoff Analysis**: Balances higher ARPU (revenue) against higher Capex/Opex or LLM token usage (costs).
+
+## Workflow Patterns
+
+### 1. High-level Dashboard Review
+To see all existing scenarios and quickly identify candidates for comparison, retrieve the general dashboard summary.
+
+- **Resource URI**: \`sherpa://dashboard/summary\`
+- **Output**: Returns a JSON array of all scenarios with their name, discount rate, projection horizon, and cached results (NPV, IRR, TCO, etc.).
+
+### 2. Multi-scenario Comparison
+To perform a side-by-side financial comparison and calculate opportunity costs between selected scenarios:
+
+- **Tool**: \`compare_scenarios\`
+- **Arguments**: \`{ ids: ["uuid-1", "uuid-2", ...] }\`
+- **Output**: Returns a Markdown comparison table and lists the specific opportunity cost delta of choosing any scenario over the best one.
+
+## Strategic Decision-Making Rules
+
+When presenting choices to product leaders (CPO/RevOps):
+1. **Lead with the Optimal Choice**: Identify the scenario that maximizes NPV.
+2. **Highlight the Hurdle (IRR)**: Check if the annualized IRR of all scenarios exceeds the discount rate/WACC. Reject any scenario where IRR is lower than the discount rate.
+3. **Evaluate Cash Flow Risk (Payback)**: A scenario might have a slightly higher NPV but a much longer payback period (e.g. 24 months vs 6 months). Call out this liquidity risk.
+4. **Token Cost Sensitivity**: A scenario using expensive models (e.g., GPT-4o, Claude 3.5 Sonnet) might have higher revenue but high volatility if adoption spikes. Point this out as an infrastructure risk.`
+          }
+        }
+      ]
+    };
+  }
+);
+
+server.prompt(
+  "sherpa-scenario-manager",
+  "Guides creating and configuring SaaS ROI scenarios in Sherpa. Use when setting up new scenarios from plain text or structured metrics.",
+  {},
+  async () => {
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `## Core Concepts
+
+**SaaS Cohort Model**: Sherpa uses a cohort-based model to project revenue and calculate LLM/Infrastructure costs over time. A cohort is defined by:
+- **Starting/Current Users** (\`current_users\`): Initial user base.
+- **Monthly Acquisition** (\`monthly_acquisition\`): New users added each month.
+- **Acquisition Growth Rate** (\`acquisition_growth_rate\`): Growth of the acquisition channel.
+- **Monthly Churn Rate** (\`monthly_churn_rate\`): Customer churn.
+- **Retention Floor** (\`retention_floor\`): Minimum percentage of users retained in the long term.
+- **AI Adoption Rate** (\`ai_adoption_rate\`): The fraction of users within the cohort who adopt and trigger the active AI features.
+- **Base ARPU** (\`base_arpu\`): Average Revenue Per User.
+
+## Workflow Patterns
+
+### 1. Natural Language Scenario Generation
+When a user provides a plain-text description of their project, cohort, or pricing metrics, use the \`generate_scenario_from_description\` tool. This tool parses the text and automatically creates the scenario, cohort configuration, and attempts to link existing services from the catalog.
+
+- **Tool**: \`generate_scenario_from_description\`
+- **Argument**: \`{ description: "A plain text description" }\`
+
+*Example usage:*
+> "Utwórz scenariusz 'Chatbot Pro' z 5000 początkowych użytkowników, churnem 4% i ARPU 150$. Wprowadzamy usługę summarization w 3 miesiącu."
+
+### 2. Structured Scenario Creation
+If the user provides structured cohort metrics or wants exact control over service mappings, use \`create_scenario\`.
+
+- **Tool**: \`create_scenario\`
+- **Key Fields**:
+  - \`name\`: Scenario name.
+  - \`projection_months\`: Duration of analysis (typically 36 or 60).
+  - \`discount_rate\`: Annual discount rate (default is 10%/0.10).
+  - \`cohort_config\`: Object defining user acquisition, churn, ARPU, and adoption.
+  - \`services\`: Array of \`{ id: string, rollout_month: number }\` to attach.
+  - \`cost_ids\`: Array of Capex/Opex fixed cost item IDs to attach.
+
+## Guidelines for Scenario Setup
+
+1. **Rollout Month**: When attaching services, define \`rollout_month\` carefully. A rollout month of \`0\` means the service starts immediately. A rollout of \`6\` means costs are deferred until month 6 of the projection.
+2. **AI Adoption vs Cohort Size**: Ensure the \`ai_adoption_rate\` is specified correctly (e.g. 0.3 for 30%). This controls what percentage of users incur model token costs.
+3. **Discount Rate (WACC)**: Use a realistic discount rate (normally between 0.08 and 0.15) to discount future cash flows.`
+          }
+        }
+      ]
+    };
   }
 );
 

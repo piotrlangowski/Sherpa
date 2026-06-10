@@ -27,7 +27,6 @@
   let currency = $state(data.settings.currency);
   let discountRate = $state([Math.round(data.settings.defaultDiscountRate * 100)]);
   let projectionHorizonMonths = $state(data.settings.projectionHorizonMonths);
-  let hubspotAccessToken = $state(data.settings.hubspotAccessToken || '');
 
   let showResetConfirm = $state(false);
   let isSaving = $state(false);
@@ -124,14 +123,6 @@
           <p class="text-xs text-muted-foreground">Used as the cost of capital to compute Net Present Value (NPV).</p>
         </div>
 
-        <hr class="border-border/40 my-4" />
-
-        <!-- Integrations (HubSpot Token) -->
-        <div class="space-y-2">
-          <Label for="hubspotAccessToken">HubSpot Private App Access Token</Label>
-          <Input id="hubspotAccessToken" name="hubspotAccessToken" type="password" bind:value={hubspotAccessToken} class="max-w-md bg-background/50" placeholder="pat-na1-..." />
-          <p class="text-xs text-muted-foreground">Used to fetch Deals and Company records to calculate market segments (Verticals) and customer groups (Cohorts).</p>
-        </div>
       </CardContent>
 
       <CardFooter class="border-t border-border bg-black/10 flex justify-end py-4">

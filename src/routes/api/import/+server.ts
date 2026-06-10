@@ -464,7 +464,7 @@ export const POST: RequestHandler = async ({ request }) => {
         scope_type: scenario.scope_type,
         vertical_ids: verticalIds,
         cohort_config_ids: cohortIds,
-        overrides: overrides,
+        scope_overrides: overrides,
         services: serviceRollouts,
         packs: packRollouts,
         plans: planRollouts,

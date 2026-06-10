@@ -1,7 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import Button from '$lib/components/ui/button/button.svelte';
-  import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
@@ -15,21 +14,15 @@
   import { formatNumber, formatCurrency, formatPercent } from '$lib/utils/format';
 
   // Lucide Icons
-  import FileSpreadsheet from '@lucide/svelte/icons/file-spreadsheet';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
-  import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import UploadCloud from '@lucide/svelte/icons/upload-cloud';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
   import CheckCircle from '@lucide/svelte/icons/check-circle';
   import Sparkles from '@lucide/svelte/icons/sparkles';
 
-  let { data } = $props();
-
   // State using Svelte 5 runes
-  let activeTab = $state<'csv' | 'hubspot'>('csv');
   let csvText = $state('');
-  let hubspotToken = $state(data.hubspotAccessToken || '');
   let isLoading = $state(false);
   let errorMsg = $state('');
   let successMsg = $state('');
@@ -75,22 +68,14 @@
     previewVerticals = null;
 
     try {
-      const payload: any = {
-        action: 'preview',
-        source: activeTab
-      };
-
-      if (activeTab === 'csv') {
-        if (!csvText.trim()) {
-          throw new Error('Please paste CSV text or upload a CSV file first.');
-        }
-        payload.csvText = csvText;
-      } else {
-        if (!hubspotToken.trim()) {
-          throw new Error('Please provide a HubSpot Private App Access Token.');
-        }
-        payload.tokenOverride = hubspotToken;
+      if (!csvText.trim()) {
+        throw new Error('Please paste CSV text or upload a CSV file first.');
       }
+
+      const payload = {
+        action: 'preview',
+        csvText
+      };
 
       const response = await fetch('/api/import-user-base', {
         method: 'POST',
@@ -118,16 +103,10 @@
     successMsg = '';
 
     try {
-      const payload: any = {
+      const payload = {
         action: 'import',
-        source: activeTab
+        csvText
       };
-
-      if (activeTab === 'csv') {
-        payload.csvText = csvText;
-      } else {
-        payload.tokenOverride = hubspotToken;
-      }
 
       const response = await fetch('/api/import-user-base', {
         method: 'POST',
@@ -160,7 +139,7 @@
       </Button>
       <div>
         <h2 class="text-2xl font-bold tracking-tight">Import User Base</h2>
-        <p class="text-muted-foreground text-sm font-normal">Pull and model customer cohorts directly from external files or CRM platforms.</p>
+        <p class="text-muted-foreground text-sm font-normal">Model customer cohorts from a CSV export of your CRM or billing data.</p>
       </div>
     </div>
   </div>
@@ -181,140 +160,59 @@
     </Alert>
   {/if}
 
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-    <!-- Configuration panel -->
-    <div class="md:col-span-1 space-y-4">
-      <Card class="border-border bg-card/40 backdrop-blur-sm shadow-sm select-none">
-        <CardHeader class="border-b border-border bg-black/10">
-          <CardTitle class="text-base font-semibold">Select Data Source</CardTitle>
-          <CardDescription>Choose how you want to bring in your segments.</CardDescription>
-        </CardHeader>
-        <CardContent class="pt-4 flex flex-col space-y-2">
-          <button
-            class="flex items-center space-x-3 p-3 rounded-lg border text-left transition-all duration-150 {activeTab === 'csv' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-black/10 text-muted-foreground hover:bg-white/5 hover:text-foreground'}"
-            onclick={() => { activeTab = 'csv'; previewVerticals = null; }}
-          >
-            <FileSpreadsheet class="h-5 w-5" />
-            <div>
-              <div class="font-semibold text-sm">Flat File (CSV)</div>
-              <div class="text-xs text-muted-foreground mt-0.5">Paste text or drag a local file</div>
-            </div>
-          </button>
-          
-          <button
-            class="flex items-center space-x-3 p-3 rounded-lg border text-left transition-all duration-150 {activeTab === 'hubspot' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-black/10 text-muted-foreground hover:bg-white/5 hover:text-foreground'}"
-            onclick={() => { activeTab = 'hubspot'; previewVerticals = null; }}
-          >
-            <RefreshCw class="h-5 w-5" />
-            <div>
-              <div class="font-semibold text-sm">HubSpot CRM</div>
-              <div class="text-xs text-muted-foreground mt-0.5">Fetch live Companies & Deals</div>
-            </div>
-          </button>
-        </CardContent>
-      </Card>
-    </div>
+  <!-- Data loading zone -->
+  <Card class="border-border shadow-sm">
+    <CardHeader>
+      <CardTitle>CSV Data Import</CardTitle>
+      <CardDescription>
+        Expects columns for Company Name, Industry/Vertical, signup date, active status, and monthly contract value.
+      </CardDescription>
+    </CardHeader>
+    <CardContent class="space-y-4">
+      <!-- Drag and drop zone -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="border-2 border-dashed rounded-lg p-8 text-center transition-all duration-150 {isDragging ? 'border-primary bg-primary/5' : 'border-border hover:bg-white/5'}"
+        ondragover={(e) => { e.preventDefault(); isDragging = true; }}
+        ondragleave={() => isDragging = false}
+        ondrop={handleFileDrop}
+      >
+        <input
+          type="file"
+          id="csvFile"
+          accept=".csv"
+          class="hidden"
+          onchange={handleFileSelect}
+        />
+        <label for="csvFile" class="cursor-pointer flex flex-col items-center justify-center space-y-2">
+          <UploadCloud class="h-10 w-10 text-primary/80" />
+          <span class="text-sm font-semibold">Drag & drop your CSV file here or <span class="text-primary underline">browse</span></span>
+          <span class="text-xs text-muted-foreground">Supports standard comma-separated and semicolon-separated files</span>
+        </label>
+      </div>
 
-    <!-- Data loading zone -->
-    <div class="md:col-span-2">
-      <Card class="border-border shadow-sm">
-        {#if activeTab === 'csv'}
-          <CardHeader>
-            <CardTitle>CSV Data Import</CardTitle>
-            <CardDescription>
-              Expects columns for Company Name, Industry/Vertical, signup date, active status, and monthly contract value.
-            </CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-4">
-            <!-- Drag and drop zone -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="border-2 border-dashed rounded-lg p-8 text-center transition-all duration-150 {isDragging ? 'border-primary bg-primary/5' : 'border-border hover:bg-white/5'}"
-              ondragover={(e) => { e.preventDefault(); isDragging = true; }}
-              ondragleave={() => isDragging = false}
-              ondrop={handleFileDrop}
-            >
-              <input
-                type="file"
-                id="csvFile"
-                accept=".csv"
-                class="hidden"
-                onchange={handleFileSelect}
-              />
-              <label for="csvFile" class="cursor-pointer flex flex-col items-center justify-center space-y-2">
-                <UploadCloud class="h-10 w-10 text-primary/80" />
-                <span class="text-sm font-semibold">Drag & drop your CSV file here or <span class="text-primary underline">browse</span></span>
-                <span class="text-xs text-muted-foreground">Supports standard comma-separated and semicolon-separated files</span>
-              </label>
-            </div>
-
-            <!-- CSV manual pasting -->
-            <div class="space-y-1.5">
-              <Label for="csvPaste" class="text-sm font-semibold">Or paste raw CSV content below</Label>
-              <textarea
-                id="csvPaste"
-                bind:value={csvText}
-                rows="6"
-                placeholder="Company,Vertical,JoinDate,Status,Revenue&#10;Acme Corp,Software,2026-01-15,Active,150&#10;Beta Inc,Finance,2026-02-10,Active,300&#10;Gamma LLC,Healthcare,2026-01-05,Churned,80"
-                class="w-full bg-black/10 border border-input rounded-md p-3 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
-              ></textarea>
-            </div>
-          </CardContent>
+      <!-- CSV manual pasting -->
+      <div class="space-y-1.5">
+        <Label for="csvPaste" class="text-sm font-semibold">Or paste raw CSV content below</Label>
+        <textarea
+          id="csvPaste"
+          bind:value={csvText}
+          rows="6"
+          placeholder="Company,Vertical,JoinDate,Status,Revenue&#10;Acme Corp,Software,2026-01-15,Active,150&#10;Beta Inc,Finance,2026-02-10,Active,300&#10;Gamma LLC,Healthcare,2026-01-05,Churned,80"
+          class="w-full bg-black/10 border border-input rounded-md p-3 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
+        ></textarea>
+      </div>
+    </CardContent>
+    <CardFooter class="border-t border-border bg-black/10 py-4 flex justify-end">
+      <Button onclick={generatePreview} disabled={isLoading} size="sm">
+        {#if isLoading}
+          <RefreshCw class="h-4 w-4 mr-2 animate-spin" /> Parsing & Calculating...
         {:else}
-          <CardHeader>
-            <CardTitle>HubSpot CRM Integration</CardTitle>
-            <CardDescription>
-              Authenticate using a HubSpot Private App Access Token. We will fetch deals and companies and aggregate them into cohorts.
-            </CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-4">
-            <div class="space-y-1.5">
-              <Label for="hsToken" class="font-semibold flex justify-between">
-                <span>Private App Access Token</span>
-                {#if data.hubspotAccessToken}
-                  <span class="text-xs text-emerald-400 flex items-center">
-                    <ShieldCheck class="h-3 w-3 mr-1" /> Saved Token Found
-                  </span>
-                {/if}
-              </Label>
-              <Input
-                id="hsToken"
-                type="password"
-                bind:value={hubspotToken}
-                placeholder="pat-na1-..."
-                class="bg-black/10 border-border font-mono text-sm"
-              />
-              <p class="text-xs text-muted-foreground">
-                Tokens are stored securely in your local SQLite configuration and never shared externally.
-              </p>
-            </div>
-
-            <!-- Predefined fields info -->
-            <div class="rounded-lg bg-black/20 p-4 text-xs space-y-2 border border-border/40 select-none">
-              <div class="font-semibold text-primary flex items-center">
-                <Sparkles class="h-3.5 w-3.5 mr-1" /> HubSpot Default Mapping
-              </div>
-              <ul class="list-disc list-inside space-y-1 pl-1 text-muted-foreground">
-                <li><strong>Verticals (Segments)</strong>: Mapped to Company <code class="text-foreground">industry</code>.</li>
-                <li><strong>Cohorts (Customer Groups)</strong>: Grouped by month of Deal <code class="text-foreground">Close Date</code> (Closed Won deals).</li>
-                <li><strong>Starting Users</strong>: Sum of active Companies in each close-date month.</li>
-                <li><strong>Base ARPU</strong>: Calculated from Deal <code class="text-foreground">amount</code>.</li>
-              </ul>
-            </div>
-          </CardContent>
+          <Sparkles class="h-4 w-4 mr-2" /> Generate Preview
         {/if}
-        <CardFooter class="border-t border-border bg-black/10 py-4 flex justify-end">
-          <Button onclick={generatePreview} disabled={isLoading} size="sm">
-            {#if isLoading}
-              <RefreshCw class="h-4 w-4 mr-2 animate-spin" /> Fetching & Calculating...
-            {:else}
-              <Sparkles class="h-4 w-4 mr-2" /> Generate Preview
-            {/if}
-          </Button>
-        </CardFooter>
-      </Card>
-    </div>
-  </div>
+      </Button>
+    </CardFooter>
+  </Card>
 
   <!-- Preview table section -->
   {#if previewVerticals}

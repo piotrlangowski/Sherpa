@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  app:
+    name: App — typecheck, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check (svelte-check)
+        run: npm run check
+
+      - name: Unit tests (vitest)
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+  mcp-server:
+    name: MCP server — build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: mcp-server
+
+      - name: Build (tsc, includes shared/ via symlink)
+        run: npm run build
+        working-directory: mcp-server
+
+      - name: Smoke test — server self-initializes a fresh database
+        run: |
+          SHERPA_DB_PATH="$RUNNER_TEMP/sherpa-smoke/sherpa.db" node --input-type=module -e "await import('file://$GITHUB_WORKSPACE/mcp-server/build/db.js'); process.exit(0)"
+          node -e "
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync(process.env.RUNNER_TEMP + '/sherpa-smoke/sherpa.db');
+            const tables = db.prepare(\"SELECT COUNT(*) c FROM sqlite_master WHERE type='table'\").get().c;
+            const providers = db.prepare('SELECT COUNT(*) c FROM providers').get().c;
+            if (tables < 20 || providers < 5) { throw new Error('Self-seed incomplete: ' + tables + ' tables, ' + providers + ' providers'); }
+            console.log('Self-seed OK:', tables, 'tables,', providers, 'providers');
+          "

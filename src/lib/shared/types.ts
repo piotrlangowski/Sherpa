@@ -29,7 +29,6 @@ export interface Settings {
   default_discount_rate: number;
   setup_completed: boolean;
   projection_horizon_months: number;
-  hubspot_access_token?: string;
 }
 
 export interface Provider {

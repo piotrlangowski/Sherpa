@@ -14,8 +14,7 @@ export const settingsRepository = {
       currency: (settingsMap['currency'] as Currency) || 'USD',
       default_discount_rate: parseFloat(settingsMap['default_discount_rate'] || '0.10'),
       setup_completed: settingsMap['setup_completed'] === '1',
-      projection_horizon_months: parseInt(settingsMap['projection_horizon_months'] || '36', 10),
-      hubspot_access_token: settingsMap['hubspot_access_token'] || ''
+      projection_horizon_months: parseInt(settingsMap['projection_horizon_months'] || '36', 10)
     };
   },
 
@@ -36,9 +35,6 @@ export const settingsRepository = {
       }
       if (settings.projection_horizon_months !== undefined) {
         updateStmt.run('projection_horizon_months', settings.projection_horizon_months.toString());
-      }
-      if (settings.hubspot_access_token !== undefined) {
-        updateStmt.run('hubspot_access_token', settings.hubspot_access_token);
       }
     })();
   },
@@ -68,7 +64,7 @@ export const settingsRepository = {
       db.prepare("DELETE FROM scenario_results").run();
     })();
     // Re-seed since settings table is empty
-    const { seedDatabase } = await import('../seed');
+    const { seedDatabase } = await import('../../shared/seed');
     seedDatabase(db);
   }
 };

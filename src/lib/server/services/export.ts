@@ -91,7 +91,7 @@ export function exportScenarioToJSON(scenarioId: string): string {
     exportedAt: new Date().toISOString(),
     scenario: {
       name: scenario.name,
-      description: scenario.description,
+      description: scenario.description || '',
       projection_months: scenario.projection_months,
       discount_rate: scenario.discount_rate,
       scope_type: scenario.scope_type,

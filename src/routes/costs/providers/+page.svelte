@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import { onMount } from 'svelte';
   import { formatCurrency } from '$lib/utils/format';
+  import { PROVIDER_PRICES_AS_OF } from '$lib/utils/constants';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -127,13 +128,16 @@
   <div class="flex items-center justify-between">
     <div>
       <h2 class="text-2xl font-bold tracking-tight">AI Provider Models</h2>
-      <p class="text-muted-foreground text-sm">Configure token prices for calculating AI service execution costs.</p>
+      <p class="text-muted-foreground text-sm">
+        Configure token prices for calculating AI service execution costs.
+        Bundled price list as of <span class="font-semibold text-foreground">{PROVIDER_PRICES_AS_OF}</span> — verify against provider pricing pages before relying on it.
+      </p>
     </div>
-    
+
     <div class="flex items-center space-x-3">
       <Button variant="outline" onclick={triggerUpdatePrices} disabled={isUpdatingPrices}>
         <RefreshCw class="h-4 w-4 mr-2 {isUpdatingPrices ? 'animate-spin' : ''}" />
-        {#if isUpdatingPrices}Updating...{:else}Update Pricing (Opt-In){/if}
+        {#if isUpdatingPrices}Syncing...{:else}Sync Bundled Prices{/if}
       </Button>
       <Button onclick={openCreate}>
         <Plus class="h-4 w-4 mr-2" /> Add Custom Model
@@ -274,7 +278,7 @@
     <Card class="border-border animate-in fade-in duration-200">
       <CardHeader>
         <CardTitle>Token Price Sheet</CardTitle>
-        <CardDescription>Prices are defined per 1,000,000 (1M) tokens in USD.</CardDescription>
+        <CardDescription>Prices are defined per 1,000,000 (1M) tokens in USD. Standard models reflect the bundled price list as of {PROVIDER_PRICES_AS_OF}.</CardDescription>
       </CardHeader>
       
       <CardContent class="p-0">

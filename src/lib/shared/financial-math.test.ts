@@ -144,7 +144,7 @@ describe('Financial Math Module Tests', () => {
       base_arpu: 100
     };
 
-    const serviceWithProvider: Service = {
+    const serviceWithProvider: Service & { rollout_month: number } = {
       id: 's1',
       name: 'Summarization',
       status: 'planned',
@@ -156,7 +156,7 @@ describe('Financial Math Module Tests', () => {
       rollout_month: 2
     };
 
-    const serviceWithoutProviderId: Service = {
+    const serviceWithoutProviderId: Service & { rollout_month: number } = {
       id: 's2',
       name: 'Local Model',
       status: 'planned',
@@ -168,7 +168,7 @@ describe('Financial Math Module Tests', () => {
       rollout_month: 0
     };
 
-    const serviceWithUnknownProvider: Service = {
+    const serviceWithUnknownProvider: Service & { rollout_month: number } = {
       id: 's3',
       name: 'Future Model',
       status: 'planned',
@@ -256,7 +256,7 @@ describe('Financial Math Module Tests', () => {
       base_arpu: 100
     };
 
-    const service: Service = {
+    const service: Service & { rollout_month: number } = {
       id: 's1',
       name: 'Summarization',
       status: 'planned',

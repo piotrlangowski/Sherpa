@@ -1,6 +1,11 @@
-import type { Database } from 'better-sqlite3';
+export interface DatabaseConnection {
+  prepare(sql: string): any;
+  exec(sql: string): void;
+  transaction<T>(fn: (...args: any[]) => T): (...args: any[]) => T;
+  pragma?(sql: string): void;
+}
 
-export function runMigrations(db: Database): void {
+export function runMigrations(db: DatabaseConnection): void {
   // Use a transaction for safe schema execution
   db.transaction(() => {
     // 1. Settings
@@ -302,7 +307,7 @@ export function runMigrations(db: Database): void {
  * Handles upgrading an existing DB from the old single-cohort model
  * to the new multi-cohort scope model.
  */
-function runDataMigrations(db: Database): void {
+function runDataMigrations(db: DatabaseConnection): void {
   // Migration 1: Add scope_type column to scenarios if it doesn't exist
   // (for databases created before this schema version)
   const scenarioColumns = (db.prepare("PRAGMA table_info(scenarios)").all() as any[])

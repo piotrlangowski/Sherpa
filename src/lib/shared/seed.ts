@@ -1,16 +1,17 @@
-import type { Database } from 'better-sqlite3';
-import { v4 as uuidv4 } from 'uuid';
-import { PREDEFINED_PROVIDERS } from '../utils/constants';
+import type { DatabaseConnection } from './db-schema.js';
+import { randomUUID as uuidv4 } from 'crypto';
+import { PREDEFINED_PROVIDERS } from './provider-catalog.js';
 
-export function seedDatabase(db: Database): void {
+export function seedDatabase(db: DatabaseConnection): void {
   // Check if already seeded by checking settings
   const checkSettings = db.prepare("SELECT COUNT(*) as count FROM settings").get() as { count: number };
   if (checkSettings.count > 0) {
-    console.log('Database already initialized/seeded. Skipping seed.');
+    // stderr only — this also runs inside the MCP server, where stdout carries JSON-RPC
+    console.error('Database already initialized/seeded. Skipping seed.');
     return;
   }
 
-  console.log('Seeding database with default settings and sample data...');
+  console.error('Seeding database with default settings and sample data...');
 
   db.transaction(() => {
     // 1. Insert settings
@@ -22,8 +23,9 @@ export function seedDatabase(db: Database): void {
     insertSetting.run('projection_horizon_months', '36');
 
     // 1.5 Insert Client Base (Global defaults)
+    // OR REPLACE: runMigrations already creates a placeholder singleton row
     db.prepare(`
-      INSERT INTO client_base (
+      INSERT OR REPLACE INTO client_base (
         id, total_users, default_arpu, default_monthly_churn_rate, default_monthly_acquisition,
         default_acquisition_growth_rate, default_ai_adoption_rate, default_retention_floor,
         default_expansion_rate, updated_at
@@ -68,11 +70,11 @@ export function seedDatabase(db: Database): void {
     const sSentiment = uuidv4();
     const sPredictive = uuidv4();
 
-    insertService.run(sSummarization, 'AI Document Summarization', 'Summarizes text documents uploaded by users.', 'existing', providersMap['OpenAI - GPT-4o'], 800, 300, 200, null, now, now);
-    insertService.run(sSearch, 'Smart Search', 'Semantic search across user data indexes.', 'existing', providersMap['Google - Gemini 2.5 Flash'], 500, 100, 500, null, now, now);
-    insertService.run(sChatbot, 'AI Chatbot', 'Conversational AI customer agent helper.', 'existing', providersMap['Anthropic - Claude 3.5 Haiku'], 1200, 600, 100, null, now, now);
-    insertService.run(sSentiment, 'Sentiment Analysis', 'Classifies sentiment of chat logs to flag customer satisfaction issues.', 'planned', providersMap['OpenAI - GPT-4o mini'], 300, 50, 300, null, now, now);
-    insertService.run(sPredictive, 'Predictive Analytics', 'Forecasts user behavior based on index searches and uploads.', 'planned', providersMap['Google - Gemini 2.5 Pro'], 2000, 500, 50, null, now, now);
+    insertService.run(sSummarization, 'AI Document Summarization', 'Summarizes text documents uploaded by users.', 'existing', providersMap['OpenAI - GPT-5.5'], 800, 300, 200, null, now, now);
+    insertService.run(sSearch, 'Smart Search', 'Semantic search across user data indexes.', 'existing', providersMap['Google - Gemini 3.5 Flash'], 500, 100, 500, null, now, now);
+    insertService.run(sChatbot, 'AI Chatbot', 'Conversational AI customer agent helper.', 'existing', providersMap['Anthropic - Claude Haiku 4.5'], 1200, 600, 100, null, now, now);
+    insertService.run(sSentiment, 'Sentiment Analysis', 'Classifies sentiment of chat logs to flag customer satisfaction issues.', 'planned', providersMap['OpenAI - GPT-5.4 mini'], 300, 50, 300, null, now, now);
+    insertService.run(sPredictive, 'Predictive Analytics', 'Forecasts user behavior based on index searches and uploads.', 'planned', providersMap['Google - Gemini 3.1 Pro'], 2000, 500, 50, null, now, now);
 
     // 4. Service Dependencies
     const insertDependency = db.prepare(`
@@ -206,5 +208,5 @@ export function seedDatabase(db: Database): void {
     insertResult.run(uuidv4(), scGlobal, payback, npv, irr, tco, roi, cashflows, mrr, customers, now);
   })();
 
-  console.log('Database seed completed successfully!');
+  console.error('Database seed completed successfully!');
 }

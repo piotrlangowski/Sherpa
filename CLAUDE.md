@@ -16,14 +16,14 @@ npm run check          # svelte-check type checking — this is the lint/CI gate
 npm run check:watch    # type check in watch mode
 ```
 
-**Tests** — there is no `test` script in `package.json`. Run Vitest directly:
+**Tests**:
 
 ```bash
+npm test                                          # single pass (CI) — alias for `vitest run`
 npx vitest                                        # watch mode
-npx vitest run                                    # single pass (CI)
 npx vitest run src/lib/shared/financial-math.test.ts   # one file
 npx vitest run -t "calculates NPV"                # one test by name
-npx vitest run --coverage                         # coverage (only measures src/lib/shared/**; thresholds 80/80/65)
+npx vitest run --coverage                         # coverage (measures src/lib/shared/** minus db-schema/seed/provider-catalog; thresholds 80/80/65)
 ```
 
 Test files are colocated as `*.test.ts`. Only two suites exist today (`src/lib/shared/financial-math.test.ts`, `src/lib/server/services/importer.test.ts`); the pure math module is the primary thing under test.
@@ -34,7 +34,9 @@ Test files are colocated as `*.test.ts`. Only two suites exist today (`src/lib/s
 cd mcp-server && npm install && npm run build     # tsc → mcp-server/build/
 node mcp-server/build/index.js                    # run over stdio
 cd mcp-server && npm run dev                       # run from source via tsx
-npm run mcp:install                               # (from root) copy mcp-skills/ → .agent/skills/ and register the server in Claude Desktop config
+npm run mcp:install                               # (from root) copy mcp-skills/ → .agent/skills/ and register "sherpa-dev" in Claude Desktop config (env SHERPA_DB_PATH → repo data/sherpa.db)
+npm run mcp:inspect                               # (from root) open MCP Inspector against the built server — fastest tool-testing loop, no Claude Desktop needed
+npm run mcp:pack                                  # (from root) build + pack the Claude Desktop extension → sherpa.mcpb (manifest in mcp-server/manifest.json)
 ```
 
 ## Architecture
@@ -44,7 +46,7 @@ This repo contains **two independent TypeScript projects**, each with its own `p
 - the **SvelteKit app** at the root (`src/`)
 - the **MCP server** at `mcp-server/`
 
-They share financial logic through a **symlink**: `mcp-server/src/shared → ../../src/lib/shared`. So `src/lib/shared/` is the single source of truth, and `tsc` compiles the symlinked copy into `mcp-server/build/shared/`. **After changing anything in `src/lib/shared/`, rebuild the MCP server** (`cd mcp-server && npm run build`) or it will serve stale logic.
+They share code through a **symlink**: `mcp-server/src/shared → ../../src/lib/shared`. So `src/lib/shared/` is the single source of truth — financial math, types, the DB schema (`db-schema.ts`), the demo seed (`seed.ts`), and the provider price catalog (`provider-catalog.ts`) — and `tsc` compiles the symlinked copy into `mcp-server/build/shared/`. Relative imports **inside** `src/lib/shared/` must use the `.js` extension (NodeNext resolution in the MCP build). **After changing anything in `src/lib/shared/`, rebuild the MCP server** (`cd mcp-server && npm run build`) or it will serve stale logic.
 
 ### Pure vs. impure split (the central design decision)
 - **`src/lib/shared/financial-math.ts`** — ALL computation: `buildCohortModel`, `calculateNPV`/`calculateIRR` (Newton-Raphson + bisection fallback) / `calculatePaybackPeriod` / `calculateTCO`, `calculateScenario`, `runSensitivityAnalysis`. These are **pure** functions with zero DB access; providers are passed in as arguments. This is what the MCP server consumes.
@@ -52,9 +54,9 @@ They share financial logic through a **symlink**: `mcp-server/src/shared → ../
 - Put new financial math in the **shared** module, not in the server wrapper, so the app and MCP stay consistent.
 
 ### Data layer
-- SQLite via `better-sqlite3`. The connection is a **singleton** created on first import of `src/lib/server/db.ts` (WAL mode, `foreign_keys = ON`). Importing it runs `runMigrations` (`schema.ts`) then `seedDatabase` (`seed.ts`) automatically. The DB file is `data/sherpa.db` resolved relative to `process.cwd()`.
+- SQLite via built-in `node:sqlite` (`DatabaseSync`). The connection is a **singleton** created on first import of `src/lib/server/db.ts` (WAL mode, `foreign_keys = ON`). Importing it runs `runMigrations` (`src/lib/shared/db-schema.ts`) then `seedDatabase` (`src/lib/shared/seed.ts`) automatically. The app's DB file is `data/sherpa.db` resolved relative to `process.cwd()`; the MCP server has its own resolution order (see Gotchas).
 - `src/lib/server/repositories/*.ts` — one plain object per entity (e.g. `scenariosRepository`) holding prepared statements. **Server-only** (they import `db`); never import them into client components.
-- Schema lives entirely in `schema.ts` as idempotent `CREATE TABLE IF NOT EXISTS` calls inside one transaction, plus a `runDataMigrations` step for additive `ALTER TABLE`/backfill (SQLite can't drop columns, so legacy columns like `scenarios.cohort_config_id` are left in place and simply no longer written).
+- Schema lives entirely in `src/lib/shared/db-schema.ts` as idempotent `CREATE TABLE IF NOT EXISTS` calls inside one transaction, plus a `runDataMigrations` step for additive `ALTER TABLE`/backfill (SQLite can't drop columns, so legacy columns like `scenarios.cohort_config_id` are left in place and simply no longer written). Schema + seed sit in `shared/` (not `server/`) so the MCP server can self-initialize a fresh database.
 
 ### SvelteKit conventions
 - Route directories use `+page.server.ts` (a `load` function for reads + `actions` for mutations via `FormData`) calling repositories, with `+page.svelte` for UI. Global settings are loaded in `src/routes/+layout.server.ts`.
@@ -77,6 +79,5 @@ A `Scenario` targets a **scope** (`scope_type`: `all_clients` | `verticals` | `c
 `$lib` → `src/lib`. Per `components.json`: `$lib/components`, `$lib/components/ui`, `$lib/utils`, `$lib/hooks`.
 
 ## Gotchas
-- **MCP scenario reads are on the legacy schema.** `getFullScenario` in `mcp-server/src/index.ts` still reads the old single `scenarios.cohort_config_id` / `cohort_config`, which predates the multi-cohort scope migration. Scenarios created by the current app store cohorts in the `scenario_cohorts` junction, so the MCP path can return missing/stale cohort data. Account for this when touching MCP scenario tooling.
-- **MCP DB path.** `mcp-server/src/db.ts` resolves the DB by trying `SHERPA_DB_PATH`, then a **hardcoded absolute path**, then cwd-relative fallbacks. The app and MCP must point at the **same** `data/sherpa.db` to share data (the installer sets `cwd` to the project root for this reason). A stale `mcp-server/data/sherpa.db` also exists — ignore it. MCP servers must log only to `stderr` (stdout carries JSON-RPC).
+- **MCP DB path resolution** (`mcp-server/src/db.ts`): `SHERPA_DB_PATH` **always wins** (even for a not-yet-existing file — dev/test separation depends on this; the parent dir is created), then `<repo>/data/sherpa.db` if it exists (dev), then the OS user data dir (`~/Library/Application Support/Sherpa/` on macOS) for packaged installs. The MCP server **self-initializes** (migrations + seed) on first run. The `mcp:install` script registers the dev server as `sherpa-dev` with `SHERPA_DB_PATH` pinned to the repo DB so it shares data with `npm run dev`. A stale `mcp-server/data/sherpa.db` may also exist — ignore it. MCP servers must log only to `stderr` (stdout carries JSON-RPC) — this includes anything reachable from `shared/seed.ts`.
 - `.npmrc` sets `engine-strict=true`.

@@ -1,163 +1,141 @@
 # Sherpa — AI Feature ROI Calculator for SaaS
 
-Sherpa to aplikacja internetowa typu **local-first** stworzona z myślą o Dyrektorach Produktu (CPO) oraz specjalistach RevOps. Umożliwia precyzyjne modelowanie finansowe oraz szacowanie zwrotu z inwestycji (ROI) przy wdrażaniu funkcji sztucznej inteligencji (AI) do produktów SaaS.
+[![CI](https://github.com/piotrlangowski/Sherpa/actions/workflows/ci.yml/badge.svg)](https://github.com/piotrlangowski/Sherpa/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Local-first](https://img.shields.io/badge/data-100%25%20local-success)
 
-Aplikacja integruje model kohortowy przychodów z silnikiem kalkulacji kosztów infrastruktury LLM (tokeny) oraz wydatków CAPEX/OPEX, oferując zaawansowane analizy scenariuszowe, analizę wrażliwości (wykresy Tornado) oraz integrację z modelami LLM za pomocą dedykowanego serwera MCP (Model Context Protocol).
+**Should we ship that AI feature?** Sherpa answers with CFO-grade numbers instead of gut feeling: it combines a cohort-based revenue model with an LLM token cost engine and CAPEX/OPEX tracking, and turns them into NPV, IRR, payback period, TCO and ROI — locally, with nothing leaving your machine.
 
----
+Built for product leaders (CPO/RevOps) at SaaS companies, it also ships as an **MCP server**, so you can model scenarios conversationally from Claude Desktop: *"create a scenario with 5,000 users, 4% churn and a $150 ARPU chatbot rollout"*.
 
-## 🚀 Główne Funkcje
+<!-- TODO(screenshots): docs/screenshots/dashboard.png — scenario dashboard with KPI cards and cashflow chart -->
+<!-- TODO(screenshots): docs/screenshots/tornado.png — sensitivity analysis tornado chart -->
+<!-- TODO(screenshots): docs/screenshots/wizard.png — 4-step scenario creation wizard -->
+<!-- TODO(screenshots): docs/screenshots/mcp-claude-desktop.png — creating a scenario from natural language in Claude Desktop -->
 
-### 1. Zarządzanie Katalogiem (Catalog)
-* **AI Services**: Definiowanie usług AI (np. czat, podsumowania), przypisywanie dostawców modeli (OpenAI, Anthropic itp.) oraz szacowanie liczby zapytań, tokenów wejściowych/wyjściowych i kosztów stałych.
-* **Feature Packs**: Grupowanie usług AI w pakiety funkcjonalne.
-* **Pricing Plans**: Mapowanie pakietów na plany subskrypcyjne.
-* **Wizualizacja Zależności**: Interaktywny graf skierowany (DAG) w ECharts pokazujący powiązania i zależności między usługami AI.
-
-### 2. Silnik Finansowy (Financial Engine)
-* **NPV (Net Present Value)**: Dyskontowanie przepływów pieniężnych w skali miesięcznej na podstawie rocznej stopy dyskontowej.
-* **IRR (Internal Rate of Return)**: Roczna wewnętrzna stopa zwrotu wyznaczana numerycznie (metoda Newtona-Raphsona z fallbackiem do bisekcji).
-* **Payback Period**: Okres zwrotu z inwestycji z interpolacją liniową dla ułamków miesięcy.
-* **TCO (Total Cost of Ownership)**: Całkowity koszt posiadania uwzględniający koszty tokenów LLM, infrastrukturę, utrzymanie oraz zespoły deweloperskie (CAPEX/OPEX).
-* **ROI %**: Procentowy zwrot z inwestycji.
-
-### 3. Model Kohortowy (Cohort Model)
-* **Projekcje Przychodu**: Prognozy MRR/ARR na podstawie kohort użytkowników.
-* **Krzywa Retencji**: Wykładniczy spadek retencji (`retention(n) = max(floor, e^(-λ·n))`).
-* **Adopcja AI**: Overlay adopcji określający, jaki odsetek użytkowników w danej kohorcie faktycznie generuje koszty tokenowe.
-* **Ekspansja**: Wzrost ARPU w czasie.
-
-### 4. Analiza Wrażliwości i Porównanie Scenariuszy
-* **Tornado Charts**: Analiza wpływu zmiany 6 kluczowych parametrów (churn, akwizycja, ARPU, koszty tokenów, adopcja, stopa dyskontowa) o ±10% na końcowe NPV scenariusza.
-* **Scenario Comparison**: Zestawienie porównawcze wskaźników KPI oraz wykresów skumulowanego ROI, przepływów pieniężnych i liczby użytkowników dla wielu scenariuszy z obliczeniem kosztu alternatywnego ($\Delta$ NPV).
-
-### 5. Import i Eksport Danych
-* **Eksport do PNG**: Pobieranie widoku pulpitu nawigacyjnego jako estetycznego obrazu o wysokiej rozdzielczości (dzięki `html2canvas`).
-* **Import/Eksport JSON & CSV**: Kompletne kopie zapasowe scenariuszy w formacie JSON oraz eksport zestawień miesięcznych do formatu CSV z automatycznym przeliczaniem po imporcie.
-
-### 6. Serwer MCP (Model Context Protocol)
-Wbudowany serwer MCP działający przez strumień standardowy (`stdio`), udostępniający 14 narzędzi oraz zasoby dla modeli LLM (np. Claude Desktop). Pozwala na:
-* Odczyt i aktualizację ustawień.
-* Zarządzanie usługami, pakietami i planami.
-* Tworzenie i kalkulację scenariuszy z poziomu asystenta AI.
-* Analizy wrażliwości i porównania.
+<!-- TODO(demo): link the 2-minute walkthrough video here -->
 
 ---
 
-## 🛠️ Stos Technologiczny
+## Why it's different
 
-* **Frontend & Routing**: SvelteKit 2 + Svelte 5 (Runes), TypeScript
-* **Stylizacja**: Tailwind CSS v4, dynamiczny ciemny motyw OKLCH (zintegrowany z shadcn-svelte)
-* **Komponenty UI**: `shadcn-svelte` (napędzany przez Bits UI)
-* **Wykresy**: Apache ECharts 6
-* **Baza Danych**: SQLite (`better-sqlite3` z włączonym trybem WAL i obsługą kluczy obcych)
-* **Walidacja danych**: Zod
-* **Integracja LLM**: `@modelcontextprotocol/sdk` (wersja 1.4+)
+Typical ROI calculators don't understand LLM economics; token cost calculators don't understand revenue. Sherpa models both sides of the equation in one place:
 
----
+- **Revenue side** — cohort projections with exponential retention decay (`retention(n) = max(floor, e^(-λ·n))`), acquisition growth, ARPU expansion, and an AI-adoption overlay that controls which users actually generate token costs.
+- **Cost side** — per-service LLM token costs (input/output prices per model, requests per user), plus CAPEX/OPEX items (engineering, infrastructure, marketing, compliance).
+- **Decision layer** — monthly discounted cashflows rolled up into NPV, IRR (Newton-Raphson with bisection fallback), payback period (with linear interpolation), TCO and ROI%.
 
-## 📂 Struktura Projektu
+## Features
 
-```
-Sherpa/
-├── src/                      # Aplikacja SvelteKit
-│   ├── lib/
-│   │   ├── components/       # Komponenty UI (dashboard, katalog, layout)
-│   │   ├── server/           # Logika serwerowa
-│   │   │   ├── db.ts         # Singleton połączenia z SQLite
-│   │   │   ├── schema.ts     # Definicje tabel (18 tabel)
-│   │   │   ├── seed.ts       # Dane demonstracyjne
-│   │   │   ├── repositories/ # Warstwa dostępu do danych (CRUD)
-│   │   │   └── services/     # Silnik finansowy, kohorty, import/eksport
-│   │   ├── stores/           # Svelte 5 stores dla stanu globalnego
-│   │   └── types/            # Interfejsy TS i schematy walidacji Zod
-│   └── routes/               # Ścieżki i kontrolery SvelteKit
-├── mcp-server/               # Niezależny serwer MCP
-│   ├── src/
-│   │   ├── db.ts             # Udostępnione połączenie z bazą danych
-│   │   ├── math.ts           # Wydzielona, czysta implementacja obliczeń
-│   │   └── index.ts          # Definicje narzędzi (tools) i zasobów (resources)
-│   └── tsconfig.json
-├── data/
-│   └── sherpa.db             # Baza danych SQLite (generowana automatycznie)
-├── svelte.config.js
-└── vite.config.ts
+- **Catalog** — define AI services (chat, summarization, search…), assign provider models, group services into feature packs, map packs onto pricing plans, and visualize service dependencies as a DAG.
+- **Scoped scenarios** — target the whole client base, selected verticals, or individual cohorts, with a three-level parameter override cascade (global → vertical → cohort).
+- **Sensitivity analysis** — tornado charts showing how ±10% swings in churn, acquisition, ARPU, token costs, adoption and discount rate move the NPV.
+- **Scenario comparison** — side-by-side KPIs, cumulative ROI curves and opportunity cost (ΔNPV) between alternatives.
+- **Import & export** — model your real customer base from a CSV export (CRM/billing), export scenarios to JSON/CSV, download the dashboard as a high-res PNG.
+- **Current model prices** — bundled price list for OpenAI, Anthropic and Google models with a visible "prices as of" date and one-click sync.
+- **MCP server** — 15 tools and 2 resources exposing the same engine to LLM hosts; includes natural-language scenario generation and 4 bundled agent skills.
+
+## Architecture
+
+Two independent TypeScript projects share one engine through a symlink — the financial math, domain types, DB schema and demo seed live in `src/lib/shared/` and are compiled into both:
+
+```mermaid
+graph LR
+    subgraph shared ["src/lib/shared/ — single source of truth"]
+        FM["financial-math.ts<br/>(pure functions, zero I/O)"]
+        SCH["db-schema.ts + seed.ts"]
+        CAT["provider-catalog.ts"]
+    end
+
+    subgraph app ["SvelteKit app"]
+        ENGINE["financial-engine.ts<br/>(DB-aware wrapper)"]
+        REPOS["repositories + routes"]
+    end
+
+    subgraph mcp ["MCP server (stdio)"]
+        TOOLS["15 tools + 2 resources"]
+    end
+
+    DB[("SQLite<br/>data/sherpa.db")]
+
+    FM --> ENGINE
+    FM --> TOOLS
+    SCH --> REPOS
+    SCH --> TOOLS
+    CAT --> REPOS
+    ENGINE --> DB
+    TOOLS --> DB
 ```
 
-> **Tailwind CSS v4** — konfiguracja i motyw OKLCH zdefiniowane w `src/routes/layout.css` (brak pliku `tailwind.config.js`).
+Design decisions worth a look:
 
+- **Pure core, impure shell.** All computation sits in [`financial-math.ts`](src/lib/shared/financial-math.ts) as pure functions (providers passed as arguments, zero DB access) — unit-tested at 99% statement coverage. The app and the MCP server are thin I/O wrappers around it, so both always produce identical numbers.
+- **Scope override cascade.** A scenario can override cohort parameters at three levels (global → vertical → cohort), resolved by a single cascade function shared by both frontends.
+- **Result cache with invalidation.** Computed KPIs are cached per scenario; every mutation path (services, providers, cohorts, costs…) cascades an invalidation so dashboards never show stale numbers.
+- **Self-initializing MCP server.** On first run it creates the schema and demo data on its own, in an OS-appropriate user data directory — no web app required first.
 
----
+## Quickstart
 
-## 🚀 Uruchomienie Projektu
+Requires Node.js ≥ 22.5 — it uses the built-in `node:sqlite` module.
 
-### Wymagania wstępne
-* Node.js v18 lub nowszy
-* Zainstalowane zależności (`npm install`)
-
-### Krok 1: Instalacja zależności
-W katalogu głównym projektu uruchom:
 ```bash
 npm install
+npm run dev          # → http://localhost:5173
 ```
 
-### Krok 2: Uruchomienie aplikacji webowej
-Uruchom serwer deweloperski Vite:
+First launch opens a 3-step setup wizard and seeds a demo workspace ("Acme Analytics": 5 AI services, 2 feature packs, 2 pricing plans, 2 pre-computed scenarios), so you can explore a populated dashboard immediately.
+
 ```bash
-npm run dev
+npm run check        # svelte-check type checking
+npm test             # vitest unit tests
+npm run build        # production build (adapter-node)
 ```
-Aplikacja będzie dostępna pod adresem: `http://localhost:5173/`
 
-### Krok 3: Budowanie i uruchomienie serwera MCP (Opcjonalnie)
-Aby skompilować i uruchomić serwer MCP:
+## Claude Desktop integration (MCP)
+
+Build the server and register it:
+
 ```bash
-# Budowanie kodu TypeScript serwera MCP
-cd mcp-server
-npm install
-npm run build
-cd ..
-
-# Uruchomienie serwera MCP przez stdio (do debugowania lub ręcznego uruchomienia)
-node mcp-server/build/index.js
+cd mcp-server && npm install && npm run build && cd ..
+npm run mcp:install   # registers "sherpa-dev" in Claude Desktop config + installs agent skills
 ```
 
----
+Restart Claude Desktop and ask things like:
 
-## 🤖 Konfiguracja hosta MCP (np. Claude Desktop)
+> *Create a scenario named "AI Search rollout" with 2,000 starting users, 3% churn, $99 ARPU, Smart Search launching in month 2 — then run a sensitivity analysis on it.*
 
-Aby połączyć serwer MCP Sherpa z asystentem Claude Desktop, dodaj poniższą konfigurację do pliku konfiguracyjnego Claude Desktop (zwykle w `~/Library/Application Support/Claude/claude_desktop_config.json` na macOS):
+The dev registration pins the database to the repo's `data/sherpa.db` (via `SHERPA_DB_PATH`), so whatever you model in conversation shows up in the web dashboard and vice versa. For tool development without Claude Desktop, `npm run mcp:inspect` opens the MCP Inspector against the built server.
 
-```json
-{
-  "mcpServers": {
-    "sherpa-roi-calculator": {
-      "command": "node",
-      "args": ["/Users/piotrlangowski/Documents/Sherpa/mcp-server/build/index.js"],
-      "cwd": "/Users/piotrlangowski/Documents/Sherpa"
-    }
-  }
-}
+### One-click extension (.mcpb)
+
+For non-technical users (no terminal, no Node required — Claude Desktop ships its own runtime):
+
+```bash
+npm run mcp:pack     # → sherpa.mcpb
 ```
 
-> [!IMPORTANT]
-> Parametr `cwd` musi wskazywać na katalog główny repozytorium Sherpa, tak aby serwer MCP mógł poprawnie zlokalizować plik bazy danych pod ścieżką `data/sherpa.db`. Po dodaniu konfiguracji zrestartuj Claude Desktop.
+Then in Claude Desktop: **Settings → Extensions → drag & drop `sherpa.mcpb`**. On first run the extension creates its own database (with the demo workspace) in the OS user data directory.
 
----
+### Dev vs. packaged — separate environments
 
-## 🧪 Testy i weryfikacja poprawności
+|  | `sherpa-dev` (development) | `Sherpa` extension (packaged) |
+|---|---|---|
+| Registered via | `npm run mcp:install` → `claude_desktop_config.json` | drag & drop `sherpa.mcpb` in Settings → Extensions |
+| Code | `mcp-server/build/` straight from the repo | unpacked copy inside Claude Desktop |
+| Database | repo `data/sherpa.db` — shared with `npm run dev` | `~/Library/Application Support/Sherpa/sherpa.db` (or a custom path set in the extension's settings) |
+| Update loop | `cd mcp-server && npm run build`, restart Claude Desktop | re-pack and re-install the `.mcpb` |
+| Reset | delete `data/sherpa.db` | delete the Sherpa user-data folder — next start re-seeds |
 
-Wszystkie kluczowe mechanizmy są przetestowane i gotowe do wdrożenia produkcyjnego.
+Keep only one of the two enabled at a time — both expose the same tool names, which confuses the model.
 
-* **Weryfikacja typów Svelte**:
-  ```bash
-  npm run check
-  ```
+## Testing
 
----
+The pure math core is the contract: [`financial-math.test.ts`](src/lib/shared/financial-math.test.ts) covers cohort modeling, NPV/IRR/payback/TCO and full-scenario calculation (99% stmt / 77% branch coverage, enforced thresholds in CI). The importer has its own suite. UI and integration layers are exercised by `svelte-check` and the CI build; treat the financial outputs as tested, the UI as best-effort.
 
-## 🔒 Bezpieczeństwo i Polityka Prywatności
+## Privacy
 
-Sherpa to aplikacja **local-first**:
-* Wszystkie dane modelu finansowego, dane klientów oraz scenariusze są przechowywane **wyłącznie lokalnie** w bazie danych SQLite na Twoim dysku twardym (`data/sherpa.db`).
-* Aplikacja nie przesyła żadnych danych do chmury ani zewnętrznych serwerów telemetrycznych.
-* Połączenia z zewnętrznymi dostawcami modeli AI (np. OpenAI) w celu kalkulacji kosztów pobierają wyłącznie predefiniowane cenniki modeli (ceny tokenów), bez przesyłania jakichkolwiek danych wrażliwych.
+Sherpa is local-first: every scenario, cohort and setting lives in a SQLite file on your disk (`data/sherpa.db`). The app makes no network calls to model providers — token prices come from a bundled, dated price list you can inspect and edit.
+
+## License
+
+[MIT](LICENSE)

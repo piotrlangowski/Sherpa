@@ -117,55 +117,6 @@ export const importerService = {
   },
 
   /**
-   * Fetch all CRM records from HubSpot API recursively.
-   */
-  async fetchHubSpotData(accessToken: string): Promise<{ companies: any[]; deals: any[] }> {
-    const headers = {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    };
-
-    // Helper to fetch all pages of a resource from HubSpot v3 API
-    const fetchAllPages = async (endpoint: string, properties: string[], associations?: string): Promise<any[]> => {
-      let results: any[] = [];
-      let hasMore = true;
-      let after = '';
-
-      while (hasMore) {
-        let url = `https://api.hubapi.com/crm/v3/objects/${endpoint}?limit=100&properties=${properties.join(',')}`;
-        if (associations) {
-          url += `&associations=${associations}`;
-        }
-        if (after) {
-          url += `&after=${after}`;
-        }
-
-        const response = await fetch(url, { headers });
-        if (!response.ok) {
-          const body = await response.text();
-          throw new Error(`HubSpot API responded with ${response.status}: ${body}`);
-        }
-
-        const data = await response.json() as any;
-        results = results.concat(data.results || []);
-
-        if (data.paging && data.paging.next && data.paging.next.after) {
-          after = data.paging.next.after;
-        } else {
-          hasMore = false;
-        }
-      }
-
-      return results;
-    };
-
-    const companies = await fetchAllPages('companies', ['name', 'industry', 'createdate']);
-    const deals = await fetchAllPages('deals', ['dealname', 'amount', 'closedate', 'dealstage'], 'companies');
-
-    return { companies, deals };
-  },
-
-  /**
    * Aggregate company import records into Verticals and Cohorts with calculated metrics.
    */
   calculateMetrics(records: CompanyImportRecord[]): CalculatedImportVertical[] {
@@ -274,52 +225,6 @@ export const importerService = {
     }
 
     return calculatedVerticals;
-  },
-
-  /**
-   * Adapt HubSpot JSON structures to CompanyImportRecord list.
-   */
-  mapHubSpotToRecords(companies: any[], deals: any[]): CompanyImportRecord[] {
-    // 1. Build company lookup map (ID -> Details)
-    const companyMap = new Map<string, { name: string; industry: string }>();
-    for (const c of companies) {
-      companyMap.set(c.id, {
-        name: c.properties.name || 'Unnamed Company',
-        industry: c.properties.industry || 'General'
-      });
-    }
-
-    const records: CompanyImportRecord[] = [];
-
-    // 2. Map deals to CompanyImportRecords
-    for (const d of deals) {
-      // Find associated company ID
-      let companyId = '';
-      if (d.associations && d.associations.companies && d.associations.companies.results && d.associations.companies.results.length > 0) {
-        companyId = d.associations.companies.results[0].id;
-      }
-
-      const companyDetails = companyId ? companyMap.get(companyId) : null;
-      const companyName = companyDetails ? companyDetails.name : (d.properties.dealname || 'Unnamed Account');
-      const vertical = companyDetails ? companyDetails.industry : 'General';
-
-      const amount = d.properties.amount ? parseFloat(d.properties.amount) : 100;
-      const stage = (d.properties.dealstage || '').toLowerCase();
-      
-      const status: 'active' | 'churned' = (stage === 'closedwon' || stage.includes('won') || stage.includes('active')) 
-        ? 'active' 
-        : 'churned';
-
-      records.push({
-        name: companyName,
-        vertical,
-        joinDate: d.properties.closedate || d.properties.createdate || new Date().toISOString(),
-        status,
-        monthlyRevenue: isNaN(amount) ? 100 : amount
-      });
-    }
-
-    return records;
   },
 
   /**
