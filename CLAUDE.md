@@ -39,6 +39,8 @@ npm run mcp:inspect                               # (from root) open MCP Inspect
 npm run mcp:pack                                  # (from root) build + pack the Claude Desktop extension → sherpa.mcpb (manifest in mcp-server/manifest.json)
 ```
 
+*Note: `npm run build` must be run in the repository root at least once for `open_dashboard` to work in dev mode.*
+
 ## Architecture
 
 ### Two projects, one shared engine
@@ -46,7 +48,12 @@ This repo contains **two independent TypeScript projects**, each with its own `p
 - the **SvelteKit app** at the root (`src/`)
 - the **MCP server** at `mcp-server/`
 
-They share code through a **symlink**: `mcp-server/src/shared → ../../src/lib/shared`. So `src/lib/shared/` is the single source of truth — financial math, types, the DB schema (`db-schema.ts`), the demo seed (`seed.ts`), and the provider price catalog (`provider-catalog.ts`) — and `tsc` compiles the symlinked copy into `mcp-server/build/shared/`. Relative imports **inside** `src/lib/shared/` must use the `.js` extension (NodeNext resolution in the MCP build). **After changing anything in `src/lib/shared/`, rebuild the MCP server** (`cd mcp-server && npm run build`) or it will serve stale logic.
+They share code through a **symlink**: `mcp-server/src/shared → ../../src/lib/shared`. So `src/lib/shared/` is the single source of truth — financial math, types, the DB path resolver (`db-path.ts`), the DB schema (`db-schema.ts`), the demo seed (`seed.ts`), and the provider price catalog (`provider-catalog.ts`).
+- Relative imports **inside** `src/lib/shared/` must use the `.js` extension (NodeNext resolution in the MCP build).
+- **After changing anything in `src/lib/shared/`, rebuild the MCP server** (`cd mcp-server && npm run build`) or it will serve stale logic.
+- `src/lib/shared/db-path.ts` resolves the SQLite filepath.
+- `mcp-server/src/launcher.ts` manages launching/stopping the dashboard from the MCP server.
+- `npm run mcp:pack` copies SvelteKit's built app (`build/`) to `mcp-server/app/` (with a generated `version.json`) before creating the `.mcpb` bundle.
 
 ### Pure vs. impure split (the central design decision)
 - **`src/lib/shared/financial-math.ts`** — ALL computation: `buildCohortModel`, `calculateNPV`/`calculateIRR` (Newton-Raphson + bisection fallback) / `calculatePaybackPeriod` / `calculateTCO`, `calculateScenario`, `runSensitivityAnalysis`. These are **pure** functions with zero DB access; providers are passed in as arguments. This is what the MCP server consumes.
@@ -79,5 +86,10 @@ A `Scenario` targets a **scope** (`scope_type`: `all_clients` | `verticals` | `c
 `$lib` → `src/lib`. Per `components.json`: `$lib/components`, `$lib/components/ui`, `$lib/utils`, `$lib/hooks`.
 
 ## Gotchas
-- **MCP DB path resolution** (`mcp-server/src/db.ts`): `SHERPA_DB_PATH` **always wins** (even for a not-yet-existing file — dev/test separation depends on this; the parent dir is created), then `<repo>/data/sherpa.db` if it exists (dev), then the OS user data dir (`~/Library/Application Support/Sherpa/` on macOS) for packaged installs. The MCP server **self-initializes** (migrations + seed) on first run. The `mcp:install` script registers the dev server as `sherpa-dev` with `SHERPA_DB_PATH` pinned to the repo DB so it shares data with `npm run dev`. A stale `mcp-server/data/sherpa.db` may also exist — ignore it. MCP servers must log only to `stderr` (stdout carries JSON-RPC) — this includes anything reachable from `shared/seed.ts`.
+- **MCP DB path resolution**: Handled by `src/lib/shared/db-path.ts`. `SHERPA_DB_PATH` always wins if valid (ignoring unsubstituted placeholders containing `${`), then `repoDbPath` (dev), then the OS user data dir (`~/Library/Application Support/Sherpa/` on macOS). The MCP server self-initializes (migrations + seed) on first run.
+- **SvelteKit CSRF & ORIGIN gotcha**: SvelteKit enforces CSRF checks for form actions. When launching SvelteKit via `mcp-server/src/launcher.ts`, you MUST set the `ORIGIN` environment variable (e.g., `http://127.0.0.1:4848`) in the spawned process, or all form post actions will fail with a 403 "Cross-site POST form submissions are forbidden" error.
+- **Electron run path**: Claude Desktop can execute the MCP server using an Electron-bundled Node runtime. Set `ELECTRON_RUN_AS_NODE = '1'` in the spawned process env to ensure standard Node execution behavior.
+- **Database lock & busy_timeout**: SvelteKit and MCP write to the same SQLite WAL file. Both connection initialization paths must set `db.pragma('busy_timeout = 5000')` to handle lock contention.
+- **Health check contract**: SvelteKit exposes `/api/health` returning `{ ok: true, name: 'sherpa', version, dbPath }`. The `name` proving identity and `version` mapping to `package.json` are critical for launcher validation and automatic restart upgrades.
+- **MCP Stderr Logging**: MCP servers must log only to `stderr` (stdout carries JSON-RPC). This includes anything reachable from `shared/seed.ts` or imports during tool executions.
 - `.npmrc` sets `engine-strict=true`.

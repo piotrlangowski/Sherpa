@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import crypto from "crypto";
 import db from "./db.js";
+import { ensureDashboard, openBrowser, stopDashboard } from "./launcher.js";
 import {
   calculateScenario,
   runSensitivityAnalysis,
@@ -1226,6 +1227,39 @@ If the user provides structured cohort metrics or wants exact control over servi
         }
       ]
     };
+  }
+);
+
+server.tool(
+  "open_dashboard",
+  "Open the Sherpa web dashboard in the user's browser. Use when the user asks to open/show/launch the dashboard or wants to see results visually. Optionally pass a path to deep-link, e.g. /scenarios/<id> right after calculate_roi.",
+  { path: z.string().optional() },
+  async (args) => {
+    try {
+      // reject absolute URLs / protocol-relative — only in-app paths
+      const sub = args.path && /^\/(?!\/)/.test(args.path) ? args.path : '';
+      const { port, reused } = await ensureDashboard();
+      const url = `http://127.0.0.1:${port}${sub}`;
+      openBrowser(url);
+      return { content: [{ type: "text", text:
+        `Dashboard ${reused ? 'already running' : 'started'} — opened ${url} in the browser. If no window appeared, open the URL manually.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "close_dashboard",
+  "Stop the locally running Sherpa dashboard server.",
+  {},
+  async () => {
+    try {
+      const stopped = await stopDashboard();
+      return { content: [{ type: "text", text: stopped ? "Dashboard stopped." : "Dashboard is not running." }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
   }
 );
 

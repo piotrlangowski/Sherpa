@@ -9,6 +9,7 @@ node_modules
 /build
 /coverage
 /mcp-server/build
+/mcp-server/app
 *.mcpb
 
 # Local data (SQLite database lives only on your machine)

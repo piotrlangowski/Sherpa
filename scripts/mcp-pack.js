@@ -17,6 +17,16 @@ const run = (cmd, cwd) => execSync(cmd, { cwd, stdio: 'inherit' });
 let packError = null;
 
 try {
+  console.log('▶ Building SvelteKit app (vite build)...');
+  run('npm run build', projectRoot);
+
+  console.log('▶ Bundling dashboard into mcp-server/app/ ...');
+  const appDir = path.join(mcpServerDir, 'app');
+  fs.rmSync(appDir, { recursive: true, force: true });
+  fs.cpSync(path.join(projectRoot, 'build'), appDir, { recursive: true });
+  const rootPkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+  fs.writeFileSync(path.join(appDir, 'version.json'), JSON.stringify({ version: rootPkg.version }, null, 2));
+
   console.log('▶ Building MCP server (tsc)...');
   run('npm run build', mcpServerDir);
 

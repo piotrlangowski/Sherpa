@@ -55,6 +55,8 @@
     { "name": "calculate_roi", "description": "Compute NPV, IRR, payback, TCO and ROI for a scenario" },
     { "name": "run_sensitivity", "description": "Tornado-chart sensitivity analysis of key parameters vs NPV" },
     { "name": "compare_scenarios", "description": "Compare scenarios and compute opportunity cost (ΔNPV)" },
-    { "name": "generate_scenario_from_description", "description": "Build a full scenario from a plain-text description" }
+    { "name": "generate_scenario_from_description", "description": "Build a full scenario from a plain-text description" },
+    { "name": "open_dashboard", "description": "Launch the local Sherpa web dashboard and open it in the browser (optionally at a specific page like /scenarios/<id>)" },
+    { "name": "close_dashboard", "description": "Stop the locally running Sherpa dashboard server" }
   ]
 }

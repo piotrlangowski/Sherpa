@@ -106,6 +106,16 @@ Restart Claude Desktop and ask things like:
 
 The dev registration pins the database to the repo's `data/sherpa.db` (via `SHERPA_DB_PATH`), so whatever you model in conversation shows up in the web dashboard and vice versa. For tool development without Claude Desktop, `npm run mcp:inspect` opens the MCP Inspector against the built server.
 
+### Launching the Dashboard from Claude Desktop
+
+You can open and close the web dashboard directly from your chat with Claude using the new MCP tools:
+
+- **Open Dashboard**: Say *"open the dashboard"* or *"show me the dashboard"*. Claude will call the `open_dashboard` tool, which starts the SvelteKit app in the background (using port `4848` or another available port if occupied) and automatically opens it in your default browser.
+- **Deep-linking Scenarios**: Claude can deep-link directly to a scenario page (e.g. `open_dashboard(path: "/scenarios/<id>")`) immediately after calculating ROI or creating a scenario.
+- **Close Dashboard**: Say *"close the dashboard"*. Claude will call `close_dashboard` to terminate the running background server and clean up the lockfile.
+
+**Database sharing**: For packaged extension installs (`.mcpb`), the spawned dashboard automatically connects to the same database located at `~/Library/Application Support/Sherpa/sherpa.db` (on macOS). Any scenarios you create conversationally are immediately visible in the UI.
+
 ### One-click extension (.mcpb)
 
 For non-technical users (no terminal, no Node required — Claude Desktop ships its own runtime):
