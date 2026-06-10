@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import net from 'net';
 import fs from 'fs';
 import path from 'path';
@@ -16,11 +16,37 @@ interface DashboardLock { port: number; pid: number; version: string; startedAt:
 interface HealthResponse { ok: boolean; name: string; version: string; dbPath: string; }
 
 function resolveAppEntry(): string {
-  if (fs.existsSync(packagedApp)) return packagedApp;
+  // Repo build first: mcp-server/app/ is a pack-time snapshot and goes stale
+  // the moment `npm run build` produces a newer dashboard in the repo root.
   if (fs.existsSync(devApp)) return devApp;
+  if (fs.existsSync(packagedApp)) return packagedApp;
   throw new Error(
     'Dashboard build not found. Run `npm run build` in the Sherpa repo root, then try again.'
   );
+}
+
+/** The dashboard must run under a real Node runtime. When this MCP server is
+ *  hosted inside an Electron app (Claude Desktop runs .mcpb extensions in its
+ *  own runtime), process.execPath is the Electron binary — spawning it boots
+ *  the full GUI app when the embedder ships with the ELECTRON_RUN_AS_NODE
+ *  fuse disabled, so a standalone node binary has to be found instead. */
+function resolveNodeBinary(): string {
+  if (!process.versions.electron) return process.execPath;
+  const fromEnv = process.env.SHERPA_NODE_PATH;
+  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  const which = process.platform === 'win32' ? 'where' : 'which';
+  const probe = spawnSync(which, ['node'], { encoding: 'utf8' });
+  const found = probe.status === 0 ? probe.stdout.split(/\r?\n/)[0].trim() : '';
+  if (found && fs.existsSync(found)) return found;
+  // GUI apps get a minimal PATH, so `which` often misses common installs.
+  const candidates = process.platform === 'win32'
+    ? [path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'nodejs', 'node.exe')]
+    : ['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node'];
+  const hit = candidates.find((p) => fs.existsSync(p));
+  if (hit) return hit;
+  // Last resort: Electron in run-as-node mode (works only if the fuse is on).
+  console.error('No standalone node binary found; falling back to ELECTRON_RUN_AS_NODE.');
+  return process.execPath;
 }
 
 /** Packaged: version.json written next to app/index.js by scripts/mcp-pack.js.
@@ -78,7 +104,7 @@ function findFreePort(start = BASE_PORT): Promise<number> {
 
 function spawnDashboard(appEntry: string, port: number): number /* pid */ {
   const out = fs.openSync(logPath, 'a');
-  const child = spawn(process.execPath, [appEntry], {
+  const child = spawn(resolveNodeBinary(), [appEntry], {
     detached: true,
     stdio: ['ignore', out, out],   // NEVER 'inherit' — our stdout is JSON-RPC
     cwd: path.dirname(appEntry),
@@ -135,10 +161,19 @@ export async function ensureDashboard(): Promise<{ port: number; reused: boolean
       const lock: DashboardLock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
       const health = await healthCheck(lock.port);
       if (health) {
-        if (health.version === expected) return { port: lock.port, reused: true };
-        // stale version from a previous extension install → replace
-        console.error(`Dashboard v${health.version} != bundled v${expected}; restarting.`);
-        await killAndWait(lock);
+        if (health.dbPath !== dbPath) {
+          // A dashboard of a DIFFERENT Sherpa install answered on this port
+          // (stale lock). It is not ours to reuse — and not ours to kill.
+          console.error(
+            `Dashboard on port ${lock.port} serves ${health.dbPath}, expected ${dbPath}; starting our own instance.`
+          );
+        } else if (health.version === expected) {
+          return { port: lock.port, reused: true };
+        } else {
+          // stale version from a previous extension install → replace
+          console.error(`Dashboard v${health.version} != bundled v${expected}; restarting.`);
+          await killAndWait(lock);
+        }
       }
     } catch { /* corrupt lockfile → fall through to fresh spawn */ }
     fs.rmSync(lockPath, { force: true });

@@ -3,7 +3,7 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import crypto from "crypto";
-import db from "./db.js";
+import db, { dbPath } from "./db.js";
 import { ensureDashboard, openBrowser, stopDashboard } from "./launcher.js";
 import {
   calculateScenario,
@@ -1242,7 +1242,7 @@ server.tool(
       const url = `http://127.0.0.1:${port}${sub}`;
       openBrowser(url);
       return { content: [{ type: "text", text:
-        `Dashboard ${reused ? 'already running' : 'started'} — opened ${url} in the browser. If no window appeared, open the URL manually.` }] };
+        `Dashboard ${reused ? 'already running' : 'started'} — opened ${url} in the browser (database: ${dbPath}). If no window appeared, open the URL manually.` }] };
     } catch (err: any) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
