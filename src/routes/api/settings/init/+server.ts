@@ -37,7 +37,7 @@ export const POST: RequestHandler = async ({ request }) => {
         db.prepare("DELETE FROM scenario_costs").run();
         db.prepare("DELETE FROM scenario_results").run();
       })();
-      console.log('Sample data cleared for clean setup.');
+      console.error('Sample data cleared for clean setup.');
     }
 
     return json({ success: true });

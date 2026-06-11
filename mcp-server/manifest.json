@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "sherpa",
   "display_name": "Sherpa — AI Feature ROI Calculator",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "CFO-grade ROI for AI features in SaaS: cohort revenue model + LLM token costs → NPV, IRR, payback, TCO. 100% local.",
   "long_description": "Sherpa lets you model the business case for AI features conversationally. Define AI services with their token usage, group them into packs and pricing plans, model your customer base as cohorts, and ask Claude to build and compare ROI scenarios: net present value, internal rate of return, payback period, total cost of ownership and sensitivity (tornado) analysis. All data stays in a local SQLite database — nothing is sent to the cloud. On first run the extension creates a demo workspace so you can start asking questions immediately.",
   "author": {

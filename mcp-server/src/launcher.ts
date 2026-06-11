@@ -1,58 +1,72 @@
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import net from 'net';
+import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { dbPath } from './db.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));        // <pkg>/build
-const packagedApp = path.join(here, '..', 'app', 'index.js');     // .mcpb layout
-const devApp = path.join(here, '..', '..', 'build', 'index.js');  // repo layout (sherpa-dev)
 const lockPath = path.join(path.dirname(dbPath), 'dashboard.json');
-const logPath = path.join(path.dirname(dbPath), 'dashboard.log');
 const BASE_PORT = 4848;  // deliberately far from dev's 5173
 
-interface DashboardLock { port: number; pid: number; version: string; startedAt: string; }
-interface HealthResponse { ok: boolean; name: string; version: string; dbPath: string; }
+interface DashboardLock {
+  port: number;
+  pid: number;
+  version: string;
+  mode: 'in-process';
+  startedAt: string;
+}
 
-function resolveAppEntry(): string {
-  // Repo build first: mcp-server/app/ is a pack-time snapshot and goes stale
-  // the moment `npm run build` produces a newer dashboard in the repo root.
-  if (fs.existsSync(devApp)) return devApp;
-  if (fs.existsSync(packagedApp)) return packagedApp;
+interface HealthResponse {
+  ok: boolean;
+  name: string;
+  version: string;
+  dbPath: string;
+}
+
+// Module-level singleton state to preserve the SvelteKit handler and active HTTP server
+let state: {
+  handler: any;
+  port: number;
+  httpServer: http.Server | null;
+} | null = null;
+
+function resolveAppDir(): string {
+  const devAppDir = path.join(here, '..', '..', 'build');
+  const packagedAppDir = path.join(here, '..', 'app');
+
+  if (fs.existsSync(path.join(devAppDir, 'handler.js'))) return devAppDir;
+  if (fs.existsSync(path.join(packagedAppDir, 'handler.js'))) return packagedAppDir;
+
+  // Diagnostic error
+  let listingExt = 'Could not read';
+  let listingApp = 'Could not read';
+  try { listingExt = fs.readdirSync(path.join(here, '..')).join(', '); } catch {}
+  try { listingApp = fs.readdirSync(packagedAppDir).join(', '); } catch {}
+
+  const isDevEnv = fs.existsSync(path.join(here, '..', '..', 'svelte.config.js'));
+  const fixInstruction = isDevEnv
+    ? 'Run "npm run build" in the repository root to compile the dashboard.'
+    : 'Please uninstall the extension, restart Claude Desktop completely, and reinstall the new .mcpb bundle.';
+
   throw new Error(
-    'Dashboard build not found. Run `npm run build` in the Sherpa repo root, then try again.'
+    `Dashboard build not found.\n` +
+    `Attempted paths:\n` +
+    `- ${path.join(devAppDir, 'handler.js')}\n` +
+    `- ${path.join(packagedAppDir, 'handler.js')}\n\n` +
+    `Diagnostic details:\n` +
+    `- Node version: ${process.version}\n` +
+    `- Platform: ${process.platform}\n` +
+    `- Extension dir contents: [${listingExt}]\n` +
+    `- App dir contents: [${listingApp}]\n\n` +
+    `How to fix:\n` +
+    `${fixInstruction}`
   );
 }
 
-/** The dashboard must run under a real Node runtime. When this MCP server is
- *  hosted inside an Electron app (Claude Desktop runs .mcpb extensions in its
- *  own runtime), process.execPath is the Electron binary — spawning it boots
- *  the full GUI app when the embedder ships with the ELECTRON_RUN_AS_NODE
- *  fuse disabled, so a standalone node binary has to be found instead. */
-function resolveNodeBinary(): string {
-  if (!process.versions.electron) return process.execPath;
-  const fromEnv = process.env.SHERPA_NODE_PATH;
-  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
-  const which = process.platform === 'win32' ? 'where' : 'which';
-  const probe = spawnSync(which, ['node'], { encoding: 'utf8' });
-  const found = probe.status === 0 ? probe.stdout.split(/\r?\n/)[0].trim() : '';
-  if (found && fs.existsSync(found)) return found;
-  // GUI apps get a minimal PATH, so `which` often misses common installs.
-  const candidates = process.platform === 'win32'
-    ? [path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'nodejs', 'node.exe')]
-    : ['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node'];
-  const hit = candidates.find((p) => fs.existsSync(p));
-  if (hit) return hit;
-  // Last resort: Electron in run-as-node mode (works only if the fuse is on).
-  console.error('No standalone node binary found; falling back to ELECTRON_RUN_AS_NODE.');
-  return process.execPath;
-}
-
-/** Packaged: version.json written next to app/index.js by scripts/mcp-pack.js.
- *  Dev: the repo root package.json. */
-function expectedVersion(appEntry: string): string {
-  const versionJson = path.join(path.dirname(appEntry), 'version.json');
+function expectedVersion(appDir: string): string {
+  const versionJson = path.join(appDir, 'version.json');
   if (fs.existsSync(versionJson)) return JSON.parse(fs.readFileSync(versionJson, 'utf8')).version;
   return JSON.parse(fs.readFileSync(path.join(here, '..', '..', 'package.json'), 'utf8')).version;
 }
@@ -68,7 +82,7 @@ async function healthCheck(port: number, timeoutMs = 1500): Promise<HealthRespon
   } catch { return null; }
 }
 
-function findFreePort(start = BASE_PORT): Promise<number> {
+function reservePort(start = BASE_PORT): Promise<{ port: number; server: net.Server }> {
   return new Promise((resolve, reject) => {
     let port = start;
     const maxPort = start + 50;
@@ -80,8 +94,6 @@ function findFreePort(start = BASE_PORT): Promise<number> {
       }
 
       const server = net.createServer();
-      server.unref();
-
       server.on('error', (err: any) => {
         if (err.code === 'EADDRINUSE') {
           port++;
@@ -92,9 +104,7 @@ function findFreePort(start = BASE_PORT): Promise<number> {
       });
 
       server.listen(port, '127.0.0.1', () => {
-        server.close(() => {
-          resolve(port);
-        });
+        resolve({ port, server });
       });
     };
 
@@ -102,31 +112,12 @@ function findFreePort(start = BASE_PORT): Promise<number> {
   });
 }
 
-function spawnDashboard(appEntry: string, port: number): number /* pid */ {
-  const out = fs.openSync(logPath, 'a');
-  const child = spawn(resolveNodeBinary(), [appEntry], {
-    detached: true,
-    stdio: ['ignore', out, out],   // NEVER 'inherit' — our stdout is JSON-RPC
-    cwd: path.dirname(appEntry),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      HOST: '127.0.0.1',                        // loopback only — local-first
-      ORIGIN: `http://127.0.0.1:${port}`,       // without it: 403 on every form action
-      SHERPA_DB_PATH: dbPath,                   // resolved value, never the raw env/placeholder
-      ELECTRON_RUN_AS_NODE: '1'                 // in case execPath is Electron's binary
-    }
-  });
-  child.unref();
-  return child.pid!;
-}
-
-async function killAndWait(lock: DashboardLock): Promise<void> {
+async function killAndWait(lock: { pid: number; port: number }): Promise<void> {
   try {
     process.kill(lock.pid);
   } catch (err: any) {
     if (err.code !== 'ESRCH') {
-      console.error(`Failed to kill dashboard process ${lock.pid}: ${err.message}`);
+      console.error(`Failed to kill legacy dashboard process ${lock.pid}: ${err.message}`);
     }
   }
 
@@ -137,72 +128,202 @@ async function killAndWait(lock: DashboardLock): Promise<void> {
     if (!health) return;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  console.error(`Dashboard process ${lock.pid} did not stop within 5s.`);
-}
-
-async function waitForHealthy(port: number, timeoutMs = 10000): Promise<void> {
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    const health = await healthCheck(port, 500);
-    if (health) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(
-    `Dashboard failed to start on port ${port} within ${timeoutMs}ms. Check logs at: ${logPath}`
-  );
+  console.error(`Legacy dashboard process ${lock.pid} did not stop within 5s.`);
 }
 
 export async function ensureDashboard(): Promise<{ port: number; reused: boolean }> {
-  const appEntry = resolveAppEntry();
-  const expected = expectedVersion(appEntry);
-  // 1. Try the lockfile
+  const appDir = resolveAppDir();
+  const expected = expectedVersion(appDir);
+
+  // 1. If we have our own in-process server active in this runtime process
+  if (state && state.httpServer) {
+    const health = await healthCheck(state.port);
+    if (health && health.dbPath === dbPath) {
+      return { port: state.port, reused: true };
+    }
+  }
+
+  // 2. If the server is in state but was stopped (httpServer is null)
+  if (state && !state.httpServer) {
+    const server = http.createServer(state.handler);
+    server.unref();
+
+    await new Promise<void>((resolve, reject) => {
+      server.on('error', (err: any) => {
+        if (err.code === 'EADDRINUSE') {
+          reject(new Error(`Port ${state!.port} is occupied by another application. Please restart Claude Desktop.`));
+        } else {
+          reject(err);
+        }
+      });
+      server.listen(state!.port, '127.0.0.1', () => {
+        resolve();
+      });
+    });
+
+    state.httpServer = server;
+
+    const lock: DashboardLock = {
+      port: state.port,
+      pid: process.pid,
+      version: expected,
+      mode: 'in-process',
+      startedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+    return { port: state.port, reused: false };
+  }
+
+  // 3. Inspect the disk lockfile for other instances (legacy/other MCP servers)
   if (fs.existsSync(lockPath)) {
     try {
-      const lock: DashboardLock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+      const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
       const health = await healthCheck(lock.port);
+
       if (health) {
         if (health.dbPath !== dbPath) {
-          // A dashboard of a DIFFERENT Sherpa install answered on this port
-          // (stale lock). It is not ours to reuse — and not ours to kill.
-          console.error(
-            `Dashboard on port ${lock.port} serves ${health.dbPath}, expected ${dbPath}; starting our own instance.`
-          );
-        } else if (health.version === expected) {
-          return { port: lock.port, reused: true };
+          // Serves a different database; leave it alone and run ours on a different port.
+          console.error(`Dashboard on port ${lock.port} serves ${health.dbPath}, expected ${dbPath}. Starting our own.`);
+        } else if (lock.mode === 'in-process') {
+          // Another active MCP instance (e.g. dev alongside packaged extension)
+          if (lock.pid !== process.pid) {
+            if (health.version === expected) {
+              return { port: lock.port, reused: true };
+            } else {
+              console.error(`Other active dashboard version v${health.version} != expected v${expected}. Launching ours on a free port.`);
+              // Let it continue running, but we bind our own to a fresh port.
+            }
+          }
         } else {
-          // stale version from a previous extension install → replace
-          console.error(`Dashboard v${health.version} != bundled v${expected}; restarting.`);
+          // Legacy out-of-process lock file (no mode). Perform deterministic migration by killing it.
+          console.error(`Legacy out-of-process dashboard detected (PID ${lock.pid}); stopping it.`);
           await killAndWait(lock);
+          fs.rmSync(lockPath, { force: true });
         }
+      } else {
+        // Dead server, cleanup stale lock file
+        fs.rmSync(lockPath, { force: true });
       }
-    } catch { /* corrupt lockfile → fall through to fresh spawn */ }
-    fs.rmSync(lockPath, { force: true });
+    } catch {
+      fs.rmSync(lockPath, { force: true });
+    }
   }
-  // 2. Fresh spawn
-  const port = await findFreePort();
-  const pid = spawnDashboard(appEntry, port);
-  await waitForHealthy(port, 10_000);   // poll every 250 ms; on timeout throw with logPath hint
-  const lock: DashboardLock = { port, pid, version: expected, startedAt: new Date().toISOString() };
-  fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
-  return { port, reused: false };
+
+  // 4. Clean start of the in-process server
+  const { port, server: reservedServer } = await reservePort();
+
+  // Load shims and handler with environment variables set before import
+  process.env.ORIGIN = `http://127.0.0.1:${port}`;
+  process.env.SHERPA_DB_PATH = dbPath;
+  process.env.HOST = '127.0.0.1';
+
+  try {
+    const shimsPath = pathToFileURL(path.join(appDir, 'shims.js')).href;
+    const handlerPath = pathToFileURL(path.join(appDir, 'handler.js')).href;
+
+    await import(shimsPath);
+    const mod = await import(handlerPath);
+    const handler = mod.handler;
+
+    // Release the port reserve just before binding
+    await new Promise<void>((resolve) => reservedServer.close(() => resolve()));
+
+    const httpServer = http.createServer(handler);
+    httpServer.unref();
+
+    await new Promise<void>((resolve, reject) => {
+      httpServer.on('error', (err) => reject(err));
+      httpServer.listen(port, '127.0.0.1', () => resolve());
+    });
+
+    state = { handler, port, httpServer };
+
+    const lock: DashboardLock = {
+      port,
+      pid: process.pid,
+      version: expected,
+      mode: 'in-process',
+      startedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+
+    // Async self-check test
+    healthCheck(port).then((res) => {
+      if (!res) {
+        console.error(`Warning: In-process dashboard self-test failed on port ${port}.`);
+      } else if (res.version !== expected) {
+        console.error(`Warning: In-process dashboard version mismatch. Running: v${res.version}, Expected: v${expected}`);
+      }
+    }).catch(() => {});
+
+    return { port, reused: false };
+  } catch (err) {
+    // Release the reserved server in case of import errors
+    await new Promise<void>((resolve) => reservedServer.close(() => resolve()));
+    throw err;
+  }
 }
 
 export function openBrowser(url: string): void {
-  // fire-and-forget; detached so the browser doesn't tie to our lifetime
+  // Spawn browser opener (fire-and-forget, detached)
   if (process.platform === 'darwin') spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
   else if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
   else spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
 }
 
-export async function stopDashboard(): Promise<boolean> {
-  if (!fs.existsSync(lockPath)) return false;
-  try {
-    const lock: DashboardLock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-    await killAndWait(lock);
-  } catch (err: any) {
-    console.error(`Error stopping dashboard: ${err.message}`);
-  } finally {
-    fs.rmSync(lockPath, { force: true });
+export async function stopDashboard(): Promise<{ stopped: boolean; message: string }> {
+  // 1. If we have our own in-process server active
+  if (state && state.httpServer) {
+    const server = state.httpServer;
+    state.httpServer = null;
+
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      if (typeof (server as any).closeIdleConnections === 'function') {
+        (server as any).closeIdleConnections();
+      }
+      setTimeout(() => {
+        if (typeof (server as any).closeAllConnections === 'function') {
+          (server as any).closeAllConnections();
+        }
+        resolve();
+      }, 2000).unref();
+    });
+
+    // Remove lockfile ONLY if it belongs to us
+    if (fs.existsSync(lockPath)) {
+      try {
+        const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+        if (lock.pid === process.pid && lock.mode === 'in-process') {
+          fs.rmSync(lockPath, { force: true });
+        }
+      } catch {}
+    }
+
+    return { stopped: true, message: "Dashboard stopped." };
   }
-  return true;
+
+  // 2. If no own server is running, check lockfile
+  if (fs.existsSync(lockPath)) {
+    try {
+      const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+
+      // If it's a legacy lock (no mode), we kill it
+      if (!lock.mode) {
+        await killAndWait(lock);
+        fs.rmSync(lockPath, { force: true });
+        return { stopped: true, message: `Legacy dashboard process ${lock.pid} stopped.` };
+      }
+
+      // If it's another in-process lock (cudzy pid)
+      if (lock.mode === 'in-process' && lock.pid !== process.pid) {
+        return { stopped: false, message: `Dashboard is served in-process by another Sherpa MCP instance (PID ${lock.pid}).` };
+      }
+    } catch (err: any) {
+      fs.rmSync(lockPath, { force: true });
+      return { stopped: true, message: `Removed corrupt lockfile: ${err.message}` };
+    }
+  }
+
+  return { stopped: false, message: "Dashboard is not running." };
 }

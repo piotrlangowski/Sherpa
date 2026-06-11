@@ -110,21 +110,31 @@ The dev registration pins the database to the repo's `data/sherpa.db` (via `SHER
 
 You can open and close the web dashboard directly from your chat with Claude using the new MCP tools:
 
-- **Open Dashboard**: Say *"open the dashboard"* or *"show me the dashboard"*. Claude will call the `open_dashboard` tool, which starts the SvelteKit app in the background (using port `4848` or another available port if occupied) and automatically opens it in your default browser.
+- **Open Dashboard**: Say *"open the dashboard"* or *"show me the dashboard"*. Claude will call the `open_dashboard` tool, which starts the SvelteKit app in-process (directly inside the MCP server process using port `4848` or another available port if occupied) and automatically opens it in your default browser. It stays available as long as Claude Desktop is running.
 - **Deep-linking Scenarios**: Claude can deep-link directly to a scenario page (e.g. `open_dashboard(path: "/scenarios/<id>")`) immediately after calculating ROI or creating a scenario.
-- **Close Dashboard**: Say *"close the dashboard"*. Claude will call `close_dashboard` to terminate the running background server and clean up the lockfile.
+- **Close Dashboard**: Say *"close the dashboard"*. Claude will call `close_dashboard` to stop the in-process HTTP server and clean up the lockfile.
 
-**Database sharing**: For packaged extension installs (`.mcpb`), the spawned dashboard automatically connects to the same database located at `~/Library/Application Support/Sherpa/sherpa.db` (on macOS). Any scenarios you create conversationally are immediately visible in the UI.
+**In-process Lifecycle & Port Caching**: Because SvelteKit's handler imports and caches environment variables (like `ORIGIN`) at load time, the server binds to a single port per runtime process. If you stop the dashboard, reopening it will start the listener on the same port. If there is a port conflict, you will receive a diagnostic message advising you to restart Claude Desktop.
+
+**Database sharing**: For packaged extension installs (`.mcpb`), the spawned dashboard automatically connects to the same database located at:
+- macOS: `~/Library/Application Support/Sherpa/sherpa.db`
+- Windows: `%APPDATA%\Sherpa\sherpa.db` (usually `C:\Users\<User>\AppData\Roaming\Sherpa\sherpa.db`)
+
+Any scenarios you create conversationally are immediately visible in the UI.
 
 ### One-click extension (.mcpb)
 
-For non-technical users (no terminal, no Node required — Claude Desktop ships its own runtime):
+For non-technical users, you can install the pre-built extension directly:
 
-```bash
-npm run mcp:pack     # → sherpa.mcpb
-```
+1. **Download**: Click [Download latest sherpa.mcpb](https://github.com/piotrlangowski/Sherpa/releases/latest/download/sherpa.mcpb).
+2. **Install**: In Claude Desktop, go to **Settings → Extensions** and **drag & drop `sherpa.mcpb`**.
+3. **Upgrade**: When upgrading from a previous version:
+   - Uninstall the old Sherpa extension from settings.
+   - Close Claude Desktop completely (quit from the menu bar / system tray).
+   - Re-open Claude Desktop and drag & drop the new `sherpa.mcpb` file.
+   - *Your local database and scenario data will be preserved.*
 
-Then in Claude Desktop: **Settings → Extensions → drag & drop `sherpa.mcpb`**. On first run the extension creates its own database (with the demo workspace) in the OS user data directory.
+On first run the extension creates its own database (with the demo workspace) in the OS user data directory. (Note: To run the SvelteKit web dashboard in your browser, a system-wide Node.js installation is required so the launcher can bind the HTTP server. Conversation-only MCP tools in Claude Desktop do *not* require Node.js).
 
 ### Dev vs. packaged — separate environments
 
@@ -132,7 +142,7 @@ Then in Claude Desktop: **Settings → Extensions → drag & drop `sherpa.mcpb`*
 |---|---|---|
 | Registered via | `npm run mcp:install` → `claude_desktop_config.json` | drag & drop `sherpa.mcpb` in Settings → Extensions |
 | Code | `mcp-server/build/` straight from the repo | unpacked copy inside Claude Desktop |
-| Database | repo `data/sherpa.db` — shared with `npm run dev` | `~/Library/Application Support/Sherpa/sherpa.db` (or a custom path set in the extension's settings) |
+| Database | repo `data/sherpa.db` — shared with `npm run dev` | macOS: `~/Library/Application Support/Sherpa/sherpa.db`<br/>Windows: `%APPDATA%\Sherpa\sherpa.db` |
 | Update loop | `cd mcp-server && npm run build`, restart Claude Desktop | re-pack and re-install the `.mcpb` |
 | Reset | delete `data/sherpa.db` | delete the Sherpa user-data folder — next start re-seeds |
 

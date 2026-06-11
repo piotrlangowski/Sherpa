@@ -1,7 +1,7 @@
 {
 	"name": "sherpa",
 	"private": true,
-	"version": "1.0.2",
+	"version": "1.1.0",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -13,7 +13,8 @@
 		"test": "vitest run",
 		"mcp:install": "node scripts/mcp-install.js",
 		"mcp:inspect": "npx @modelcontextprotocol/inspector node mcp-server/build/index.js",
-		"mcp:pack": "node scripts/mcp-pack.js"
+		"mcp:pack": "node scripts/mcp-pack.js",
+		"mcp:release": "node scripts/mcp-release.js"
 	},
 	"devDependencies": {
 		"@fontsource-variable/inter": "^5.2.8",
