@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "sherpa",
   "display_name": "Sherpa — AI Feature ROI Calculator",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "CFO-grade ROI for AI features in SaaS: cohort revenue model + LLM token costs → NPV, IRR, payback, TCO. 100% local.",
   "long_description": "Sherpa lets you model the business case for AI features conversationally. Define AI services with their token usage, group them into packs and pricing plans, model your customer base as cohorts, and ask Claude to build and compare ROI scenarios: net present value, internal rate of return, payback period, total cost of ownership and sensitivity (tornado) analysis. All data stays in a local SQLite database — nothing is sent to the cloud. On first run the extension creates a demo workspace so you can start asking questions immediately.",
   "author": {
@@ -14,13 +14,23 @@
     "url": "https://github.com/piotrlangowski/Sherpa"
   },
   "license": "MIT",
-  "keywords": ["roi", "npv", "irr", "saas", "finance", "llm-costs", "business-case"],
+  "keywords": [
+    "roi",
+    "npv",
+    "irr",
+    "saas",
+    "finance",
+    "llm-costs",
+    "business-case"
+  ],
   "server": {
     "type": "node",
     "entry_point": "build/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/build/index.js"],
+      "args": [
+        "${__dirname}/build/index.js"
+      ],
       "env": {
         "SHERPA_DB_PATH": "${user_config.database_path}"
       }
@@ -35,28 +45,83 @@
     }
   },
   "compatibility": {
-    "platforms": ["darwin", "win32", "linux"],
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
     "runtimes": {
       "node": ">=22.5.0"
     }
   },
   "tools": [
-    { "name": "get_settings", "description": "Read global workspace settings (currency, discount rate, company name)" },
-    { "name": "update_settings", "description": "Update workspace settings" },
-    { "name": "list_services", "description": "List AI services with their token usage parameters" },
-    { "name": "create_service", "description": "Register a new AI service with LLM usage details" },
-    { "name": "update_service", "description": "Modify an existing AI service" },
-    { "name": "list_packs", "description": "List feature packs and their services" },
-    { "name": "create_pack", "description": "Group services into a feature pack" },
-    { "name": "list_plans", "description": "List pricing plans with bundled packs and services" },
-    { "name": "create_plan", "description": "Register a pricing plan tier" },
-    { "name": "list_scenarios", "description": "List ROI scenarios with cached NPV/IRR results" },
-    { "name": "create_scenario", "description": "Create a scenario with cohort growth parameters and catalog mappings" },
-    { "name": "calculate_roi", "description": "Compute NPV, IRR, payback, TCO and ROI for a scenario" },
-    { "name": "run_sensitivity", "description": "Tornado-chart sensitivity analysis of key parameters vs NPV" },
-    { "name": "compare_scenarios", "description": "Compare scenarios and compute opportunity cost (ΔNPV)" },
-    { "name": "generate_scenario_from_description", "description": "Build a full scenario from a plain-text description" },
-    { "name": "open_dashboard", "description": "Launch the local Sherpa web dashboard and open it in the browser (optionally at a specific page like /scenarios/<id>)" },
-    { "name": "close_dashboard", "description": "Stop the locally running Sherpa dashboard server" }
+    {
+      "name": "get_settings",
+      "description": "Read global workspace settings (currency, discount rate, company name)"
+    },
+    {
+      "name": "update_settings",
+      "description": "Update workspace settings"
+    },
+    {
+      "name": "list_services",
+      "description": "List AI services with their token usage parameters"
+    },
+    {
+      "name": "create_service",
+      "description": "Register a new AI service with LLM usage details"
+    },
+    {
+      "name": "update_service",
+      "description": "Modify an existing AI service"
+    },
+    {
+      "name": "list_packs",
+      "description": "List feature packs and their services"
+    },
+    {
+      "name": "create_pack",
+      "description": "Group services into a feature pack"
+    },
+    {
+      "name": "list_plans",
+      "description": "List pricing plans with bundled packs and services"
+    },
+    {
+      "name": "create_plan",
+      "description": "Register a pricing plan tier"
+    },
+    {
+      "name": "list_scenarios",
+      "description": "List ROI scenarios with cached NPV/IRR results"
+    },
+    {
+      "name": "create_scenario",
+      "description": "Create a scenario with cohort growth parameters and catalog mappings"
+    },
+    {
+      "name": "calculate_roi",
+      "description": "Compute NPV, IRR, payback, TCO and ROI for a scenario"
+    },
+    {
+      "name": "run_sensitivity",
+      "description": "Tornado-chart sensitivity analysis of key parameters vs NPV"
+    },
+    {
+      "name": "compare_scenarios",
+      "description": "Compare scenarios and compute opportunity cost (ΔNPV)"
+    },
+    {
+      "name": "generate_scenario_from_description",
+      "description": "Build a full scenario from a plain-text description"
+    },
+    {
+      "name": "open_dashboard",
+      "description": "Launch the local Sherpa web dashboard and open it in the browser (optionally at a specific page like /scenarios/<id>)"
+    },
+    {
+      "name": "close_dashboard",
+      "description": "Stop the locally running Sherpa dashboard server"
+    }
   ]
 }
