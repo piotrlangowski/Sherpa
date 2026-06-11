@@ -11,6 +11,7 @@
   import CardContent from '$lib/components/ui/card/card-content.svelte';
   import CardFooter from '$lib/components/ui/card/card-footer.svelte';
   import { FormDialog, FormSection, FormField, NumberField } from '$lib/components/forms';
+  import { buildCohortModel } from '$lib/shared/financial-math';
 
   // Table components
   import Table from '$lib/components/ui/table/table.svelte';
@@ -32,6 +33,27 @@
   let { data } = $props();
 
   const currencySymbol = $derived(getCurrencySymbol(appState.currency));
+
+  // 12-month live projection of the values currently in the form.
+  // The /100 on percentage fields mirrors the server actions exactly.
+  let preview = $derived.by(() =>
+    buildCohortModel(
+      {
+        id: 'preview',
+        name,
+        vertical_id: null,
+        current_users: +currentUsers || 0,
+        monthly_acquisition: +monthlyAcquisition || 0,
+        acquisition_growth_rate: (+acquisitionGrowthRate || 0) / 100,
+        monthly_churn_rate: (+monthlyChurnRate || 0) / 100,
+        retention_floor: (+retentionFloor || 0) / 100,
+        monthly_expansion_rate: (+monthlyExpansionRate || 0) / 100,
+        ai_adoption_rate: (+aiAdoptionRate || 0) / 100,
+        base_arpu: +baseArpu || 0
+      },
+      12
+    )
+  );
 
   // Dialog State
   let showDialog = $state(false);
@@ -366,6 +388,18 @@
   action={dialogMode === 'create' ? '?/createCohort' : '?/updateCohort'}
   submitLabel={dialogMode === 'create' ? 'Save Cohort' : 'Save Changes'}
 >
+  {#snippet footerStart()}
+    <p class="font-mono text-xs text-muted-foreground">
+      ≈ <span class="font-semibold text-emerald-600 dark:text-emerald-400"
+        >{formatNumber(Math.round(preview.endingCustomers))}</span
+      >
+      customers ·
+      <span class="font-semibold text-emerald-600 dark:text-emerald-400"
+        >{formatCurrency(preview.endingMrr, appState.currency)}</span
+      > MRR after 12 mo
+    </p>
+  {/snippet}
+
   <input type="hidden" name="id" value={currentCohortId} />
 
   <FormSection title="Identity" hero>
