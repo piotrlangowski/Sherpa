@@ -8,12 +8,15 @@
 
 Built for product leaders (CPO/RevOps) at SaaS companies, it also ships as an **MCP server**, so you can model scenarios conversationally from Claude Desktop: *"create a scenario with 5,000 users, 4% churn and a $150 ARPU chatbot rollout"*.
 
-<!-- TODO(screenshots): docs/screenshots/dashboard.png — scenario dashboard with KPI cards and cashflow chart -->
-<!-- TODO(screenshots): docs/screenshots/tornado.png — sensitivity analysis tornado chart -->
-<!-- TODO(screenshots): docs/screenshots/wizard.png — 4-step scenario creation wizard -->
-<!-- TODO(screenshots): docs/screenshots/mcp-claude-desktop.png — creating a scenario from natural language in Claude Desktop -->
-
-<!-- TODO(demo): link the 2-minute walkthrough video here -->
+**Work your way**
+Work as a Claude Desktop App with permanent data
+<img width="1090" height="837" alt="image" src="https://github.com/user-attachments/assets/b8ad0e5c-9fae-42e5-a18e-7def845818c0" />
+or as a separate App with its own UI
+<img width="1397" height="779" alt="image" src="https://github.com/user-attachments/assets/c9519369-fc08-4352-b7aa-6cd28d2d4625" />
+data:
+* **stays in sync between the two modes**
+* **is computed outside of LLM, in Sherpa's engine, so it provieds you the same results every session you ask**
+* **saves you tokens, because you don't have to run the same scenario end to end in Claude. Claude just reads the data or manipulates the data**
 
 ---
 
@@ -74,35 +77,29 @@ Design decisions worth a look:
 - **Result cache with invalidation.** Computed KPIs are cached per scenario; every mutation path (services, providers, cohorts, costs…) cascades an invalidation so dashboards never show stale numbers.
 - **Self-initializing MCP server.** On first run it creates the schema and demo data on its own, in an OS-appropriate user data directory — no web app required first.
 
-## Quickstart
+## Quickstart and Claude Desktop integration (MCP)
+
+Go into releases and download latest sherpa.mpcb file
+Open Claude Desktop > Settings > Extensions
+<img width="999" height="737" alt="image" src="https://github.com/user-attachments/assets/55a876c2-7fd4-4845-a38a-a7aab7ff84fa" />
+
+Click Advanced Settins > click: Install Extension
+<img width="1212" height="610" alt="image" src="https://github.com/user-attachments/assets/5f8cd43f-725b-4f7f-a2fe-bbfd055c8227" />
+
+Confirm that is the right extension and hit install
+<img width="805" height="811" alt="image" src="https://github.com/user-attachments/assets/3035f33a-014f-4dbb-9205-d8249627528c" />
+
+You are ready to go. Restart your Claude
+<img width="795" height="619" alt="image" src="https://github.com/user-attachments/assets/be19bd6a-ea0e-4728-9b2d-65be1aff261d" />
+
+Claude will show Connector as ready to use in Claude Chat or Cowork
+<img width="676" height="481" alt="image" src="https://github.com/user-attachments/assets/fd4b0379-a286-4440-accf-431ba353fa68" />
+
+To open UI just tell Claude to **open Sherpa dashoboard**.
 
 Requires Node.js ≥ 22.5 — it uses the built-in `node:sqlite` module.
 
-```bash
-npm install
-npm run dev          # → http://localhost:5173
-```
-
 First launch opens a 3-step setup wizard and seeds a demo workspace ("Acme Analytics": 5 AI services, 2 feature packs, 2 pricing plans, 2 pre-computed scenarios), so you can explore a populated dashboard immediately.
-
-```bash
-npm run check        # svelte-check type checking
-npm test             # vitest unit tests
-npm run build        # production build (adapter-node)
-```
-
-## Claude Desktop integration (MCP)
-
-Build the server and register it:
-
-```bash
-cd mcp-server && npm install && npm run build && cd ..
-npm run mcp:install   # registers "sherpa-dev" in Claude Desktop config + installs agent skills
-```
-
-Restart Claude Desktop and ask things like:
-
-> *Create a scenario named "AI Search rollout" with 2,000 starting users, 3% churn, $99 ARPU, Smart Search launching in month 2 — then run a sensitivity analysis on it.*
 
 The dev registration pins the database to the repo's `data/sherpa.db` (via `SHERPA_DB_PATH`), so whatever you model in conversation shows up in the web dashboard and vice versa. For tool development without Claude Desktop, `npm run mcp:inspect` opens the MCP Inspector against the built server.
 
