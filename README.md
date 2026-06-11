@@ -20,6 +20,45 @@ data:
 
 ---
 
+## Quickstart and Claude Desktop integration (MCP)
+
+1. Go into [releases](https://github.com/piotrlangowski/Sherpa/releases) and download sherpa.mpcb file from the latest release
+
+2. Open Claude Desktop > Settings > Extensions
+<img width="999" height="737" alt="image" src="https://github.com/user-attachments/assets/55a876c2-7fd4-4845-a38a-a7aab7ff84fa" />
+
+3. Click Advanced Settins > click: Install Extension
+<img width="1212" height="610" alt="image" src="https://github.com/user-attachments/assets/5f8cd43f-725b-4f7f-a2fe-bbfd055c8227" />
+
+4. Confirm that is the right extension and hit install
+<img width="805" height="811" alt="image" src="https://github.com/user-attachments/assets/3035f33a-014f-4dbb-9205-d8249627528c" />
+
+You are ready to go. Restart your Claude
+<img width="795" height="619" alt="image" src="https://github.com/user-attachments/assets/be19bd6a-ea0e-4728-9b2d-65be1aff261d" />
+
+5. Claude will show Connector as ready to use in Claude Chat or Cowork
+<img width="676" height="481" alt="image" src="https://github.com/user-attachments/assets/fd4b0379-a286-4440-accf-431ba353fa68" />
+
+6. To open UI just tell Claude to **open Sherpa dashoboard**.
+
+Requires Node.js ≥ 22.5 — it uses the built-in `node:sqlite` module.
+
+First launch opens a 3-step setup wizard and seeds a demo workspace ("Acme Analytics": 5 AI services, 2 feature packs, 2 pricing plans, 2 pre-computed scenarios), so you can explore a populated dashboard immediately.
+
+The dev registration pins the database to the repo's `data/sherpa.db` (via `SHERPA_DB_PATH`), so whatever you model in conversation shows up in the web dashboard and vice versa. For tool development without Claude Desktop, `npm run mcp:inspect` opens the MCP Inspector against the built server.
+
+### Launching the Dashboard from Claude Desktop
+
+You can open and close the web dashboard directly from your chat with Claude using the new MCP tools:
+
+- **Open Dashboard**: Say *"open the dashboard"* or *"show me the dashboard"*. Claude will call the `open_dashboard` tool, which starts the SvelteKit app in-process (directly inside the MCP server process using port `4848` or another available port if occupied) and automatically opens it in your default browser. It stays available as long as Claude Desktop is running.
+- **Deep-linking Scenarios**: Claude can deep-link directly to a scenario page (e.g. `open_dashboard(path: "/scenarios/<id>")`) immediately after calculating ROI or creating a scenario.
+- **Close Dashboard**: Say *"close the dashboard"*. Claude will call `close_dashboard` to stop the in-process HTTP server and clean up the lockfile.
+
+**In-process Lifecycle & Port Caching**: Because SvelteKit's handler imports and caches environment variables (like `ORIGIN`) at load time, the server binds to a single port per runtime process. If you stop the dashboard, reopening it will start the listener on the same port. If there is a port conflict, you will receive a diagnostic message advising you to restart Claude Desktop.
+
+--
+
 ## Why it's different
 
 Typical ROI calculators don't understand LLM economics; token cost calculators don't understand revenue. Sherpa models both sides of the equation in one place:
@@ -77,41 +116,6 @@ Design decisions worth a look:
 - **Result cache with invalidation.** Computed KPIs are cached per scenario; every mutation path (services, providers, cohorts, costs…) cascades an invalidation so dashboards never show stale numbers.
 - **Self-initializing MCP server.** On first run it creates the schema and demo data on its own, in an OS-appropriate user data directory — no web app required first.
 
-## Quickstart and Claude Desktop integration (MCP)
-
-Go into releases and download latest sherpa.mpcb file
-Open Claude Desktop > Settings > Extensions
-<img width="999" height="737" alt="image" src="https://github.com/user-attachments/assets/55a876c2-7fd4-4845-a38a-a7aab7ff84fa" />
-
-Click Advanced Settins > click: Install Extension
-<img width="1212" height="610" alt="image" src="https://github.com/user-attachments/assets/5f8cd43f-725b-4f7f-a2fe-bbfd055c8227" />
-
-Confirm that is the right extension and hit install
-<img width="805" height="811" alt="image" src="https://github.com/user-attachments/assets/3035f33a-014f-4dbb-9205-d8249627528c" />
-
-You are ready to go. Restart your Claude
-<img width="795" height="619" alt="image" src="https://github.com/user-attachments/assets/be19bd6a-ea0e-4728-9b2d-65be1aff261d" />
-
-Claude will show Connector as ready to use in Claude Chat or Cowork
-<img width="676" height="481" alt="image" src="https://github.com/user-attachments/assets/fd4b0379-a286-4440-accf-431ba353fa68" />
-
-To open UI just tell Claude to **open Sherpa dashoboard**.
-
-Requires Node.js ≥ 22.5 — it uses the built-in `node:sqlite` module.
-
-First launch opens a 3-step setup wizard and seeds a demo workspace ("Acme Analytics": 5 AI services, 2 feature packs, 2 pricing plans, 2 pre-computed scenarios), so you can explore a populated dashboard immediately.
-
-The dev registration pins the database to the repo's `data/sherpa.db` (via `SHERPA_DB_PATH`), so whatever you model in conversation shows up in the web dashboard and vice versa. For tool development without Claude Desktop, `npm run mcp:inspect` opens the MCP Inspector against the built server.
-
-### Launching the Dashboard from Claude Desktop
-
-You can open and close the web dashboard directly from your chat with Claude using the new MCP tools:
-
-- **Open Dashboard**: Say *"open the dashboard"* or *"show me the dashboard"*. Claude will call the `open_dashboard` tool, which starts the SvelteKit app in-process (directly inside the MCP server process using port `4848` or another available port if occupied) and automatically opens it in your default browser. It stays available as long as Claude Desktop is running.
-- **Deep-linking Scenarios**: Claude can deep-link directly to a scenario page (e.g. `open_dashboard(path: "/scenarios/<id>")`) immediately after calculating ROI or creating a scenario.
-- **Close Dashboard**: Say *"close the dashboard"*. Claude will call `close_dashboard` to stop the in-process HTTP server and clean up the lockfile.
-
-**In-process Lifecycle & Port Caching**: Because SvelteKit's handler imports and caches environment variables (like `ORIGIN`) at load time, the server binds to a single port per runtime process. If you stop the dashboard, reopening it will start the listener on the same port. If there is a port conflict, you will receive a diagnostic message advising you to restart Claude Desktop.
 
 **Database sharing**: For packaged extension installs (`.mcpb`), the spawned dashboard automatically connects to the same database located at:
 - macOS: `~/Library/Application Support/Sherpa/sherpa.db`
