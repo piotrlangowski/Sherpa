@@ -15,10 +15,10 @@
   let { children }: Props = $props();
 </script>
 
-<div class="flex h-screen w-screen overflow-hidden bg-background text-foreground transition-colors duration-200">
-  <!-- Decorative background shapes (for dark mode tech glow) -->
-  <div class="absolute top-0 left-0 w-[500px] h-[500px] rounded-full bg-primary/5 blur-[120px] pointer-events-none z-0"></div>
-  <div class="absolute bottom-0 right-0 w-[600px] h-[600px] rounded-full bg-emerald-500/5 blur-[150px] pointer-events-none z-0"></div>
+<div class="app-backdrop flex h-screen w-screen overflow-hidden text-foreground transition-colors duration-200">
+  <!-- Decorative background shapes (soft glow in both themes) -->
+  <div class="absolute top-0 left-0 w-[500px] h-[500px] rounded-full bg-primary/10 dark:bg-primary/5 blur-[120px] pointer-events-none z-0"></div>
+  <div class="absolute bottom-0 right-0 w-[600px] h-[600px] rounded-full bg-emerald-500/10 dark:bg-emerald-500/5 blur-[150px] pointer-events-none z-0"></div>
   
   <!-- Sidebar -->
   <Sidebar />
@@ -26,7 +26,7 @@
   <!-- Main Viewport -->
   <main class="flex-1 flex flex-col min-w-0 overflow-hidden relative z-10">
     <!-- Header bar -->
-    <header class="h-14 border-b border-border bg-card/25 backdrop-blur-md px-6 flex items-center justify-between shrink-0 select-none">
+    <header class="glass-strong h-14 border-b px-6 flex items-center justify-between shrink-0 select-none">
       <div class="flex items-center space-x-4">
         <Breadcrumbs />
       </div>
