@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "sherpa",
   "display_name": "Sherpa — AI Feature ROI Calculator",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "CFO-grade ROI for AI features in SaaS: cohort revenue model + LLM token costs → NPV, IRR, payback, TCO. 100% local.",
   "long_description": "Sherpa lets you model the business case for AI features conversationally. Define AI services with their token usage, group them into packs and pricing plans, model your customer base as cohorts, and ask Claude to build and compare ROI scenarios: net present value, internal rate of return, payback period, total cost of ownership and sensitivity (tornado) analysis. All data stays in a local SQLite database — nothing is sent to the cloud. On first run the extension creates a demo workspace so you can start asking questions immediately.",
   "author": {
@@ -122,6 +122,110 @@
     {
       "name": "close_dashboard",
       "description": "Stop the locally running Sherpa dashboard server"
+    },
+    {
+      "name": "get_client_base",
+      "description": "Retrieve the global customer base parameters (total users, ARPU, acquisition, churn, expansion, etc.)"
+    },
+    {
+      "name": "update_client_base",
+      "description": "Modify the global customer base parameters (total users, ARPU, acquisition, churn, expansion, etc.)"
+    },
+    {
+      "name": "list_providers",
+      "description": "List all registered AI providers and their token pricing"
+    },
+    {
+      "name": "create_provider",
+      "description": "Register a new custom AI provider catalog item"
+    },
+    {
+      "name": "update_provider",
+      "description": "Modify token pricing or name of an existing AI provider"
+    },
+    {
+      "name": "delete_provider",
+      "description": "Delete a custom AI provider by ID"
+    },
+    {
+      "name": "list_verticals",
+      "description": "List all customer verticals in the catalog"
+    },
+    {
+      "name": "create_vertical",
+      "description": "Register a new customer vertical in the catalog"
+    },
+    {
+      "name": "update_vertical",
+      "description": "Modify metadata of an existing vertical"
+    },
+    {
+      "name": "delete_vertical",
+      "description": "Remove a vertical from the catalog by ID"
+    },
+    {
+      "name": "list_cohorts",
+      "description": "List all cohort growth configurations in the database"
+    },
+    {
+      "name": "create_cohort",
+      "description": "Create a standalone cohort growth configuration"
+    },
+    {
+      "name": "update_cohort",
+      "description": "Modify growth parameters of an existing cohort config"
+    },
+    {
+      "name": "delete_cohort",
+      "description": "Delete a cohort growth config by ID"
+    },
+    {
+      "name": "list_cost_items",
+      "description": "List all CaPex/Opex fixed cost items in the catalog"
+    },
+    {
+      "name": "create_cost_item",
+      "description": "Create a fixed cost catalog item (Capex/Opex)"
+    },
+    {
+      "name": "update_cost_item",
+      "description": "Modify details of an existing fixed cost item"
+    },
+    {
+      "name": "delete_cost_item",
+      "description": "Delete a fixed cost item from the catalog by ID"
+    },
+    {
+      "name": "get_scenario",
+      "description": "Retrieve full details of an existing scenario by ID, including its growth parameters, attached services/plans, Capex/Opex costs, and ROI results"
+    },
+    {
+      "name": "update_scenario",
+      "description": "Modify parameters of an existing scenario by ID"
+    },
+    {
+      "name": "delete_scenario",
+      "description": "Delete an existing scenario by ID"
+    },
+    {
+      "name": "delete_service",
+      "description": "Delete an existing AI service by ID"
+    },
+    {
+      "name": "update_pack",
+      "description": "Modify metadata or associated service IDs of an existing feature pack"
+    },
+    {
+      "name": "delete_pack",
+      "description": "Delete an existing feature pack by ID"
+    },
+    {
+      "name": "update_plan",
+      "description": "Modify pricing, description, or wrapped services and packs of a pricing plan"
+    },
+    {
+      "name": "delete_plan",
+      "description": "Delete an existing pricing plan by ID"
     }
   ]
 }

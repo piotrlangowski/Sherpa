@@ -29,6 +29,7 @@ npx vitest run --coverage                         # coverage (measures src/lib/s
 Test files are colocated as `*.test.ts`. Only two suites exist today (`src/lib/shared/financial-math.test.ts`, `src/lib/server/services/importer.test.ts`); the pure math module is the primary thing under test.
 
 **MCP server** (separate npm project under `mcp-server/`):
+Exposes 43 tools covering full database CRUD operations for all entities (settings, providers, verticals, cohorts, fixed costs, feature packs, pricing plans, and scenarios), plus dashboard open/close controls.
 
 ```bash
 cd mcp-server && npm install && npm run build     # tsc → mcp-server/build/

@@ -192,6 +192,505 @@ server.tool(
   }
 );
 
+server.tool(
+  "get_client_base",
+  "Retrieve the global customer base parameters (total users, ARPU, acquisition, churn, expansion, etc.)",
+  {},
+  async () => {
+    try {
+      const row = db.prepare("SELECT * FROM client_base WHERE id = 'singleton'").get();
+      if (!row) {
+        return {
+          content: [{ type: "text", text: "Error: Client base singleton row not found." }],
+          isError: true
+        };
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify(row, null, 2) }]
+      };
+    } catch (err: any) {
+      return {
+        content: [{ type: "text", text: `Error: ${err.message}` }],
+        isError: true
+      };
+    }
+  }
+);
+
+server.tool(
+  "update_client_base",
+  "Modify the global customer base parameters (total users, ARPU, acquisition, churn, expansion, etc.)",
+  {
+    total_users: z.number().int().nonnegative().optional(),
+    default_arpu: z.number().nonnegative().optional(),
+    default_monthly_churn_rate: z.number().min(0).max(1).optional(),
+    default_monthly_acquisition: z.number().int().nonnegative().optional(),
+    default_acquisition_growth_rate: z.number().min(0).max(1).optional(),
+    default_ai_adoption_rate: z.number().min(0).max(1).optional(),
+    default_retention_floor: z.number().min(0).max(1).optional(),
+    default_expansion_rate: z.number().min(0).max(1).optional()
+  },
+  async (args) => {
+    try {
+      let updatedRow: any;
+      db.transaction(() => {
+        const current = db.prepare("SELECT * FROM client_base WHERE id = 'singleton'").get() as any;
+        if (!current) {
+          throw new Error("Client base singleton row not found.");
+        }
+        const total_users = args.total_users !== undefined ? args.total_users : current.total_users;
+        const default_arpu = args.default_arpu !== undefined ? args.default_arpu : current.default_arpu;
+        const default_monthly_churn_rate = args.default_monthly_churn_rate !== undefined ? args.default_monthly_churn_rate : current.default_monthly_churn_rate;
+        const default_monthly_acquisition = args.default_monthly_acquisition !== undefined ? args.default_monthly_acquisition : current.default_monthly_acquisition;
+        const default_acquisition_growth_rate = args.default_acquisition_growth_rate !== undefined ? args.default_acquisition_growth_rate : current.default_acquisition_growth_rate;
+        const default_ai_adoption_rate = args.default_ai_adoption_rate !== undefined ? args.default_ai_adoption_rate : current.default_ai_adoption_rate;
+        const default_retention_floor = args.default_retention_floor !== undefined ? args.default_retention_floor : current.default_retention_floor;
+        const default_expansion_rate = args.default_expansion_rate !== undefined ? args.default_expansion_rate : current.default_expansion_rate;
+        const now = new Date().toISOString();
+
+        db.prepare(`
+          UPDATE client_base
+          SET total_users = ?, default_arpu = ?, default_monthly_churn_rate = ?,
+              default_monthly_acquisition = ?, default_acquisition_growth_rate = ?,
+              default_ai_adoption_rate = ?, default_retention_floor = ?,
+              default_expansion_rate = ?, updated_at = ?
+          WHERE id = 'singleton'
+        `).run(
+          total_users, default_arpu, default_monthly_churn_rate,
+          default_monthly_acquisition, default_acquisition_growth_rate,
+          default_ai_adoption_rate, default_retention_floor,
+          default_expansion_rate, now
+        );
+
+        updatedRow = db.prepare("SELECT * FROM client_base WHERE id = 'singleton'").get();
+      })();
+
+      return {
+        content: [{ type: "text", text: `Client base parameters updated successfully:\n${JSON.stringify(updatedRow, null, 2)}` }]
+      };
+    } catch (err: any) {
+      return {
+        content: [{ type: "text", text: `Error: ${err.message}` }],
+        isError: true
+      };
+    }
+  }
+);
+
+// 1.5 Providers CRUD
+server.tool(
+  "list_providers",
+  "List all registered AI providers (e.g. OpenAI, Google, Anthropic) and their input/output token pricing.",
+  {},
+  async () => {
+    try {
+      const providers = db.prepare("SELECT * FROM providers ORDER BY name ASC").all();
+      return { content: [{ type: "text", text: JSON.stringify(providers, null, 2) }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "create_provider",
+  "Register a new custom AI provider catalog item with name, model_name, and token pricing.",
+  {
+    name: z.string(),
+    model_name: z.string(),
+    input_price: z.number().nonnegative(),
+    output_price: z.number().nonnegative()
+  },
+  async (args) => {
+    try {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO providers (id, name, model_name, input_price, output_price, is_predefined, updated_at)
+        VALUES (?, ?, ?, ?, ?, 0, ?)
+      `).run(id, args.name, args.model_name, args.input_price, args.output_price, now);
+      return { content: [{ type: "text", text: `Provider '${args.name}' (${args.model_name}) created with ID: ${id}` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "update_provider",
+  "Modify the token pricing or name of an existing AI provider by ID.",
+  {
+    id: z.string(),
+    name: z.string().optional(),
+    model_name: z.string().optional(),
+    input_price: z.number().nonnegative().optional(),
+    output_price: z.number().nonnegative().optional()
+  },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM providers WHERE id = ?").get(args.id) as any;
+      if (!current) {
+        return { content: [{ type: "text", text: "Provider not found" }], isError: true };
+      }
+      const name = args.name !== undefined ? args.name : current.name;
+      const model_name = args.model_name !== undefined ? args.model_name : current.model_name;
+      const input_price = args.input_price !== undefined ? args.input_price : current.input_price;
+      const output_price = args.output_price !== undefined ? args.output_price : current.output_price;
+      const now = new Date().toISOString();
+      db.prepare(`
+        UPDATE providers
+        SET name = ?, model_name = ?, input_price = ?, output_price = ?, updated_at = ?
+        WHERE id = ?
+      `).run(name, model_name, input_price, output_price, now, args.id);
+      return { content: [{ type: "text", text: `Provider '${name}' updated successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "delete_provider",
+  "Delete a custom AI provider by ID.",
+  { id: z.string() },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM providers WHERE id = ?").get(args.id) as any;
+      if (!current) {
+        return { content: [{ type: "text", text: "Provider not found" }], isError: true };
+      }
+      if (current.is_predefined === 1 || current.is_predefined === true) {
+        return { content: [{ type: "text", text: "Cannot delete a predefined provider." }], isError: true };
+      }
+      db.prepare("DELETE FROM providers WHERE id = ?").run(args.id);
+      return { content: [{ type: "text", text: `Provider with ID ${args.id} deleted successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// 1.6 Verticals CRUD
+server.tool(
+  "list_verticals",
+  "List all customer verticals (e.g. LegalTech, E-commerce) in the catalog.",
+  {},
+  async () => {
+    try {
+      const verticals = db.prepare("SELECT * FROM verticals ORDER BY name ASC").all();
+      return { content: [{ type: "text", text: JSON.stringify(verticals, null, 2) }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "create_vertical",
+  "Register a new customer vertical in the catalog.",
+  {
+    name: z.string(),
+    description: z.string().optional(),
+    tam_users: z.number().int().nonnegative().optional(),
+    sam_users: z.number().int().nonnegative().optional(),
+    som_users: z.number().int().nonnegative().optional()
+  },
+  async (args) => {
+    try {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO verticals (id, name, description, tam_users, sam_users, som_users, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        args.name,
+        args.description || null,
+        args.tam_users ?? 0,
+        args.sam_users ?? 0,
+        args.som_users ?? 0,
+        now,
+        now
+      );
+      return { content: [{ type: "text", text: `Vertical '${args.name}' created with ID: ${id}` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "update_vertical",
+  "Modify metadata (TAM/SAM/SOM or description) of an existing vertical.",
+  {
+    id: z.string(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    tam_users: z.number().int().nonnegative().optional(),
+    sam_users: z.number().int().nonnegative().optional(),
+    som_users: z.number().int().nonnegative().optional()
+  },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM verticals WHERE id = ?").get(args.id) as any;
+      if (!current) {
+        return { content: [{ type: "text", text: "Vertical not found" }], isError: true };
+      }
+      const name = args.name !== undefined ? args.name : current.name;
+      const description = args.description !== undefined ? args.description : current.description;
+      const tam = args.tam_users !== undefined ? args.tam_users : current.tam_users;
+      const sam = args.sam_users !== undefined ? args.sam_users : current.sam_users;
+      const som = args.som_users !== undefined ? args.som_users : current.som_users;
+      const now = new Date().toISOString();
+      db.prepare(`
+        UPDATE verticals
+        SET name = ?, description = ?, tam_users = ?, sam_users = ?, som_users = ?, updated_at = ?
+        WHERE id = ?
+      `).run(name, description, tam, sam, som, now, args.id);
+      return { content: [{ type: "text", text: `Vertical '${name}' updated successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "delete_vertical",
+  "Remove a vertical from the catalog by ID.",
+  { id: z.string() },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM verticals WHERE id = ?").get(args.id) as any;
+      if (!current) {
+        return { content: [{ type: "text", text: "Vertical not found" }], isError: true };
+      }
+      db.prepare("DELETE FROM verticals WHERE id = ?").run(args.id);
+      return { content: [{ type: "text", text: `Vertical with ID ${args.id} deleted successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// 1.7 Cohorts CRUD
+server.tool(
+  "list_cohorts",
+  "List all cohort growth configurations in the database.",
+  {},
+  async () => {
+    try {
+      const cohorts = db.prepare("SELECT * FROM cohort_configs ORDER BY name ASC").all();
+      return { content: [{ type: "text", text: JSON.stringify(cohorts, null, 2) }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "create_cohort",
+  "Create a standalone cohort growth configuration.",
+  {
+    name: z.string(),
+    vertical_id: z.string().nullable().optional(),
+    current_users: z.number().int().nonnegative(),
+    monthly_acquisition: z.number().int().nonnegative(),
+    acquisition_growth_rate: z.number().min(0).max(1).default(0),
+    monthly_churn_rate: z.number().min(0).max(1).default(0.05),
+    retention_floor: z.number().min(0).max(1).default(0.60),
+    monthly_expansion_rate: z.number().min(0).max(1).default(0.02),
+    ai_adoption_rate: z.number().min(0).max(1).default(0.30),
+    base_arpu: z.number().nonnegative().default(100)
+  },
+  async (args) => {
+    try {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO cohort_configs (
+          id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate,
+          monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id, args.name, args.vertical_id || null, args.current_users, args.monthly_acquisition, args.acquisition_growth_rate,
+        args.monthly_churn_rate, args.retention_floor, args.monthly_expansion_rate, args.ai_adoption_rate, args.base_arpu,
+        now, now
+      );
+      return { content: [{ type: "text", text: `Cohort '${args.name}' created with ID: ${id}` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "update_cohort",
+  "Modify growth parameters of an existing cohort config.",
+  {
+    id: z.string(),
+    name: z.string().optional(),
+    vertical_id: z.string().nullable().optional(),
+    current_users: z.number().int().nonnegative().optional(),
+    monthly_acquisition: z.number().int().nonnegative().optional(),
+    acquisition_growth_rate: z.number().min(0).max(1).optional(),
+    monthly_churn_rate: z.number().min(0).max(1).optional(),
+    retention_floor: z.number().min(0).max(1).optional(),
+    monthly_expansion_rate: z.number().min(0).max(1).optional(),
+    ai_adoption_rate: z.number().min(0).max(1).optional(),
+    base_arpu: z.number().nonnegative().optional()
+  },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM cohort_configs WHERE id = ?").get(args.id) as any;
+      if (!current) {
+        return { content: [{ type: "text", text: "Cohort not found" }], isError: true };
+      }
+      const name = args.name !== undefined ? args.name : current.name;
+      const vertical_id = args.vertical_id !== undefined ? args.vertical_id : current.vertical_id;
+      const current_users = args.current_users !== undefined ? args.current_users : current.current_users;
+      const monthly_acquisition = args.monthly_acquisition !== undefined ? args.monthly_acquisition : current.monthly_acquisition;
+      const acquisition_growth_rate = args.acquisition_growth_rate !== undefined ? args.acquisition_growth_rate : current.acquisition_growth_rate;
+      const monthly_churn_rate = args.monthly_churn_rate !== undefined ? args.monthly_churn_rate : current.monthly_churn_rate;
+      const retention_floor = args.retention_floor !== undefined ? args.retention_floor : current.retention_floor;
+      const monthly_expansion_rate = args.monthly_expansion_rate !== undefined ? args.monthly_expansion_rate : current.monthly_expansion_rate;
+      const ai_adoption_rate = args.ai_adoption_rate !== undefined ? args.ai_adoption_rate : current.ai_adoption_rate;
+      const base_arpu = args.base_arpu !== undefined ? args.base_arpu : current.base_arpu;
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        UPDATE cohort_configs
+        SET name = ?, vertical_id = ?, current_users = ?, monthly_acquisition = ?,
+            acquisition_growth_rate = ?, monthly_churn_rate = ?, retention_floor = ?,
+            monthly_expansion_rate = ?, ai_adoption_rate = ?, base_arpu = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        name, vertical_id, current_users, monthly_acquisition,
+        acquisition_growth_rate, monthly_churn_rate, retention_floor,
+        monthly_expansion_rate, ai_adoption_rate, base_arpu, now, args.id
+      );
+      return { content: [{ type: "text", text: `Cohort '${name}' updated successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "delete_cohort",
+  "Delete a cohort growth config by ID.",
+  { id: z.string() },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM cohort_configs WHERE id = ?").get(args.id) as any;
+      if (!current) {
+        return { content: [{ type: "text", text: "Cohort not found" }], isError: true };
+      }
+      db.prepare("DELETE FROM cohort_configs WHERE id = ?").run(args.id);
+      return { content: [{ type: "text", text: `Cohort with ID ${args.id} deleted successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// 1.8 Fixed Cost Items CRUD
+server.tool(
+  "list_cost_items",
+  "List all CaPex/Opex fixed cost items in the catalog.",
+  {},
+  async () => {
+    try {
+      const costs = db.prepare("SELECT * FROM cost_items ORDER BY name ASC").all();
+      return { content: [{ type: "text", text: JSON.stringify(costs, null, 2) }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "create_cost_item",
+  "Create a fixed cost catalog item (Capex/Opex).",
+  {
+    name: z.string(),
+    category: z.enum(["capex", "opex"]),
+    subcategory: z.string().optional(),
+    amount: z.number().nonnegative(),
+    frequency: z.enum(["one_time", "monthly", "yearly"]),
+    service_id: z.string().nullable().optional()
+  },
+  async (args) => {
+    try {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO cost_items (id, name, category, subcategory, amount, frequency, service_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, args.name, args.category, args.subcategory || null, args.amount, args.frequency, args.service_id || null, now, now);
+      return { content: [{ type: "text", text: `Cost item '${args.name}' created with ID: ${id}` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "update_cost_item",
+  "Modify details of an existing fixed cost item.",
+  {
+    id: z.string(),
+    name: z.string().optional(),
+    category: z.enum(["capex", "opex"]).optional(),
+    subcategory: z.string().optional(),
+    amount: z.number().nonnegative().optional(),
+    frequency: z.enum(["one_time", "monthly", "yearly"]).optional(),
+    service_id: z.string().nullable().optional()
+  },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM cost_items WHERE id = ?").get(args.id) as any;
+      if (!current) {
+        return { content: [{ type: "text", text: "Cost item not found" }], isError: true };
+      }
+      const name = args.name !== undefined ? args.name : current.name;
+      const category = args.category !== undefined ? args.category : current.category;
+      const subcategory = args.subcategory !== undefined ? args.subcategory : current.subcategory;
+      const amount = args.amount !== undefined ? args.amount : current.amount;
+      const frequency = args.frequency !== undefined ? args.frequency : current.frequency;
+      const service_id = args.service_id !== undefined ? args.service_id : current.service_id;
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        UPDATE cost_items
+        SET name = ?, category = ?, subcategory = ?, amount = ?, frequency = ?, service_id = ?, updated_at = ?
+        WHERE id = ?
+      `).run(name, category, subcategory, amount, frequency, service_id, now, args.id);
+      return { content: [{ type: "text", text: `Cost item '${name}' updated successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "delete_cost_item",
+  "Delete a fixed cost item from the catalog by ID.",
+  { id: z.string() },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM cost_items WHERE id = ?").get(args.id) as any;
+      if (!current) {
+        return { content: [{ type: "text", text: "Cost item not found" }], isError: true };
+      }
+      db.prepare("DELETE FROM cost_items WHERE id = ?").run(args.id);
+      return { content: [{ type: "text", text: `Cost item with ID ${args.id} deleted successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
 // 2. Services CRUD
 server.tool(
   "list_services",
@@ -313,6 +812,24 @@ server.tool(
         content: [{ type: "text", text: `Error: ${err.message}` }],
         isError: true
       };
+    }
+  }
+);
+
+server.tool(
+  "delete_service",
+  "Delete an existing AI service by ID.",
+  { id: z.string() },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM services WHERE id = ?").get(args.id);
+      if (!current) {
+        return { content: [{ type: "text", text: "Service not found" }], isError: true };
+      }
+      db.prepare("DELETE FROM services WHERE id = ?").run(args.id);
+      return { content: [{ type: "text", text: `Service with ID ${args.id} deleted successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
   }
 );
@@ -454,6 +971,129 @@ server.tool(
         content: [{ type: "text", text: `Error: ${err.message}` }],
         isError: true
       };
+    }
+  }
+);
+
+server.tool(
+  "update_pack",
+  "Modify metadata or associated service IDs of an existing feature pack.",
+  {
+    id: z.string(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    service_ids: z.array(z.string()).optional()
+  },
+  async (args) => {
+    try {
+      db.transaction(() => {
+        const current = db.prepare("SELECT * FROM packs WHERE id = ?").get(args.id) as any;
+        if (!current) {
+          throw new Error("Pack not found");
+        }
+        const name = args.name !== undefined ? args.name : current.name;
+        const description = args.description !== undefined ? args.description : current.description;
+        const now = new Date().toISOString();
+
+        db.prepare("UPDATE packs SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+          .run(name, description, now, args.id);
+
+        if (args.service_ids !== undefined) {
+          db.prepare("DELETE FROM pack_services WHERE pack_id = ?").run(args.id);
+          const insertLink = db.prepare("INSERT INTO pack_services (pack_id, service_id) VALUES (?, ?)");
+          for (const sId of args.service_ids) {
+            insertLink.run(args.id, sId);
+          }
+        }
+      })();
+      return { content: [{ type: "text", text: `Pack with ID ${args.id} updated successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "delete_pack",
+  "Delete an existing feature pack by ID.",
+  { id: z.string() },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM packs WHERE id = ?").get(args.id);
+      if (!current) {
+        return { content: [{ type: "text", text: "Pack not found" }], isError: true };
+      }
+      db.prepare("DELETE FROM packs WHERE id = ?").run(args.id);
+      return { content: [{ type: "text", text: `Pack with ID ${args.id} deleted successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "update_plan",
+  "Modify pricing, description, or wrapped services and packs of a pricing plan.",
+  {
+    id: z.string(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    base_price: z.number().optional(),
+    service_ids: z.array(z.string()).optional(),
+    pack_ids: z.array(z.string()).optional()
+  },
+  async (args) => {
+    try {
+      db.transaction(() => {
+        const current = db.prepare("SELECT * FROM plans WHERE id = ?").get(args.id) as any;
+        if (!current) {
+          throw new Error("Plan not found");
+        }
+        const name = args.name !== undefined ? args.name : current.name;
+        const description = args.description !== undefined ? args.description : current.description;
+        const base_price = args.base_price !== undefined ? args.base_price : current.base_price;
+        const now = new Date().toISOString();
+
+        db.prepare("UPDATE plans SET name = ?, description = ?, base_price = ?, updated_at = ? WHERE id = ?")
+          .run(name, description, base_price, now, args.id);
+
+        if (args.service_ids !== undefined) {
+          db.prepare("DELETE FROM plan_services WHERE plan_id = ?").run(args.id);
+          const insertServ = db.prepare("INSERT INTO plan_services (plan_id, service_id) VALUES (?, ?)");
+          for (const sId of args.service_ids) {
+            insertServ.run(args.id, sId);
+          }
+        }
+
+        if (args.pack_ids !== undefined) {
+          db.prepare("DELETE FROM plan_packs WHERE plan_id = ?").run(args.id);
+          const insertPack = db.prepare("INSERT INTO plan_packs (plan_id, pack_id) VALUES (?, ?)");
+          for (const pId of args.pack_ids) {
+            insertPack.run(args.id, pId);
+          }
+        }
+      })();
+      return { content: [{ type: "text", text: `Plan with ID ${args.id} updated successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "delete_plan",
+  "Delete an existing pricing plan by ID.",
+  { id: z.string() },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM plans WHERE id = ?").get(args.id);
+      if (!current) {
+        return { content: [{ type: "text", text: "Plan not found" }], isError: true };
+      }
+      db.prepare("DELETE FROM plans WHERE id = ?").run(args.id);
+      return { content: [{ type: "text", text: `Plan with ID ${args.id} deleted successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
   }
 );
@@ -601,6 +1241,103 @@ server.tool(
         content: [{ type: "text", text: `Error: ${err.message}` }],
         isError: true
       };
+    }
+  }
+);
+
+server.tool(
+  "get_scenario",
+  "Retrieve full details of an existing scenario by ID, including its growth parameters, attached services/plans, Capex/Opex costs, and ROI results.",
+  { id: z.string() },
+  async (args) => {
+    try {
+      const scenario = getFullScenario(args.id);
+      if (!scenario) {
+        return { content: [{ type: "text", text: `Scenario '${args.id}' not found` }], isError: true };
+      }
+      return { content: [{ type: "text", text: JSON.stringify(scenario, null, 2) }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "update_scenario",
+  "Modify parameters of an existing scenario by ID.",
+  {
+    id: z.string(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    projection_months: z.number().int().min(12).max(120).optional(),
+    discount_rate: z.number().min(0).max(1).optional(),
+    scope_type: z.enum(["all_clients", "verticals", "cohorts"]).optional()
+  },
+  async (args) => {
+    try {
+      db.transaction(() => {
+        const current = db.prepare("SELECT * FROM scenarios WHERE id = ?").get(args.id) as any;
+        if (!current) {
+          throw new Error("Scenario not found");
+        }
+        const name = args.name !== undefined ? args.name : current.name;
+        const description = args.description !== undefined ? args.description : current.description;
+        const projection_months = args.projection_months !== undefined ? args.projection_months : current.projection_months;
+        const discount_rate = args.discount_rate !== undefined ? args.discount_rate : current.discount_rate;
+        const scope_type = args.scope_type !== undefined ? args.scope_type : current.scope_type;
+        const now = new Date().toISOString();
+
+        db.prepare(`
+          UPDATE scenarios
+          SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, updated_at = ?
+          WHERE id = ?
+        `).run(name, description, projection_months, discount_rate, scope_type, now, args.id);
+      })();
+
+      // Re-calculate projections after modification
+      const fullScenario = getFullScenario(args.id)!;
+      const providers = getProviders();
+      const results = calculateScenario(fullScenario, providers);
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        INSERT OR REPLACE INTO scenario_results (id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at)
+        VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        args.id,
+        args.id,
+        results.paybackMonths,
+        results.npv,
+        results.irrAnnual,
+        results.tco,
+        results.roiPercent,
+        JSON.stringify(results.timeline.map(t => t.netCashFlow)),
+        JSON.stringify(results.timeline.map(t => t.revenue)),
+        JSON.stringify(results.timeline.map(t => t.customers)),
+        now
+      );
+
+      return { content: [{ type: "text", text: `Scenario '${fullScenario.name}' updated successfully and ROI re-projected.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "delete_scenario",
+  "Delete an existing scenario by ID.",
+  { id: z.string() },
+  async (args) => {
+    try {
+      const current = db.prepare("SELECT * FROM scenarios WHERE id = ?").get(args.id);
+      if (!current) {
+        return { content: [{ type: "text", text: "Scenario not found" }], isError: true };
+      }
+      db.prepare("DELETE FROM scenarios WHERE id = ?").run(args.id);
+      return { content: [{ type: "text", text: `Scenario with ID ${args.id} deleted successfully.` }] };
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
   }
 );

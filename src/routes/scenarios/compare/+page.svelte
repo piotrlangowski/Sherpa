@@ -32,6 +32,7 @@
   let chartElement: HTMLDivElement | undefined = $state();
   let chartInstance: any = null;
   let resizeListener: (() => void) | null = null;
+  let isMounted = false;
 
   function cleanupChart() {
     if (chartInstance) {
@@ -232,9 +233,8 @@
 
     tick().then(() => {
       import('echarts').then((echarts) => {
+        if (!isMounted || !chartElement) return;
         cleanupChart();
-
-        if (!chartElement) return;
 
         chartInstance = echarts.init(chartElement);
         chartInstance.setOption(chartOption);
@@ -254,8 +254,10 @@
   });
 
   onMount(() => {
+    isMounted = true;
     renderChart();
     return () => {
+      isMounted = false;
       cleanupChart();
     };
   });

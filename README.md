@@ -33,7 +33,7 @@ Typical ROI calculators don't understand LLM economics; token cost calculators d
 - **Scenario comparison** — side-by-side KPIs, cumulative ROI curves and opportunity cost (ΔNPV) between alternatives.
 - **Import & export** — model your real customer base from a CSV export (CRM/billing), export scenarios to JSON/CSV, download the dashboard as a high-res PNG.
 - **Current model prices** — bundled price list for OpenAI, Anthropic and Google models with a visible "prices as of" date and one-click sync.
-- **MCP server** — 15 tools and 2 resources exposing the same engine to LLM hosts; includes natural-language scenario generation and 4 bundled agent skills.
+- **MCP server** — 43 tools and 2 resources exposing the same engine to LLM hosts; includes full database CRUD capabilities, natural-language scenario generation, and 4 bundled agent skills.
 
 ## Architecture
 
@@ -53,7 +53,7 @@ graph LR
     end
 
     subgraph mcp ["MCP server (stdio)"]
-        TOOLS["15 tools + 2 resources"]
+        TOOLS["43 tools + 2 resources"]
     end
 
     DB[("SQLite<br/>data/sherpa.db")]

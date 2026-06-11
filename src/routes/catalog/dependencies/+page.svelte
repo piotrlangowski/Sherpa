@@ -53,6 +53,7 @@
   let resizeListener: (() => void) | null = null;
   let showAddDialog = $state(false);
   let isSaving = $state(false);
+  let isMounted = false;
 
   function cleanupChart() {
     if (chartInstance) {
@@ -120,9 +121,8 @@
     if (!chartElement || typeof window === 'undefined') return;
 
     import('echarts').then((echarts) => {
+      if (!isMounted || !chartElement) return;
       cleanupChart();
-      
-      if (!chartElement) return;
 
       chartInstance = echarts.init(chartElement);
       
@@ -184,8 +184,10 @@
   });
 
   onMount(() => {
+    isMounted = true;
     renderChart();
     return () => {
+      isMounted = false;
       cleanupChart();
     };
   });
