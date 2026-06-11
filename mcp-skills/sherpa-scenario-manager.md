@@ -17,19 +17,22 @@ description: Provides context for creating and configuring SaaS ROI scenarios fr
 ## Workflow Patterns
 
 ### 1. Natural Language Scenario Generation
-- The tool `generate_scenario_from_description` parses natural language text to automatically create the scenario, cohort configuration, and link catalog services.
-  - Argument: `{ description: "A plain text description" }`
+- Use `scenario_action` with `action: "generate"` to parse natural language text and automatically create the scenario, cohort configuration, and link catalog services.
+  - Arguments: `{ action: "generate", description: "A plain text description" }`
   - Example: "Utwórz scenariusz 'Chatbot Pro' z 5000 początkowych użytkowników, churnem 4% i ARPU 150$. Wprowadzamy usługę summarization w 3 miesiącu."
 
-### 2. Structured Scenario Creation
-- The tool `create_scenario` is available for structured metrics or exact service mappings.
-  - Key Fields:
+### 2. Structured Scenario Lifecycle
+- Use `scenario_action` with `action: "create" | "get" | "update" | "delete" | "list"` to manage scenario records.
+  - Key Fields for `action: "create"`:
     - `name`: Scenario name.
-    - `projection_months`: Duration of analysis (typically 36 or 60).
-    - `discount_rate`: Annual discount rate (default is 10%/0.10).
+    - `projection_months` (optional): Duration of analysis (typically 36 or 60).
+    - `discount_rate` (optional): Annual discount rate (default is 10%/0.10).
     - `cohort_config`: Object defining user acquisition, churn, ARPU, and adoption.
-    - `services`: Array of `{ id: string, rollout_month: number }` to attach.
-    - `cost_ids`: Array of Capex/Opex fixed cost item IDs to attach.
+    - `services` (optional): Array of `{ id: string, rollout_month?: number }` to attach.
+    - `packs` (optional): Array of `{ id: string, rollout_month?: number }` to attach.
+    - `plans` (optional): Array of `{ id: string, rollout_month?: number }` to attach.
+    - `cost_ids` (optional): Array of Capex/Opex fixed cost item IDs to attach.
+  - Deletions (`action: "delete"`) require `confirm: true`.
 
 ## Configuration Details
 - **Rollout Month**: Represents when a service starts. A rollout month of `0` starts immediately, while `6` defers costs until month 6.

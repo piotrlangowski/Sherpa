@@ -15,13 +15,13 @@ description: Provides context and tools for calculating and analyzing ROI, NPV, 
 ## Workflow Patterns
 
 ### 1. Calculation & Result Retrieval
-- The tool `calculate_roi` runs the calculations for a scenario ID to ensure the cached values are up-to-date.
-  - Arguments: `{ id: "scenario-uuid" }`
+- Use `scenario_action` with `action: "calculate"` to run cashflow projections and update cache.
+  - Arguments: `{ action: "calculate", id: "scenario-uuid" }`
 - Scenario results (monthly cashflows, customer growth, MRR) are available via the resource URI: `sherpa://scenarios/{id}/results`
 
 ### 2. Sensitivity Analysis
-- The tool `run_sensitivity` evaluates how fluctuations in model parameters impact Net Present Value.
-  - Arguments: `{ id: "scenario-uuid", variation_percent: 0.10 }`
+- Use `scenario_action` with `action: "sensitivity"` to perform tornado-chart sensitivity analysis.
+  - Arguments: `{ action: "sensitivity", id: "scenario-uuid", variation_percent?: number }`
 - High impact ranges highlight variables (e.g., churn, ARPU, adoption, or token costs) representing high leverage or risk.
 
 ## Standard Report Components
