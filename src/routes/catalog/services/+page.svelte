@@ -124,7 +124,7 @@
     </Card>
   {:else}
     <!-- Controls Row -->
-    <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-card/20 border border-border/80 p-3 rounded-xl backdrop-blur-xs select-none">
+    <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between glass border p-3 rounded-xl select-none">
       <div class="flex flex-1 flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
         <!-- Quick Find Search -->
         <div class="relative flex-1 max-w-md">
@@ -132,7 +132,7 @@
           <Input
             type="text"
             placeholder="Quick find services..."
-            class="pl-9 bg-background/50 border-border"
+            class="pl-9 bg-(--glass-inset-bg) border-border"
             bind:value={searchQuery}
           />
         </div>
@@ -140,7 +140,7 @@
         <!-- Sort Select -->
         <select
           bind:value={sortBy}
-          class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="name_asc">Name (A - Z)</option>
           <option value="name_desc">Name (Z - A)</option>
@@ -153,7 +153,7 @@
         <!-- Status Filter -->
         <select
           bind:value={statusFilter}
-          class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="all">All Statuses</option>
           <option value="existing">Existing</option>
@@ -163,7 +163,7 @@
         <!-- Provider Filter -->
         <select
           bind:value={providerFilter}
-          class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="all">All Providers</option>
           <option value="fixed">Fixed Cost Only</option>
@@ -203,8 +203,8 @@
       <!-- Card Grid View -->
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-200">
         {#each filteredServices as service (service.id)}
-          <Card class="border-border bg-card/40 backdrop-blur-sm shadow-sm flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
-            <CardHeader class="pb-3 border-b border-border bg-black/5">
+          <Card class="glass border flex flex-col justify-between hover:border-primary/30 transition-all duration-300 group">
+            <CardHeader class="pb-3 border-b border-border glass-inset">
               <div class="flex justify-between items-start">
                 <div class="flex items-center space-x-2 text-primary">
                   <BrainCircuit class="h-5 w-5 group-hover:scale-105 transition-transform" />
@@ -212,7 +212,7 @@
                 </div>
                 
                 {#if service.status === 'existing'}
-                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider select-none">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wider select-none">
                     Existing
                   </span>
                 {:else}
@@ -275,7 +275,7 @@
               {/if}
             </CardContent>
 
-            <CardFooter class="border-t border-border bg-black/5 py-3.5 flex justify-end space-x-2">
+            <CardFooter class="border-t border-border glass-inset py-3.5 flex justify-end space-x-2">
               <Button variant="outline" size="sm" href="/catalog/services/{service.id}">
                 <Edit2 class="h-3.5 w-3.5 mr-1.5" /> Edit
               </Button>
@@ -291,9 +291,9 @@
       </div>
     {:else}
       <!-- Dense List (Table) View -->
-      <div class="border border-border rounded-lg overflow-hidden bg-card/25 backdrop-blur-sm shadow-sm animate-in fade-in duration-200">
+      <div class="border border-border rounded-lg overflow-hidden glass border animate-in fade-in duration-200">
         <Table>
-          <TableHeader class="bg-black/15">
+          <TableHeader class="glass-inset">
             <TableRow>
               <TableHead class="text-foreground font-bold">Service Name</TableHead>
               <TableHead class="text-foreground font-bold">Status</TableHead>
@@ -306,11 +306,11 @@
           </TableHeader>
           <TableBody>
             {#each filteredServices as service (service.id)}
-              <TableRow class="hover:bg-white/5 transition-all">
+              <TableRow class="hover:bg-foreground/5 transition-all">
                 <TableCell class="font-semibold">{service.name}</TableCell>
                 <TableCell>
                   {#if service.status === 'existing'}
-                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">
                       Existing
                     </span>
                   {:else}

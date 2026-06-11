@@ -71,7 +71,7 @@
   </div>
 
   {#if form?.success}
-    <Alert variant="default" class="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+    <Alert variant="default" class="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
       <AlertTitle>Settings Saved</AlertTitle>
       <AlertDescription>Your organization changes have been successfully saved.</AlertDescription>
     </Alert>
@@ -103,7 +103,7 @@
         <!-- Company Name -->
         <div class="space-y-2">
           <Label for="companyName">Organization / Company Name</Label>
-          <Input id="companyName" name="companyName" bind:value={companyName} class="max-w-md bg-background/50" />
+          <Input id="companyName" name="companyName" bind:value={companyName} class="max-w-md bg-(--glass-inset-bg)" />
           <p class="text-xs text-muted-foreground">Used as the client branding on screenshots and reports.</p>
         </div>
 
@@ -172,15 +172,15 @@
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-md">
             <div class="space-y-2">
               <Label for="rate_EUR">1 USD = EUR</Label>
-              <Input type="number" step="any" id="rate_EUR" name="rate_EUR" bind:value={exchangeRates.EUR} class="bg-background/50" />
+              <Input type="number" step="any" id="rate_EUR" name="rate_EUR" bind:value={exchangeRates.EUR} class="bg-(--glass-inset-bg)" />
             </div>
             <div class="space-y-2">
               <Label for="rate_PLN">1 USD = PLN</Label>
-              <Input type="number" step="any" id="rate_PLN" name="rate_PLN" bind:value={exchangeRates.PLN} class="bg-background/50" />
+              <Input type="number" step="any" id="rate_PLN" name="rate_PLN" bind:value={exchangeRates.PLN} class="bg-(--glass-inset-bg)" />
             </div>
             <div class="space-y-2">
               <Label for="rate_GBP">1 USD = GBP</Label>
-              <Input type="number" step="any" id="rate_GBP" name="rate_GBP" bind:value={exchangeRates.GBP} class="bg-background/50" />
+              <Input type="number" step="any" id="rate_GBP" name="rate_GBP" bind:value={exchangeRates.GBP} class="bg-(--glass-inset-bg)" />
             </div>
             <input type="hidden" name="rate_USD" value="1.0" />
             <input type="hidden" name="exchangeRatesAsOf" value={ratesAsOf} />
@@ -189,7 +189,7 @@
 
       </CardContent>
 
-      <CardFooter class="border-t border-border bg-black/10 flex justify-end py-4">
+      <CardFooter class="border-t border-border glass-inset flex justify-end py-4">
         <Button type="submit" disabled={isSaving}>
           <Save class="h-4 w-4 mr-2" />
           {#if isSaving}Saving...{:else}Save Changes{/if}

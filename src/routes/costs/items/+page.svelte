@@ -128,7 +128,7 @@
 
   <!-- Summary Cards -->
   <div class="grid grid-cols-1 md:grid-cols-2 gap-6 select-none">
-    <Card class="border-border bg-card/40 backdrop-blur-sm shadow-md">
+    <Card class="glass border">
       <CardHeader class="pb-2">
         <CardDescription class="text-xs uppercase font-bold tracking-wider">Total CAPEX (One-Time)</CardDescription>
         <CardTitle class="text-3xl font-black text-primary">{formatCurrency(totalCapex, appState.currency, 0)}</CardTitle>
@@ -138,10 +138,10 @@
       </CardContent>
     </Card>
 
-    <Card class="border-border bg-card/40 backdrop-blur-sm shadow-md">
+    <Card class="glass border">
       <CardHeader class="pb-2">
         <CardDescription class="text-xs uppercase font-bold tracking-wider">Total OPEX (Monthly Recurring)</CardDescription>
-        <CardTitle class="text-3xl font-black text-cyan-400">{formatCurrency(totalMonthlyOpex, appState.currency, 0)}/mo</CardTitle>
+        <CardTitle class="text-3xl font-black text-cyan-600 dark:text-cyan-400">{formatCurrency(totalMonthlyOpex, appState.currency, 0)}/mo</CardTitle>
       </CardHeader>
       <CardContent class="text-xs text-muted-foreground">
         Sum of salary allocations, cloud monitoring, and fixed server overheads.
@@ -167,7 +167,7 @@
           <TabsContent value={tab} class="m-0 focus:outline-none">
             <div class="overflow-x-auto">
               <table class="w-full text-sm text-left border-collapse">
-                <thead class="bg-muted/40 border-y border-border text-xs text-muted-foreground font-semibold uppercase tracking-wider">
+                <thead class="glass-inset border-y border-border text-xs text-muted-foreground font-semibold uppercase tracking-wider">
                   <tr>
                     <th class="px-6 py-4">Name</th>
                     <th class="px-6 py-4">Category</th>
@@ -198,7 +198,7 @@
                               CAPEX
                             </span>
                           {:else}
-                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
                               OPEX
                             </span>
                           {/if}
@@ -276,7 +276,7 @@
       <label class="cursor-pointer">
         <input type="radio" name="category" value="opex" bind:group={category} class="peer sr-only" />
         <div
-          class="h-full rounded-xl border border-border bg-background/50 p-3 transition-colors peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary/30 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
+          class="h-full rounded-xl border border-border bg-(--glass-inset-bg) p-3 transition-colors peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary/30 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
         >
           <div class="text-sm font-bold">OPEX</div>
           <div class="text-xs text-muted-foreground">Operational, recurring spend</div>
@@ -285,7 +285,7 @@
       <label class="cursor-pointer">
         <input type="radio" name="category" value="capex" bind:group={category} class="peer sr-only" />
         <div
-          class="h-full rounded-xl border border-border bg-background/50 p-3 transition-colors peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary/30 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
+          class="h-full rounded-xl border border-border bg-(--glass-inset-bg) p-3 transition-colors peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary/30 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
         >
           <div class="text-sm font-bold">CAPEX</div>
           <div class="text-xs text-muted-foreground">Capital, one-time investment</div>

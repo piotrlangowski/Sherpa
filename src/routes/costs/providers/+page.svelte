@@ -154,7 +154,7 @@
   </div>
 
   <!-- Controls Row -->
-  <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-card/20 border border-border/80 p-3 rounded-xl backdrop-blur-xs select-none">
+  <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between glass border p-3 rounded-xl select-none">
     <div class="flex flex-1 flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
       <!-- Quick Find Search -->
       <div class="relative flex-1 max-w-md">
@@ -162,7 +162,7 @@
         <Input
           type="text"
           placeholder="Quick find providers or models..."
-          class="pl-9 bg-background/50 border-border"
+          class="pl-9 bg-(--glass-inset-bg) border-border"
           bind:value={searchQuery}
         />
       </div>
@@ -170,7 +170,7 @@
       <!-- Sort Select -->
       <select
         bind:value={sortBy}
-        class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
       >
         <option value="provider_asc">Provider (A - Z)</option>
         <option value="provider_desc">Provider (Z - A)</option>
@@ -186,7 +186,7 @@
       <!-- Type Filter -->
       <select
         bind:value={typeFilter}
-        class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
       >
         <option value="all">All Types</option>
         <option value="standard">Standard</option>
@@ -224,15 +224,15 @@
     <!-- Card Grid View -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-200">
       {#each filteredProviders as provider (provider.id)}
-        <Card class="border-border bg-card/45 backdrop-blur-sm shadow-sm flex flex-col justify-between hover:border-primary/20 transition-all duration-300 group">
-          <CardHeader class="pb-3 border-b border-border bg-black/5">
+        <Card class="glass border flex flex-col justify-between hover:border-primary/20 transition-all duration-300 group">
+          <CardHeader class="pb-3 border-b border-border glass-inset">
             <div class="flex justify-between items-start">
               <div class="flex items-center space-x-2.5 text-primary">
                 <Server class="h-5 w-5 group-hover:scale-105 transition-transform" />
                 <CardTitle class="text-base font-bold text-foreground line-clamp-1">{provider.name}</CardTitle>
               </div>
               {#if provider.is_predefined}
-                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider select-none">
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wider select-none">
                   Standard
                 </span>
               {:else}
@@ -265,7 +265,7 @@
             </div>
           </CardContent>
 
-          <CardFooter class="border-t border-border bg-black/5 py-3 flex justify-end space-x-2">
+          <CardFooter class="border-t border-border glass-inset py-3 flex justify-end space-x-2">
             <Button variant="outline" size="sm" onclick={() => openEdit(provider)}>
               <Edit2 class="h-3.5 w-3.5 mr-1.5" /> Edit
             </Button>
@@ -292,7 +292,7 @@
       <CardContent class="p-0">
         <div class="overflow-x-auto">
           <table class="w-full text-sm text-left border-collapse">
-            <thead class="bg-muted/40 border-y border-border text-xs text-muted-foreground font-semibold uppercase tracking-wider">
+            <thead class="glass-inset border-y border-border text-xs text-muted-foreground font-semibold uppercase tracking-wider">
               <tr>
                 <th class="px-6 py-4">Provider</th>
                 <th class="px-6 py-4">Model Name</th>
@@ -315,7 +315,7 @@
                   <td class="px-6 py-4 text-right">{formatCurrency(provider.output_price, provider.currency || 'USD', 2)}</td>
                   <td class="px-6 py-4">
                     {#if provider.is_predefined}
-                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                         Standard
                       </span>
                     {:else}

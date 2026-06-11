@@ -296,13 +296,13 @@
     </Card>
   {:else}
     <!-- Selector bar -->
-    <Card class="border-border bg-card/45 backdrop-blur-sm select-none">
-      <CardHeader class="pb-3 border-b border-border bg-black/5">
+    <Card class="glass border select-none">
+      <CardHeader class="pb-3 border-b border-border glass-inset">
         <CardTitle class="text-sm font-bold text-foreground">Select Rollout Scenarios to Compare</CardTitle>
       </CardHeader>
       <CardContent class="p-4 flex flex-wrap gap-5">
         {#each scenarios as s}
-          <label class="flex items-start space-x-3 cursor-pointer p-2.5 rounded-lg border border-border/40 hover:bg-white/5 transition duration-150 shrink-0 bg-black/10">
+          <label class="flex items-start space-x-3 cursor-pointer p-2.5 rounded-lg border border-border/40 hover:bg-foreground/5 transition duration-150 shrink-0 glass-inset">
             <input
               type="checkbox"
               checked={selectedIds.includes(s.id)}
@@ -314,10 +314,10 @@
               <span class="text-sm font-bold text-foreground block">{s.name}</span>
               {#if s.results}
                 <span class="text-[10px] text-muted-foreground block mt-0.5">
-                  NPV: <strong class="text-emerald-400 font-mono font-bold">{formatCurrency(s.results.npv, appState.currency, 0)}</strong> • Payback: <strong class="text-cyan-400 font-mono font-bold">{s.results.payback_months !== null ? s.results.payback_months + 'm' : 'N/A'}</strong>
+                  NPV: <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">{formatCurrency(s.results.npv, appState.currency, 0)}</strong> • Payback: <strong class="text-cyan-600 dark:text-cyan-400 font-mono font-bold">{s.results.payback_months !== null ? s.results.payback_months + 'm' : 'N/A'}</strong>
                 </span>
               {:else}
-                <span class="text-[10px] text-rose-400 font-medium italic block mt-0.5">No results (run calculations)</span>
+                <span class="text-[10px] text-rose-600 dark:text-rose-400 font-medium italic block mt-0.5">No results (run calculations)</span>
               {/if}
             </div>
           </label>
@@ -337,8 +337,8 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         
         <!-- Overlaid visual chart -->
-        <Card class="border-border bg-card/35 backdrop-blur-sm shadow-sm flex flex-col justify-between md:col-span-2">
-          <CardHeader class="pb-2 border-b border-border bg-black/5 flex flex-row items-center justify-between">
+        <Card class="border-border glass border flex flex-col justify-between md:col-span-2">
+          <CardHeader class="pb-2 border-b border-border glass-inset flex flex-row items-center justify-between">
             <div>
               <CardTitle class="text-base font-bold text-foreground">Timeline Comparison Curves</CardTitle>
               <CardDescription class="text-xs">Overlaid cash flows and customer timelines.</CardDescription>
@@ -373,8 +373,8 @@
         </Card>
 
         <!-- KPI Table Card -->
-        <Card class="border-border bg-card/35 backdrop-blur-sm shadow-sm flex flex-col justify-between {selectedScenarios.length === 2 ? 'lg:col-span-2' : 'md:col-span-2'}">
-          <CardHeader class="pb-2 border-b border-border bg-black/5">
+        <Card class="border-border glass border flex flex-col justify-between {selectedScenarios.length === 2 ? 'lg:col-span-2' : 'md:col-span-2'}">
+          <CardHeader class="pb-2 border-b border-border glass-inset">
             <CardTitle class="text-base font-bold text-foreground">Indicator Matrix</CardTitle>
             <CardDescription class="text-xs">Side-by-side financial metric comparison. Bold green values indicate the best performer.</CardDescription>
           </CardHeader>
@@ -382,7 +382,7 @@
             <div class="overflow-x-auto">
               <table class="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr class="bg-black/10 border-b border-border font-semibold text-muted-foreground">
+                  <tr class="glass-inset border-b border-border font-semibold text-muted-foreground">
                     <th class="p-3">Scenario Name</th>
                     <th class="p-3 text-right">Horizon</th>
                     <th class="p-3 text-right">Discount Rate</th>
@@ -396,33 +396,33 @@
                 <tbody class="divide-y divide-border/60">
                   {#each selectedScenarios as s}
                     {@const res = s.results!}
-                    <tr class="hover:bg-white/5 transition-all duration-150">
+                    <tr class="hover:bg-foreground/5 transition-all duration-150">
                       <td class="p-3 font-bold text-foreground truncate max-w-[150px]">{s.name}</td>
                       <td class="p-3 text-right font-mono text-muted-foreground">{s.projection_months}m</td>
                       <td class="p-3 text-right font-mono text-muted-foreground">{formatPercent(s.discount_rate)}</td>
                       
                       <!-- NPV -->
-                      <td class="p-3 text-right font-mono font-bold {bestMetrics.maxNpvId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-400 font-extrabold' : ''}">
+                      <td class="p-3 text-right font-mono font-bold {bestMetrics.maxNpvId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
                         {formatCurrency(res.npv, appState.currency, 0)}
                       </td>
                       
                       <!-- IRR -->
-                      <td class="p-3 text-right font-mono font-bold {bestMetrics.maxIrrId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-400 font-extrabold' : ''}">
+                      <td class="p-3 text-right font-mono font-bold {bestMetrics.maxIrrId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
                         {res.irr_annual !== null ? formatPercent(res.irr_annual) : 'N/A'}
                       </td>
 
                       <!-- Payback -->
-                      <td class="p-3 text-right font-mono font-bold {bestMetrics.minPaybackId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-400 font-extrabold' : ''}">
+                      <td class="p-3 text-right font-mono font-bold {bestMetrics.minPaybackId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
                         {formatMonths(res.payback_months)}
                       </td>
 
                       <!-- TCO -->
-                      <td class="p-3 text-right font-mono font-bold {bestMetrics.minTcoId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-400 font-extrabold' : ''}">
+                      <td class="p-3 text-right font-mono font-bold {bestMetrics.minTcoId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
                         {formatCurrency(res.tco, appState.currency, 0)}
                       </td>
 
                       <!-- ROI -->
-                      <td class="p-3 text-right font-mono font-bold {bestMetrics.maxRoiId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-400 font-extrabold' : ''}">
+                      <td class="p-3 text-right font-mono font-bold {bestMetrics.maxRoiId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
                         {formatPercent(res.roi_percent)}
                       </td>
                     </tr>
@@ -440,14 +440,14 @@
           {@const rA = sA.results!}
           {@const rB = sB.results!}
           
-          <Card class="border-border bg-card/35 backdrop-blur-sm shadow-sm flex flex-col justify-between">
-            <CardHeader class="pb-2 border-b border-border bg-black/5">
+          <Card class="border-border glass border flex flex-col justify-between">
+            <CardHeader class="pb-2 border-b border-border glass-inset">
               <CardTitle class="text-base font-bold text-foreground">Opportunity Cost Analysis</CardTitle>
               <CardDescription class="text-xs">Delta metrics showing incremental value of choosing one scenario over the other.</CardDescription>
             </CardHeader>
             <CardContent class="py-4 space-y-4 text-xs select-none leading-relaxed">
               {#if Math.abs(rA.npv - rB.npv) < 0.1}
-                <div class="flex items-center space-x-2 text-muted-foreground p-3 rounded-lg bg-black/10 border border-border/40">
+                <div class="flex items-center space-x-2 text-muted-foreground p-3 rounded-lg glass-inset border border-border/40">
                   <Info class="h-5 w-5 text-primary shrink-0" />
                   <p>Both scenarios generate identical Net Present Value ({formatCurrency(rA.npv, appState.currency, 0)}).</p>
                 </div>
@@ -460,12 +460,12 @@
                 {@const deltaTco = rBetter.tco - rWorse.tco}
 
                 <div class="space-y-3.5">
-                  <div class="p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-start space-x-2.5">
+                  <div class="p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-start space-x-2.5">
                     <Sparkles class="h-5 w-5 mt-0.5 shrink-0 animate-pulse" />
                     <div>
                       <h4 class="font-bold text-foreground">Recommended Selection: {betterSc.name}</h4>
                       <p class="text-muted-foreground mt-1">
-                        Choosing <strong class="text-foreground">{betterSc.name}</strong> instead of <strong class="text-foreground">{worseSc.name}</strong> delivers an additional <strong class="text-emerald-400 font-mono font-extrabold">{formatCurrency(deltaNpv, appState.currency, 0)}</strong> in discounted net value (NPV) to the organization.
+                        Choosing <strong class="text-foreground">{betterSc.name}</strong> instead of <strong class="text-foreground">{worseSc.name}</strong> delivers an additional <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-extrabold">{formatCurrency(deltaNpv, appState.currency, 0)}</strong> in discounted net value (NPV) to the organization.
                       </p>
                     </div>
                   </div>
@@ -474,12 +474,12 @@
                   <div class="space-y-1.5 pl-2 border-l border-border/80">
                     <div class="flex justify-between items-center text-muted-foreground">
                       <span>NPV Increase (Delta NPV):</span>
-                      <strong class="text-emerald-400 font-mono font-bold">+{formatCurrency(deltaNpv, appState.currency, 0)}</strong>
+                      <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">+{formatCurrency(deltaNpv, appState.currency, 0)}</strong>
                     </div>
 
                     <div class="flex justify-between items-center text-muted-foreground">
                       <span>Investment Cost Delta (Delta TCO):</span>
-                      <strong class="font-mono font-bold {deltaTco >= 0 ? 'text-rose-400' : 'text-emerald-400'}">
+                      <strong class="font-mono font-bold {deltaTco >= 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}">
                         {deltaTco >= 0 ? '+' : ''}{formatCurrency(deltaTco, appState.currency, 0)}
                       </strong>
                     </div>
@@ -487,7 +487,7 @@
                     {#if rBetter.irr_annual !== null && rWorse.irr_annual !== null}
                       <div class="flex justify-between items-center text-muted-foreground">
                         <span>Hurdle Rate Cushion (Delta IRR):</span>
-                        <strong class="text-emerald-400 font-mono font-bold">+{formatPercent(rBetter.irr_annual - rWorse.irr_annual)}</strong>
+                        <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">+{formatPercent(rBetter.irr_annual - rWorse.irr_annual)}</strong>
                       </div>
                     {/if}
                     
@@ -495,14 +495,14 @@
                       {@const paybackDiff = rBetter.payback_months - rWorse.payback_months}
                       <div class="flex justify-between items-center text-muted-foreground">
                         <span>Payback Speed Diff:</span>
-                        <strong class="font-mono font-bold {paybackDiff <= 0 ? 'text-emerald-400' : 'text-amber-400'}">
+                        <strong class="font-mono font-bold {paybackDiff <= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-400'}">
                           {paybackDiff <= 0 ? '' : '+'}{paybackDiff.toFixed(1)} months
                         </strong>
                       </div>
                     {/if}
                   </div>
 
-                  <div class="p-3 rounded bg-black/10 border border-border/40 flex items-start space-x-2 text-[10px] text-muted-foreground">
+                  <div class="p-3 rounded glass-inset border border-border/40 flex items-start space-x-2 text-[10px] text-muted-foreground">
                     <AlertCircle class="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
                     <p>The **opportunity cost** of implementing {worseSc.name} instead of {betterSc.name} is {formatCurrency(deltaNpv, appState.currency, 0)}. Ensure the qualitative benefits of {worseSc.name} (e.g. strategic alignment, brand equity) exceed this financial deficit.</p>
                   </div>

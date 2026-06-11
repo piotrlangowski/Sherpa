@@ -71,7 +71,7 @@
     };
   }}>
     <div class="space-y-6">
-      <div class="p-6 bg-card rounded-lg border border-border space-y-4 shadow-sm">
+      <div class="glass border rounded-xl p-6 space-y-4">
         <div class="flex items-center space-x-2.5 text-primary mb-2 select-none">
           <BrainCircuit class="h-5 w-5" />
           <span class="text-xs font-bold uppercase tracking-wider">Service Configurations</span>
@@ -82,13 +82,13 @@
         <!-- Name -->
         <div class="space-y-1.5">
           <Label for="name">Service Name</Label>
-          <Input id="name" name="name" placeholder="e.g. Code Autocomplete" bind:value={name} required class="bg-background/50" />
+          <Input id="name" name="name" placeholder="e.g. Code Autocomplete" bind:value={name} required class="bg-(--glass-inset-bg)" />
         </div>
 
         <!-- Description -->
         <div class="space-y-1.5">
           <Label for="description">Description</Label>
-          <Textarea id="description" name="description" placeholder="Describe the purpose of this AI feature..." bind:value={description} class="bg-background/50" />
+          <Textarea id="description" name="description" placeholder="Describe the purpose of this AI feature..." bind:value={description} class="bg-(--glass-inset-bg)" />
         </div>
 
         <!-- Status -->
@@ -127,17 +127,17 @@
           <div class="p-4 rounded-lg bg-muted/30 border border-border grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div class="space-y-1.5">
               <Label for="avgInputTokens">Avg. Input Tokens</Label>
-              <Input id="avgInputTokens" name="avgInputTokens" type="number" min="0" bind:value={avgInputTokens} class="bg-background/50 text-right font-mono" />
+              <Input id="avgInputTokens" name="avgInputTokens" type="number" min="0" bind:value={avgInputTokens} class="bg-(--glass-inset-bg) text-right font-mono" />
             </div>
 
             <div class="space-y-1.5">
               <Label for="avgOutputTokens">Avg. Output Tokens</Label>
-              <Input id="avgOutputTokens" name="avgOutputTokens" type="number" min="0" bind:value={avgOutputTokens} class="bg-background/50 text-right font-mono" />
+              <Input id="avgOutputTokens" name="avgOutputTokens" type="number" min="0" bind:value={avgOutputTokens} class="bg-(--glass-inset-bg) text-right font-mono" />
             </div>
 
             <div class="space-y-1.5">
               <Label for="avgRequests">Requests / User / Month</Label>
-              <Input id="avgRequests" name="avgRequests" type="number" min="0" bind:value={avgRequests} class="bg-background/50 text-right font-mono" />
+              <Input id="avgRequests" name="avgRequests" type="number" min="0" bind:value={avgRequests} class="bg-(--glass-inset-bg) text-right font-mono" />
             </div>
           </div>
 
@@ -181,7 +181,7 @@
               <option value="PLN">PLN (zł)</option>
               <option value="GBP">GBP (£)</option>
             </select>
-            <Input id="fixedCost" name="fixedCost" type="number" step="0.01" min="0" placeholder="Flat cost" bind:value={fixedCost} class="col-span-2 bg-background/50 text-right" />
+            <Input id="fixedCost" name="fixedCost" type="number" step="0.01" min="0" placeholder="Flat cost" bind:value={fixedCost} class="col-span-2 bg-(--glass-inset-bg) text-right" />
           </div>
           <p class="text-xs text-muted-foreground">
             Optional. Use this if you pay a flat monthly fee for this service rather than per token.

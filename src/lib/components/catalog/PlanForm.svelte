@@ -68,7 +68,7 @@
     };
   }}>
     <div class="space-y-6">
-      <div class="p-6 bg-card rounded-lg border border-border space-y-4 shadow-sm">
+      <div class="glass border rounded-xl p-6 space-y-4">
         <div class="flex items-center space-x-2.5 text-primary mb-2 select-none">
           <CreditCard class="h-5 w-5" />
           <span class="text-xs font-bold uppercase tracking-wider">Plan Configurations</span>
@@ -79,19 +79,19 @@
         <!-- Name -->
         <div class="space-y-1.5">
           <Label for="name">Plan Name</Label>
-          <Input id="name" name="name" placeholder="e.g. Enterprise Tier" bind:value={name} required class="bg-background/50" />
+          <Input id="name" name="name" placeholder="e.g. Enterprise Tier" bind:value={name} required class="bg-(--glass-inset-bg)" />
         </div>
 
         <!-- Description -->
         <div class="space-y-1.5">
           <Label for="description">Description</Label>
-          <Textarea id="description" name="description" placeholder="Describe the target segment and license terms..." bind:value={description} class="bg-background/50" />
+          <Textarea id="description" name="description" placeholder="Describe the target segment and license terms..." bind:value={description} class="bg-(--glass-inset-bg)" />
         </div>
 
         <!-- Base Price -->
         <div class="space-y-1.5 max-w-xs">
           <Label for="basePrice">Base License Price ($ / month)</Label>
-          <Input id="basePrice" name="basePrice" type="number" step="0.01" min="0" bind:value={basePrice} required class="bg-background/50 text-right" />
+          <Input id="basePrice" name="basePrice" type="number" step="0.01" min="0" bind:value={basePrice} required class="bg-(--glass-inset-bg) text-right" />
         </div>
 
         <!-- Packs Checkbox List -->
@@ -105,7 +105,7 @@
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-40 overflow-y-auto p-1">
               {#each packs as pack}
                 <label 
-                  class="flex items-center space-x-3 p-3 rounded-lg border border-border bg-background/50 hover:bg-muted/40 cursor-pointer select-none transition-colors"
+                  class="flex items-center space-x-3 p-3 rounded-lg border border-border bg-(--glass-inset-bg) hover:bg-muted/40 cursor-pointer select-none transition-colors"
                 >
                   <input
                     type="checkbox"
@@ -136,7 +136,7 @@
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-40 overflow-y-auto p-1">
               {#each services as service}
                 <label 
-                  class="flex items-center space-x-3 p-3 rounded-lg border border-border bg-background/50 hover:bg-muted/40 cursor-pointer select-none transition-colors"
+                  class="flex items-center space-x-3 p-3 rounded-lg border border-border bg-(--glass-inset-bg) hover:bg-muted/40 cursor-pointer select-none transition-colors"
                 >
                   <input
                     type="checkbox"

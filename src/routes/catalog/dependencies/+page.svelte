@@ -230,8 +230,8 @@
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <!-- Visual Graph Card -->
-    <Card class="border-border lg:col-span-2 bg-card/30 backdrop-blur-sm flex flex-col justify-between shadow-sm select-none">
-      <CardHeader class="pb-2 border-b border-border bg-black/5">
+    <Card class="border-border lg:col-span-2 glass border flex flex-col justify-between shadow-sm select-none">
+      <CardHeader class="pb-2 border-b border-border glass-inset">
         <div class="flex justify-between items-center">
           <div class="flex items-center space-x-2 text-primary">
             <GitFork class="h-5 w-5" />
@@ -258,8 +258,8 @@
     </Card>
 
     <!-- Right side list list -->
-    <Card class="border-border bg-card/30 backdrop-blur-sm shadow-sm flex flex-col justify-between">
-      <CardHeader class="pb-3 border-b border-border bg-black/5 select-none">
+    <Card class="border-border glass border flex flex-col justify-between">
+      <CardHeader class="pb-3 border-b border-border glass-inset select-none">
         <CardTitle class="text-base font-bold text-foreground">Configured Links</CardTitle>
         <CardDescription>A tabular breakdown of active graph edges.</CardDescription>
       </CardHeader>
@@ -273,7 +273,7 @@
               <Input
                 type="text"
                 placeholder="Find links..."
-                class="pl-8 h-8 text-xs bg-background/50 border-border"
+                class="pl-8 h-8 text-xs bg-(--glass-inset-bg) border-border"
                 bind:value={searchQuery}
               />
             </div>
@@ -281,7 +281,7 @@
               <!-- Sort -->
               <select
                 bind:value={sortBy}
-                class="w-full bg-background/50 border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                class="w-full bg-(--glass-inset-bg) border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 <option value="source_asc">Source (A-Z)</option>
                 <option value="source_desc">Source (Z-A)</option>
@@ -291,7 +291,7 @@
               <!-- Type Filter -->
               <select
                 bind:value={typeFilter}
-                class="w-full bg-background/50 border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                class="w-full bg-(--glass-inset-bg) border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 <option value="all">All Types</option>
                 <option value="requires">Requires</option>
@@ -339,7 +339,7 @@
       </CardContent>
       
       <!-- Graph help note -->
-      <CardFooter class="border-t border-border bg-black/5 py-3 select-none flex items-start space-x-2 text-xs text-muted-foreground">
+      <CardFooter class="border-t border-border glass-inset py-3 select-none flex items-start space-x-2 text-xs text-muted-foreground">
         <Info class="h-4 w-4 shrink-0 text-primary mt-0.5" />
         <p>Use the drag/zoom controls on the graph. Solid lines indicate strict requirements; dashed links indicate enhancements.</p>
       </CardFooter>
@@ -383,7 +383,7 @@
             class="peer sr-only"
           />
           <div
-            class="rounded-xl border border-border bg-background/50 px-3 py-2.5 transition-colors peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary/30 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
+            class="rounded-xl border border-border bg-(--glass-inset-bg) px-3 py-2.5 transition-colors peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary/30 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
           >
             <div class="text-sm font-bold">{option.title}</div>
             <div class="text-xs text-muted-foreground">{option.description}</div>

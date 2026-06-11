@@ -256,23 +256,23 @@
   {:else}
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <!-- Tornado Chart Card -->
-      <Card class="border-border lg:col-span-2 bg-card/35 backdrop-blur-sm shadow-sm flex flex-col justify-between">
-        <CardHeader class="pb-2 border-b border-border bg-black/5 select-none">
+      <Card class="border-border lg:col-span-2 glass border flex flex-col justify-between">
+        <CardHeader class="pb-2 border-b border-border glass-inset select-none">
           <CardTitle class="text-base font-bold text-foreground">NPV Tornado Chart Impact Analysis</CardTitle>
           <CardDescription class="text-xs">Bars show deviation in NPV from the base case of {formatCurrency(sensitivityData.baseNpv, appState.currency, 0)}.</CardDescription>
         </CardHeader>
         <CardContent class="p-4 bg-background/5">
           <div bind:this={chartElement} class="h-[400px] w-full"></div>
         </CardContent>
-        <CardFooter class="border-t border-border bg-black/5 py-2.5 select-none flex items-start space-x-2 text-[10px] text-muted-foreground">
+        <CardFooter class="border-t border-border glass-inset py-2.5 select-none flex items-start space-x-2 text-[10px] text-muted-foreground">
           <Info class="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
           <p>Tornado width represents the volatility of NPV under the specified variance range. Longer bars identify the highest risk variables.</p>
         </CardFooter>
       </Card>
 
       <!-- Parameters detail card -->
-      <Card class="border-border bg-card/35 backdrop-blur-sm shadow-sm flex flex-col justify-between">
-        <CardHeader class="pb-3 border-b border-border bg-black/5 select-none">
+      <Card class="border-border glass border flex flex-col justify-between">
+        <CardHeader class="pb-3 border-b border-border glass-inset select-none">
           <CardTitle class="text-base font-bold text-foreground">Base Scenario Reference</CardTitle>
           <CardDescription>Current calculated indicators.</CardDescription>
         </CardHeader>
@@ -289,7 +289,7 @@
             </div>
             <div class="bg-muted/40 p-2 rounded border border-border/40">
               <span class="text-[9px] text-muted-foreground uppercase font-bold block">Base Payback</span>
-              <span class="text-xs font-mono font-bold text-cyan-400 block mt-0.5">{formatMonths(sensitivityData.basePayback)}</span>
+              <span class="text-xs font-mono font-bold text-cyan-600 dark:text-cyan-400 block mt-0.5">{formatMonths(sensitivityData.basePayback)}</span>
             </div>
           </div>
 
@@ -317,8 +317,8 @@
     </div>
 
     <!-- Parameter impact table -->
-    <Card class="border-border bg-card/25 backdrop-blur-sm shadow-sm select-none">
-      <CardHeader class="pb-2 border-b border-border bg-black/5">
+    <Card class="border-border glass border select-none">
+      <CardHeader class="pb-2 border-b border-border glass-inset">
         <CardTitle class="text-base font-bold text-foreground">Detailed Parameter Deviations</CardTitle>
         <CardDescription class="text-xs">NPV, IRR and Payback results under parameter modifications.</CardDescription>
       </CardHeader>
@@ -326,7 +326,7 @@
         <div class="overflow-x-auto">
           <Table class="w-full text-left border-collapse text-xs">
             <TableHeader>
-              <TableRow class="bg-black/10 border-b border-border font-semibold text-muted-foreground">
+              <TableRow class="glass-inset border-b border-border font-semibold text-muted-foreground">
                 <TableHead class="p-3">Variable Name</TableHead>
                 <TableHead class="p-3 text-right">Decreased Value</TableHead>
                 <TableHead class="p-3 text-right">Decreased NPV</TableHead>
@@ -339,12 +339,12 @@
             </TableHeader>
             <TableBody class="divide-y divide-border/60">
               {#each sensitivityData.results as item}
-                <TableRow class="hover:bg-white/5 transition-all duration-150">
+                <TableRow class="hover:bg-foreground/5 transition-all duration-150">
                   <TableCell class="p-3 font-bold text-foreground">{item.parameter}</TableCell>
                   
                   <!-- Decreased Values -->
                   <TableCell class="p-3 text-right font-mono text-muted-foreground">{item.lowValueText}</TableCell>
-                  <TableCell class="p-3 text-right font-mono font-medium {item.lowNpv >= sensitivityData.baseNpv ? 'text-emerald-400' : 'text-rose-400'}">
+                  <TableCell class="p-3 text-right font-mono font-medium {item.lowNpv >= sensitivityData.baseNpv ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
                     {formatCurrency(item.lowNpv, appState.currency, 0)}
                   </TableCell>
                   <TableCell class="p-3 text-center font-mono text-muted-foreground text-[10px]">
@@ -353,7 +353,7 @@
                   
                   <!-- Increased Values -->
                   <TableCell class="p-3 text-right font-mono text-muted-foreground">{item.highValueText}</TableCell>
-                  <TableCell class="p-3 text-right font-mono font-medium {item.highNpv >= sensitivityData.baseNpv ? 'text-emerald-400' : 'text-rose-400'}">
+                  <TableCell class="p-3 text-right font-mono font-medium {item.highNpv >= sensitivityData.baseNpv ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
                     {formatCurrency(item.highNpv, appState.currency, 0)}
                   </TableCell>
                   <TableCell class="p-3 text-center font-mono text-muted-foreground text-[10px]">

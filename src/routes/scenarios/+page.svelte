@@ -147,7 +147,7 @@
     </Card>
   {:else}
     <!-- Controls Row -->
-    <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-card/20 border border-border/80 p-3 rounded-xl backdrop-blur-xs select-none">
+    <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between glass border p-3 rounded-xl select-none">
       <div class="flex flex-1 flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
         <!-- Quick Find Search -->
         <div class="relative flex-1 max-w-md">
@@ -155,7 +155,7 @@
           <Input
             type="text"
             placeholder="Quick find scenarios..."
-            class="pl-9 bg-background/50 border-border"
+            class="pl-9 bg-(--glass-inset-bg) border-border"
             bind:value={searchQuery}
           />
         </div>
@@ -163,7 +163,7 @@
         <!-- Sort Select -->
         <select
           bind:value={sortBy}
-          class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="name_asc">Name (A - Z)</option>
           <option value="name_desc">Name (Z - A)</option>
@@ -176,7 +176,7 @@
         <!-- Results Filter -->
         <select
           bind:value={resultsFilter}
-          class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="all">All Scenarios</option>
           <option value="has_results">Has Simulated Results</option>
@@ -214,8 +214,8 @@
       <!-- Card Grid View -->
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-200">
         {#each filteredScenarios as scenario (scenario.id)}
-          <Card class="border-border bg-card/45 backdrop-blur-sm shadow-sm flex flex-col justify-between hover:border-primary/20 transition-all duration-300">
-            <CardHeader class="pb-3 border-b border-border bg-black/5">
+          <Card class="glass border flex flex-col justify-between hover:border-primary/20 transition-all duration-300">
+            <CardHeader class="pb-3 border-b border-border glass-inset">
               <div class="flex items-center space-x-2.5 text-primary">
                 <Compass class="h-5 w-5" />
                 <CardTitle class="text-base font-bold text-foreground truncate">{scenario.name}</CardTitle>
@@ -245,19 +245,19 @@
                 <div class="p-3 bg-muted/40 rounded-lg border border-border/60 grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-center shadow-inner font-sans">
                   <div>
                     <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">NPV</span>
-                    <span class="text-xs font-black text-emerald-400 mt-0.5 block">
+                    <span class="text-xs font-black text-emerald-600 dark:text-emerald-400 mt-0.5 block">
                       {formatCurrency(scenario.results.npv, appState.currency, 0)}
                     </span>
                   </div>
                   <div>
                     <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">IRR (Ann.)</span>
-                    <span class="text-xs font-black text-emerald-400 mt-0.5 block">
+                    <span class="text-xs font-black text-emerald-600 dark:text-emerald-400 mt-0.5 block">
                       {formatPercent(scenario.results.irr_annual || 0)}
                     </span>
                   </div>
                   <div>
                     <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Payback</span>
-                    <span class="text-xs font-black text-cyan-400 mt-0.5 block">
+                    <span class="text-xs font-black text-cyan-600 dark:text-cyan-400 mt-0.5 block">
                       {formatMonths(scenario.results.payback_months)}
                     </span>
                   </div>
@@ -271,7 +271,7 @@
               {/if}
             </CardContent>
 
-            <CardFooter class="border-t border-border bg-black/5 py-3 flex justify-between items-center text-xs select-none">
+            <CardFooter class="border-t border-border glass-inset py-3 flex justify-between items-center text-xs select-none">
               <span class="text-muted-foreground/60">
                 Created {scenario.created_at ? new Date(scenario.created_at).toLocaleDateString() : 'N/A'}
               </span>
@@ -284,9 +284,9 @@
       </div>
     {:else}
       <!-- Dense List (Table) View -->
-      <div class="border border-border rounded-lg overflow-hidden bg-card/25 backdrop-blur-sm shadow-sm animate-in fade-in duration-200">
+      <div class="border border-border rounded-lg overflow-hidden glass border animate-in fade-in duration-200">
         <Table>
-          <TableHeader class="bg-black/15">
+          <TableHeader class="glass-inset">
             <TableRow>
               <TableHead class="text-foreground font-bold">Scenario Name</TableHead>
               <TableHead class="text-foreground font-bold text-right">Horizon</TableHead>
@@ -300,28 +300,28 @@
           </TableHeader>
           <TableBody>
             {#each filteredScenarios as scenario (scenario.id)}
-              <TableRow class="hover:bg-white/5 transition-all">
+              <TableRow class="hover:bg-foreground/5 transition-all">
                 <TableCell>
                   <div class="font-semibold">{scenario.name}</div>
                   <div class="text-[10px] text-muted-foreground truncate max-w-xs">{scenario.description || 'No description'}</div>
                 </TableCell>
                 <TableCell class="text-right font-mono text-xs">{scenario.projection_months} months</TableCell>
                 <TableCell class="text-right font-mono text-xs">{formatPercent(scenario.discount_rate)}</TableCell>
-                <TableCell class="text-right font-mono font-bold text-emerald-400">
+                <TableCell class="text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                   {#if scenario.results}
                     {formatCurrency(scenario.results.npv, appState.currency, 0)}
                   {:else}
                     —
                   {/if}
                 </TableCell>
-                <TableCell class="text-right font-mono font-bold text-emerald-400">
+                <TableCell class="text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                   {#if scenario.results}
                     {formatPercent(scenario.results.irr_annual || 0)}
                   {:else}
                     —
                   {/if}
                 </TableCell>
-                <TableCell class="text-right font-mono font-medium text-cyan-400">
+                <TableCell class="text-right font-mono font-medium text-cyan-600 dark:text-cyan-400">
                   {#if scenario.results}
                     {formatMonths(scenario.results.payback_months)}
                   {:else}

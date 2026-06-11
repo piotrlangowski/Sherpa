@@ -64,7 +64,7 @@
     <div class="absolute bottom-0 right-0 w-[500px] h-[500px] rounded-full bg-emerald-500/10 blur-[120px] pointer-events-none"></div>
 
     <Card class="w-full max-w-lg border border-border shadow-2xl bg-card/80 relative z-10">
-      <CardHeader class="border-b border-border bg-black/10">
+      <CardHeader class="border-b border-border glass-inset">
         <div class="flex items-center space-x-2 text-primary">
           <Sparkles class="h-5 w-5" />
           <span class="text-xs font-bold uppercase tracking-wider">Onboarding Wizard</span>
@@ -94,7 +94,7 @@
                 id="company-name"
                 placeholder="e.g. Acme Corporation"
                 bind:value={companyName}
-                class="bg-background/50"
+                class="bg-(--glass-inset-bg)"
               />
               <p class="text-xs text-muted-foreground">
                 This name will appear on all exported ROI dashboard screenshots.
@@ -171,7 +171,7 @@
         {/if}
       </CardContent>
 
-      <CardFooter class="border-t border-border bg-black/10 py-4 flex justify-between">
+      <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">
         {#if step > 1}
           <Button variant="outline" onclick={() => step--}>Back</Button>
         {:else}

@@ -48,8 +48,8 @@
     </Button>
   </div>
 
-  <Card class="border-border bg-card/40 backdrop-blur-sm shadow-md">
-    <CardHeader class="border-b border-border bg-black/5">
+  <Card class="glass border">
+    <CardHeader class="border-b border-border glass-inset">
       <div class="flex items-center space-x-2 text-primary">
         <Globe class="h-6 w-6" />
         <CardTitle class="text-xl font-bold">New Market Vertical</CardTitle>
@@ -63,12 +63,12 @@
         <div class="space-y-4">
           <div class="space-y-2">
             <Label for="name" class="font-semibold text-foreground">Vertical Name</Label>
-            <Input id="name" name="name" type="text" placeholder="e.g. LegalTech, FinTech, E-commerce" required class="bg-black/10 border-border" />
+            <Input id="name" name="name" type="text" placeholder="e.g. LegalTech, FinTech, E-commerce" required class="bg-(--glass-inset-bg) border-border" />
           </div>
 
           <div class="space-y-2">
             <Label for="description" class="font-semibold text-foreground">Description</Label>
-            <Textarea id="description" name="description" placeholder="Summarize the characteristics, needs, or value prop of this vertical..." rows={3} class="bg-black/10 border-border" />
+            <Textarea id="description" name="description" placeholder="Summarize the characteristics, needs, or value prop of this vertical..." rows={3} class="bg-(--glass-inset-bg) border-border" />
           </div>
         </div>
 
@@ -83,7 +83,7 @@
                 <span>TAM</span>
                 <span class="text-[10px] lowercase font-normal">(Total Addressable)</span>
               </Label>
-              <Input id="tamUsers" name="tamUsers" type="number" min="0" bind:value={tam} class="bg-black/10 border-border font-mono" />
+              <Input id="tamUsers" name="tamUsers" type="number" min="0" bind:value={tam} class="bg-(--glass-inset-bg) border-border font-mono" />
             </div>
 
             <div class="space-y-2">
@@ -91,7 +91,7 @@
                 <span>SAM</span>
                 <span class="text-[10px] lowercase font-normal">(Serviceable Available)</span>
               </Label>
-              <Input id="samUsers" name="samUsers" type="number" min="0" max={tam} bind:value={sam} class="bg-black/10 border-border font-mono" />
+              <Input id="samUsers" name="samUsers" type="number" min="0" max={tam} bind:value={sam} class="bg-(--glass-inset-bg) border-border font-mono" />
             </div>
 
             <div class="space-y-2">
@@ -99,7 +99,7 @@
                 <span>SOM</span>
                 <span class="text-[10px] lowercase font-normal">(Serviceable Obtainable)</span>
               </Label>
-              <Input id="somUsers" name="somUsers" type="number" min="0" max={sam} bind:value={som} class="bg-black/10 border-border font-mono" />
+              <Input id="somUsers" name="somUsers" type="number" min="0" max={sam} bind:value={som} class="bg-(--glass-inset-bg) border-border font-mono" />
             </div>
           </div>
         </div>
@@ -112,9 +112,9 @@
           {#if data.plans.length === 0}
             <p class="text-xs text-muted-foreground italic">No pricing plans created yet. Create some in Catalog first.</p>
           {:else}
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 bg-black/10 p-4 rounded-lg border border-border/40">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 glass-inset p-4 rounded-lg border border-border/40">
               {#each data.plans as plan}
-                <label class="flex items-start space-x-3 cursor-pointer p-1.5 rounded hover:bg-white/5 transition">
+                <label class="flex items-start space-x-3 cursor-pointer p-1.5 rounded hover:bg-foreground/5 transition">
                   <input type="checkbox" name="planIds" value={plan.id} class="mt-1 accent-primary h-4 w-4 rounded border-border" />
                   <div class="grid gap-0.5 leading-none">
                     <span class="text-sm font-semibold text-foreground">{plan.name}</span>
@@ -134,9 +134,9 @@
           {#if data.packs.length === 0}
             <p class="text-xs text-muted-foreground italic">No feature packs created yet. Create some in Catalog first.</p>
           {:else}
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 bg-black/10 p-4 rounded-lg border border-border/40">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 glass-inset p-4 rounded-lg border border-border/40">
               {#each data.packs as pack}
-                <label class="flex items-start space-x-3 cursor-pointer p-1.5 rounded hover:bg-white/5 transition">
+                <label class="flex items-start space-x-3 cursor-pointer p-1.5 rounded hover:bg-foreground/5 transition">
                   <input type="checkbox" name="packIds" value={pack.id} class="mt-1 accent-primary h-4 w-4 rounded border-border" />
                   <div class="grid gap-0.5 leading-none">
                     <span class="text-sm font-semibold text-foreground">{pack.name}</span>
@@ -151,7 +151,7 @@
         </div>
       </CardContent>
 
-      <CardFooter class="border-t border-border bg-black/5 py-4 flex justify-end space-x-2">
+      <CardFooter class="border-t border-border glass-inset py-4 flex justify-end space-x-2">
         <Button href="/market/verticals" variant="outline">Cancel</Button>
         <Button type="submit">
           <Save class="h-4 w-4 mr-2" /> Save Vertical
