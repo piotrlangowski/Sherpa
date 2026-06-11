@@ -54,6 +54,9 @@
         onclone: (clonedDoc) => {
           const clonedElement = clonedDoc.getElementById(elementId);
           if (clonedElement) {
+            // html2canvas-pro can't render backdrop-filter — .exporting rules
+            // in layout.css swap glass surfaces for solid tints
+            clonedElement.classList.add('exporting');
             clonedElement.style.padding = '24px';
             clonedElement.style.borderRadius = '12px';
             clonedElement.style.background = exportBg;
@@ -102,7 +105,7 @@
       {/if}
     </Button>
   </DropdownMenu.Trigger>
-  <DropdownMenu.Content align="end" class="bg-card border-border text-foreground w-48">
+  <DropdownMenu.Content align="end" class="text-foreground w-48">
     <DropdownMenu.Item onclick={handleExportPng} class="cursor-pointer">
       Export as Image (PNG)
     </DropdownMenu.Item>
