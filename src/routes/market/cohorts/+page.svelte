@@ -1,17 +1,16 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { onMount } from 'svelte';
-  import { formatNumber, formatCurrency, formatPercent } from '$lib/utils/format';
+  import { formatNumber, formatCurrency, formatPercent, getCurrencySymbol } from '$lib/utils/format';
   import { appState } from '$lib/stores/app.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
-  import Label from '$lib/components/ui/label/label.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
   import CardTitle from '$lib/components/ui/card/card-title.svelte';
-  import CardDescription from '$lib/components/ui/card/card-description.svelte';
   import CardContent from '$lib/components/ui/card/card-content.svelte';
   import CardFooter from '$lib/components/ui/card/card-footer.svelte';
+  import { FormDialog, FormSection, FormField, NumberField } from '$lib/components/forms';
 
   // Table components
   import Table from '$lib/components/ui/table/table.svelte';
@@ -26,13 +25,13 @@
   import Edit2 from '@lucide/svelte/icons/edit-2';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Users2 from '@lucide/svelte/icons/users-2';
-  import BarChart4 from '@lucide/svelte/icons/bar-chart-4';
-  import Info from '@lucide/svelte/icons/info';
   import LayoutGrid from '@lucide/svelte/icons/layout-grid';
   import List from '@lucide/svelte/icons/list';
   import Search from '@lucide/svelte/icons/search';
 
   let { data } = $props();
+
+  const currencySymbol = $derived(getCurrencySymbol(appState.currency));
 
   // Dialog State
   let showDialog = $state(false);
@@ -357,127 +356,136 @@
   {/if}
 </div>
 
-<!-- Modal Dialog Overlay for Add/Edit Cohort -->
-{#if showDialog}
-  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
-    <Card class="w-full max-w-2xl border-border shadow-2xl bg-card">
-      <CardHeader class="border-b border-border bg-black/10">
-        <div class="flex items-center space-x-2 text-primary">
-          <Users2 class="h-5 w-5" />
-          <CardTitle>{dialogMode === 'create' ? 'Configure New Cohort' : 'Edit Cohort Configuration'}</CardTitle>
-        </div>
-        <CardDescription>Setup numerical params to simulate user compound monthly growth and ARPU decay/expansion curves.</CardDescription>
-      </CardHeader>
-      
-      <form method="POST" action={dialogMode === 'create' ? '?/createCohort' : '?/updateCohort'} use:enhance={() => {
-        return async ({ update }) => {
-          await update();
-          showDialog = false;
-        };
-      }}>
-        <input type="hidden" name="id" value={currentCohortId} />
-        
-        <CardContent class="py-5 grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[70vh] overflow-y-auto">
-          <!-- Cohort Name -->
-          <div class="space-y-1.5 md:col-span-2">
-            <Label for="cohortName" class="font-semibold">Cohort Name</Label>
-            <Input id="cohortName" name="name" bind:value={name} placeholder="e.g. SMB Legal Customers, Mid-Market Retail" required class="bg-black/10 border-border" />
-          </div>
+<!-- Add/Edit Cohort Dialog -->
+<FormDialog
+  bind:open={showDialog}
+  size="lg"
+  icon={Users2}
+  title={dialogMode === 'create' ? 'New Cohort' : 'Edit Cohort'}
+  description="Model customer growth, churn and ARPU for projections."
+  action={dialogMode === 'create' ? '?/createCohort' : '?/updateCohort'}
+  submitLabel={dialogMode === 'create' ? 'Save Cohort' : 'Save Changes'}
+>
+  <input type="hidden" name="id" value={currentCohortId} />
 
-          <!-- Market Vertical -->
-          <div class="space-y-1.5">
-            <Label for="cohortVertical" class="font-semibold">Linked Vertical</Label>
-            <select
-              id="cohortVertical"
-              name="verticalId"
-              bind:value={verticalId}
-              class="w-full bg-black/10 border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
-            >
-              <option value="">-- No Vertical (Global) --</option>
-              {#each data.verticals as vertical}
-                <option value={vertical.id}>{vertical.name}</option>
-              {/each}
-            </select>
-          </div>
+  <FormSection title="Identity" hero>
+    <FormField label="Cohort Name" forId="cohortName" required span={2}>
+      <Input
+        id="cohortName"
+        name="name"
+        bind:value={name}
+        placeholder="e.g. SMB Legal Customers, Mid-Market Retail"
+        required
+        class="h-11 bg-(--glass-inset-bg) text-base"
+      />
+    </FormField>
 
-          <!-- Base ARPU -->
-          <div class="space-y-1.5">
-            <Label for="baseArpu" class="font-semibold">Starting ARPU ({appState.currency}/mo)</Label>
-            <Input id="baseArpu" name="baseArpu" type="number" step="0.01" min="0" bind:value={baseArpu} required class="bg-black/10 border-border font-mono" />
-          </div>
+    <FormField label="Linked Vertical" forId="cohortVertical">
+      <select
+        id="cohortVertical"
+        name="verticalId"
+        bind:value={verticalId}
+        class="h-9 w-full rounded-md border border-input bg-(--glass-inset-bg) px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+      >
+        <option value="">-- No Vertical (Global) --</option>
+        {#each data.verticals as vertical}
+          <option value={vertical.id}>{vertical.name}</option>
+        {/each}
+      </select>
+    </FormField>
 
-          <hr class="md:col-span-2 border-border/40 my-1" />
+    <NumberField
+      id="aiAdoptionRate"
+      name="aiAdoptionRate"
+      bind:value={aiAdoptionRate}
+      label="AI Adoption Rate"
+      suffix="%"
+      min={0}
+      max={100}
+      step={0.1}
+      badge={{ text: `${aiAdoptionRate}%`, tone: 'neutral' }}
+      help="Share of customers using AI features — drives revenue attribution"
+    />
+  </FormSection>
 
-          <!-- Current Active Users -->
-          <div class="space-y-1.5">
-            <Label for="currentUsers" class="font-semibold">Starting Active Customers</Label>
-            <Input id="currentUsers" name="currentUsers" type="number" min="0" bind:value={currentUsers} required class="bg-black/10 border-border font-mono" />
-          </div>
+  <FormSection title="Starting point">
+    <NumberField
+      id="currentUsers"
+      name="currentUsers"
+      bind:value={currentUsers}
+      label="Starting Active Customers"
+      min={0}
+    />
+    <NumberField
+      id="baseArpu"
+      name="baseArpu"
+      bind:value={baseArpu}
+      label="Starting ARPU"
+      prefix={currencySymbol}
+      suffix="/mo"
+      min={0}
+      step={0.01}
+    />
+  </FormSection>
 
-          <!-- AI Adoption Rate -->
-          <div class="space-y-1.5">
-            <Label for="aiAdoptionRate" class="font-semibold flex justify-between">
-              <span>AI Adoption Rate</span>
-              <span class="text-xs text-primary font-semibold">{aiAdoptionRate}%</span>
-            </Label>
-            <Input id="aiAdoptionRate" name="aiAdoptionRate" type="number" min="0" max="100" step="0.1" bind:value={aiAdoptionRate} required class="bg-black/10 border-border font-mono" />
-          </div>
+  <FormSection title="Growth engine">
+    <NumberField
+      id="monthlyAcquisition"
+      name="monthlyAcquisition"
+      bind:value={monthlyAcquisition}
+      label="Monthly Acquisition"
+      min={0}
+      help="New customers per month"
+    />
+    <NumberField
+      id="acquisitionGrowthRate"
+      name="acquisitionGrowthRate"
+      bind:value={acquisitionGrowthRate}
+      label="Acquisition Growth Rate"
+      suffix="% /mo"
+      min={-50}
+      max={200}
+      step={0.1}
+      badge={{ text: `+${acquisitionGrowthRate}% /mo`, tone: 'positive' }}
+    />
+  </FormSection>
 
-          <hr class="md:col-span-2 border-border/40 my-1" />
-
-          <!-- Monthly Acquisition -->
-          <div class="space-y-1.5">
-            <Label for="monthlyAcquisition" class="font-semibold">Monthly Acquisition (New Users)</Label>
-            <Input id="monthlyAcquisition" name="monthlyAcquisition" type="number" min="0" bind:value={monthlyAcquisition} required class="bg-black/10 border-border font-mono" />
-          </div>
-
-          <!-- Acquisition Growth Rate -->
-          <div class="space-y-1.5">
-            <Label for="acquisitionGrowthRate" class="font-semibold flex justify-between">
-              <span>Acquisition Growth Rate</span>
-              <span class="text-xs text-emerald-400 font-semibold">+{acquisitionGrowthRate}% /mo</span>
-            </Label>
-            <Input id="acquisitionGrowthRate" name="acquisitionGrowthRate" type="number" min="-50" max="200" step="0.1" bind:value={acquisitionGrowthRate} required class="bg-black/10 border-border font-mono" />
-          </div>
-
-          <hr class="md:col-span-2 border-border/40 my-1" />
-
-          <!-- Churn Rate -->
-          <div class="space-y-1.5">
-            <Label for="monthlyChurnRate" class="font-semibold flex justify-between">
-              <span>Monthly Churn Rate</span>
-              <span class="text-xs text-rose-400 font-semibold">{monthlyChurnRate}% /mo</span>
-            </Label>
-            <Input id="monthlyChurnRate" name="monthlyChurnRate" type="number" min="0" max="100" step="0.1" bind:value={monthlyChurnRate} required class="bg-black/10 border-border font-mono" />
-          </div>
-
-          <!-- Churn Floor (Retention Floor) -->
-          <div class="space-y-1.5">
-            <Label for="retentionFloor" class="font-semibold flex justify-between">
-              <span>Retention Floor</span>
-              <span class="text-xs text-muted-foreground font-semibold">{retentionFloor}% floor</span>
-            </Label>
-            <Input id="retentionFloor" name="retentionFloor" type="number" min="0" max="100" step="0.1" bind:value={retentionFloor} required class="bg-black/10 border-border font-mono" />
-          </div>
-
-          <!-- Monthly Expansion Rate -->
-          <div class="space-y-1.5 md:col-span-2">
-            <Label for="monthlyExpansionRate" class="font-semibold flex justify-between">
-              <span>Monthly ARPU Expansion Rate (Upsell / Cross-sell)</span>
-              <span class="text-xs text-emerald-400 font-semibold">+{monthlyExpansionRate}% /mo</span>
-            </Label>
-            <Input id="monthlyExpansionRate" name="monthlyExpansionRate" type="number" min="-50" max="200" step="0.1" bind:value={monthlyExpansionRate} required class="bg-black/10 border-border font-mono" />
-          </div>
-        </CardContent>
-        
-        <CardFooter class="border-t border-border bg-black/10 py-3 flex justify-end space-x-2">
-          <Button variant="outline" onclick={() => showDialog = false}>Cancel</Button>
-          <Button type="submit">
-            <BarChart4 class="h-4 w-4 mr-2" />
-            {dialogMode === 'create' ? 'Save Cohort' : 'Save Changes'}
-          </Button>
-        </CardFooter>
-      </form>
-    </Card>
-  </div>
-{/if}
+  <FormSection title="Retention & expansion">
+    <NumberField
+      id="monthlyChurnRate"
+      name="monthlyChurnRate"
+      bind:value={monthlyChurnRate}
+      label="Monthly Churn Rate"
+      suffix="% /mo"
+      min={0}
+      max={100}
+      step={0.1}
+      badge={{ text: `${monthlyChurnRate}% /mo`, tone: 'negative' }}
+    />
+    <NumberField
+      id="retentionFloor"
+      name="retentionFloor"
+      bind:value={retentionFloor}
+      label="Retention Floor"
+      suffix="%"
+      min={0}
+      max={100}
+      step={0.1}
+      badge={{ text: `${retentionFloor}%`, tone: 'muted' }}
+      help="Retention never decays below this share"
+    />
+    <NumberField
+      id="monthlyExpansionRate"
+      name="monthlyExpansionRate"
+      bind:value={monthlyExpansionRate}
+      label="ARPU Expansion Rate"
+      suffix="% /mo"
+      span={2}
+      min={-50}
+      max={200}
+      step={0.1}
+      badge={{ text: `+${monthlyExpansionRate}% /mo`, tone: 'positive' }}
+      help="Upsell / cross-sell"
+    />
+  </FormSection>
+</FormDialog>
