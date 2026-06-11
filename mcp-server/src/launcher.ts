@@ -3,11 +3,14 @@ import net from 'net';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { dbPath } from './db.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));        // <pkg>/build
-const lockPath = path.join(path.dirname(dbPath), 'dashboard.json');
+const legacyLockPath = path.join(path.dirname(dbPath), 'dashboard.json');
+const dbHash = crypto.createHash('sha256').update(dbPath).digest('hex').substring(0, 8);
+const lockPath = path.join(path.dirname(dbPath), `dashboard-${dbHash}.json`);
 const BASE_PORT = 4848;  // deliberately far from dev's 5173
 
 interface DashboardLock {
@@ -23,6 +26,7 @@ interface HealthResponse {
   name: string;
   version: string;
   dbPath: string;
+  pid?: number;
 }
 
 // Module-level singleton state to preserve the SvelteKit handler and active HTTP server
@@ -175,37 +179,44 @@ export async function ensureDashboard(): Promise<{ port: number; reused: boolean
   }
 
   // 3. Inspect the disk lockfile for other instances (legacy/other MCP servers)
-  if (fs.existsSync(lockPath)) {
-    try {
-      const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-      const health = await healthCheck(lock.port);
+  const checkLocks = [lockPath, legacyLockPath];
+  for (const pathToCheck of checkLocks) {
+    if (fs.existsSync(pathToCheck)) {
+      try {
+        const lock = JSON.parse(fs.readFileSync(pathToCheck, 'utf8'));
+        const health = await healthCheck(lock.port);
 
-      if (health) {
-        if (health.dbPath !== dbPath) {
-          // Serves a different database; leave it alone and run ours on a different port.
-          console.error(`Dashboard on port ${lock.port} serves ${health.dbPath}, expected ${dbPath}. Starting our own.`);
-        } else if (lock.mode === 'in-process') {
-          // Another active MCP instance (e.g. dev alongside packaged extension)
-          if (lock.pid !== process.pid) {
-            if (health.version === expected) {
-              return { port: lock.port, reused: true };
-            } else {
-              console.error(`Other active dashboard version v${health.version} != expected v${expected}. Launching ours on a free port.`);
-              // Let it continue running, but we bind our own to a fresh port.
+        if (health) {
+          if (health.dbPath !== dbPath) {
+            // Serves a different database; leave it alone and run ours on a different port.
+            console.error(`Dashboard on port ${lock.port} serves ${health.dbPath}, expected ${dbPath}. Starting our own.`);
+          } else if (lock.mode === 'in-process') {
+            // Another active MCP instance (e.g. dev alongside packaged extension)
+            if (lock.pid !== process.pid) {
+              if (health.version === expected) {
+                return { port: lock.port, reused: true };
+              } else {
+                console.error(`Other active dashboard version v${health.version} != expected v${expected}. Launching ours on a free port.`);
+                // Let it continue running, but we bind our own to a fresh port.
+              }
             }
+          } else {
+            // Legacy out-of-process lock file (no mode). Perform migration by killing it if PID matches/unknown.
+            if (health.pid === undefined || health.pid === lock.pid) {
+              console.error(`Legacy out-of-process dashboard detected (PID ${lock.pid}); stopping it.`);
+              await killAndWait(lock);
+            } else {
+              console.error(`Health check PID ${health.pid} does not match lock PID ${lock.pid}. Skipping unsafe kill.`);
+            }
+            fs.rmSync(pathToCheck, { force: true });
           }
         } else {
-          // Legacy out-of-process lock file (no mode). Perform deterministic migration by killing it.
-          console.error(`Legacy out-of-process dashboard detected (PID ${lock.pid}); stopping it.`);
-          await killAndWait(lock);
-          fs.rmSync(lockPath, { force: true });
+          // Dead server, cleanup stale lock file
+          fs.rmSync(pathToCheck, { force: true });
         }
-      } else {
-        // Dead server, cleanup stale lock file
-        fs.rmSync(lockPath, { force: true });
+      } catch {
+        fs.rmSync(pathToCheck, { force: true });
       }
-    } catch {
-      fs.rmSync(lockPath, { force: true });
     }
   }
 
@@ -278,16 +289,25 @@ export async function stopDashboard(): Promise<{ stopped: boolean; message: stri
     state.httpServer = null;
 
     await new Promise<void>((resolve) => {
-      server.close(() => resolve());
+      let resolved = false;
+      const done = () => {
+        if (resolved) return;
+        resolved = true;
+        resolve();
+      };
+
+      server.close(() => done());
       if (typeof (server as any).closeIdleConnections === 'function') {
         (server as any).closeIdleConnections();
       }
-      setTimeout(() => {
+
+      const timeout = setTimeout(() => {
         if (typeof (server as any).closeAllConnections === 'function') {
           (server as any).closeAllConnections();
         }
-        resolve();
-      }, 2000).unref();
+        done();
+      }, 2000);
+      timeout.unref();
     });
 
     // Remove lockfile ONLY if it belongs to us
@@ -304,24 +324,35 @@ export async function stopDashboard(): Promise<{ stopped: boolean; message: stri
   }
 
   // 2. If no own server is running, check lockfile
-  if (fs.existsSync(lockPath)) {
-    try {
-      const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  const checkLocks = [lockPath, legacyLockPath];
+  for (const pathToCheck of checkLocks) {
+    if (fs.existsSync(pathToCheck)) {
+      try {
+        const lock = JSON.parse(fs.readFileSync(pathToCheck, 'utf8'));
 
-      // If it's a legacy lock (no mode), we kill it
-      if (!lock.mode) {
-        await killAndWait(lock);
-        fs.rmSync(lockPath, { force: true });
-        return { stopped: true, message: `Legacy dashboard process ${lock.pid} stopped.` };
-      }
+        // If it's a legacy lock (no mode), we kill it if PID matches/unknown
+        if (!lock.mode) {
+          const health = await healthCheck(lock.port);
+          if (health) {
+            if (health.pid === undefined || health.pid === lock.pid) {
+              console.error(`Legacy out-of-process dashboard detected (PID ${lock.pid}); stopping it.`);
+              await killAndWait(lock);
+            } else {
+              console.error(`Health check PID ${health.pid} does not match lock PID ${lock.pid}. Skipping unsafe kill.`);
+            }
+          }
+          fs.rmSync(pathToCheck, { force: true });
+          return { stopped: true, message: `Legacy dashboard process ${lock.pid} stopped.` };
+        }
 
-      // If it's another in-process lock (cudzy pid)
-      if (lock.mode === 'in-process' && lock.pid !== process.pid) {
-        return { stopped: false, message: `Dashboard is served in-process by another Sherpa MCP instance (PID ${lock.pid}).` };
+        // If it's another in-process lock (cudzy pid)
+        if (lock.mode === 'in-process' && lock.pid !== process.pid) {
+          return { stopped: false, message: `Dashboard is served in-process by another Sherpa MCP instance (PID ${lock.pid}).` };
+        }
+      } catch (err: any) {
+        fs.rmSync(pathToCheck, { force: true });
+        return { stopped: true, message: `Removed corrupt lockfile: ${err.message}` };
       }
-    } catch (err: any) {
-      fs.rmSync(lockPath, { force: true });
-      return { stopped: true, message: `Removed corrupt lockfile: ${err.message}` };
     }
   }
 

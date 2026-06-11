@@ -7,5 +7,8 @@ console.log = (...args: any[]) => originalError.apply(console, args);
 console.info = (...args: any[]) => originalError.apply(console, args);
 console.debug = (...args: any[]) => originalError.apply(console, args);
 console.warn = (...args: any[]) => originalError.apply(console, args);
+console.dir = (...args: any[]) => originalError.apply(console, args);
+console.table = (...args: any[]) => originalError.apply(console, args);
+console.trace = (...args: any[]) => originalError.apply(console, args);
 
 originalError("Console output redirected to stderr.");

@@ -1246,8 +1246,16 @@ server.tool(
   { path: z.string().optional() },
   async (args) => {
     try {
-      // reject absolute URLs / protocol-relative — only in-app paths
-      const sub = args.path && /^\/(?!\/)/.test(args.path) ? args.path : '';
+      let sub = '';
+      if (args.path) {
+        if (!/^(?!.*\/{2})\/[a-zA-Z0-9\-_/]*$/.test(args.path)) {
+          return {
+            content: [{ type: "text", text: "Error: Unsafe path parameter provided. Only alphanumeric characters, hyphens, underscores, and forward slashes are allowed." }],
+            isError: true
+          };
+        }
+        sub = args.path;
+      }
       const { port, reused } = await ensureDashboard();
       const url = `http://127.0.0.1:${port}${sub}`;
       openBrowser(url);
