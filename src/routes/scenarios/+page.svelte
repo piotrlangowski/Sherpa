@@ -351,7 +351,7 @@
   {/if}
 
   <Dialog.Root bind:open={importDialogOpen}>
-    <Dialog.Content class="sm:max-w-[425px] bg-card border-border text-foreground">
+    <Dialog.Content class="sm:max-w-[425px] text-foreground">
       <Dialog.Header>
         <Dialog.Title>Import ROI Scenario</Dialog.Title>
         <Dialog.Description>
@@ -365,7 +365,7 @@
             id="import-file" 
             type="file" 
             accept=".json"
-            class="flex h-10 w-full rounded-md border border-input bg-muted/20 px-3 py-2 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            class="glass-inset flex h-10 w-full rounded-md border border-input px-3 py-2 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             onchange={(e) => {
               const files = (e.target as HTMLInputElement).files;
               if (files && files.length > 0) {

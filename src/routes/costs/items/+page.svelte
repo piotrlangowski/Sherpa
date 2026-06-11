@@ -1,7 +1,8 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { untrack } from 'svelte';
-  import { formatCurrency } from '$lib/utils/format';
+  import { formatCurrency, getCurrencySymbol } from '$lib/utils/format';
+  import { FormDialog, FormSection, FormField, NumberField } from '$lib/components/forms';
   import { COST_SUBCATEGORIES } from '$lib/utils/constants';
   import { appState } from '$lib/stores/app.svelte';
   import { convertAmount } from '$lib/shared/currency.js';
@@ -245,125 +246,123 @@
 </div>
 
 <!-- Edit / Create Cost Item Dialog -->
-{#if showEditDialog}
-  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <Card class="w-full max-w-md border-border shadow-2xl bg-card">
-      <form method="POST" action="?/saveCost" use:enhance={() => {
-        isSaving = true;
-        return async ({ update }) => {
-          await update();
-          isSaving = false;
-          showEditDialog = false;
-        };
-      }}>
-        <CardHeader class="border-b border-border bg-black/10">
-          <CardTitle class="text-lg font-bold">
-            {id ? 'Edit Cost Item' : 'Add Cost Item'}
-          </CardTitle>
-          <CardDescription>
-            Configure investment budgets or monthly operational expenditures.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent class="py-4 space-y-4">
-          <input type="hidden" name="id" value={id} />
+<FormDialog
+  bind:open={showEditDialog}
+  bind:busy={isSaving}
+  size="md"
+  icon={DollarSign}
+  title={id ? 'Edit Cost Item' : 'Add Cost Item'}
+  description="Configure investment budgets or monthly operational expenditures."
+  action="?/saveCost"
+  submitLabel="Save Cost Item"
+>
+  <input type="hidden" name="id" value={id} />
 
-          <!-- Name -->
-          <div class="space-y-1.5">
-            <Label for="name">Cost Name</Label>
-            <Input id="name" name="name" placeholder="e.g. ML Platform Subscription" bind:value={name} required class="bg-background/50" />
-          </div>
+  <FormSection title="Identity" hero columns={1}>
+    <FormField label="Cost Name" forId="name" required>
+      <Input
+        id="name"
+        name="name"
+        placeholder="e.g. ML Platform Subscription"
+        bind:value={name}
+        required
+        class="h-11 bg-(--glass-inset-bg) text-base"
+      />
+    </FormField>
+  </FormSection>
 
-          <!-- Category (CAPEX / OPEX) -->
-          <div class="space-y-1.5">
-            <Label for="category">Category</Label>
-            <select
-              id="category"
-              name="category"
-              bind:value={category}
-              class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="opex">OPEX (Operational / Recurring)</option>
-              <option value="capex">CAPEX (Capital / One-Time)</option>
-            </select>
-          </div>
+  <FormSection title="Type" columns={1}>
+    <div class="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Cost category">
+      <label class="cursor-pointer">
+        <input type="radio" name="category" value="opex" bind:group={category} class="peer sr-only" />
+        <div
+          class="h-full rounded-xl border border-border bg-background/50 p-3 transition-colors peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary/30 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
+        >
+          <div class="text-sm font-bold">OPEX</div>
+          <div class="text-xs text-muted-foreground">Operational, recurring spend</div>
+        </div>
+      </label>
+      <label class="cursor-pointer">
+        <input type="radio" name="category" value="capex" bind:group={category} class="peer sr-only" />
+        <div
+          class="h-full rounded-xl border border-border bg-background/50 p-3 transition-colors peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary/30 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
+        >
+          <div class="text-sm font-bold">CAPEX</div>
+          <div class="text-xs text-muted-foreground">Capital, one-time investment</div>
+        </div>
+      </label>
+    </div>
 
-          <!-- Subcategory -->
-          <div class="space-y-1.5">
-            <Label for="subcategory">Subcategory</Label>
-            <select
-              id="subcategory"
-              name="subcategory"
-              bind:value={subcategory}
-              class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              {#each availableSubcategories as sub}
-                <option value={sub.value}>{sub.label}</option>
-              {/each}
-            </select>
-          </div>
+    <FormField label="Subcategory" forId="subcategory">
+      <select
+        id="subcategory"
+        name="subcategory"
+        bind:value={subcategory}
+        class="h-9 w-full rounded-md border border-input bg-(--glass-inset-bg) px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+      >
+        {#each availableSubcategories as sub}
+          <option value={sub.value}>{sub.label}</option>
+        {/each}
+      </select>
+    </FormField>
+  </FormSection>
 
-          <!-- Currency, Amount & Frequency -->
-          <div class="grid grid-cols-3 gap-4">
-            <div class="space-y-1.5">
-              <Label for="currency">Currency</Label>
-              <select
-                id="currency"
-                name="currency"
-                bind:value={currency}
-                class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              >
-                <option value="USD">USD ($)</option>
-                <option value="EUR">EUR (€)</option>
-                <option value="PLN">PLN (zł)</option>
-                <option value="GBP">GBP (£)</option>
-              </select>
-            </div>
+  <FormSection title="Amount & timing">
+    <NumberField
+      id="amount"
+      name="amount"
+      bind:value={amount}
+      label="Amount"
+      prefix={getCurrencySymbol(currency)}
+      size="lg"
+      step={0.01}
+      min={0.01}
+      span={2}
+    />
+    <FormField label="Currency" forId="currency">
+      <select
+        id="currency"
+        name="currency"
+        bind:value={currency}
+        class="h-9 w-full rounded-md border border-input bg-(--glass-inset-bg) px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+      >
+        <option value="USD">USD ($)</option>
+        <option value="EUR">EUR (€)</option>
+        <option value="PLN">PLN (zł)</option>
+        <option value="GBP">GBP (£)</option>
+      </select>
+    </FormField>
+    <FormField label="Frequency" forId="frequency">
+      <select
+        id="frequency"
+        name="frequency"
+        bind:value={frequency}
+        class="h-9 w-full rounded-md border border-input bg-(--glass-inset-bg) px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+      >
+        <option value="one_time">One-Time</option>
+        <option value="monthly">Monthly</option>
+        <option value="yearly">Yearly</option>
+      </select>
+    </FormField>
+  </FormSection>
 
-            <div class="space-y-1.5">
-              <Label for="amount">Amount</Label>
-              <Input id="amount" name="amount" type="number" step="0.01" min="0.01" bind:value={amount} required class="bg-background/50 text-right" />
-            </div>
-            
-            <div class="space-y-1.5">
-              <Label for="frequency">Frequency</Label>
-              <select
-                id="frequency"
-                name="frequency"
-                bind:value={frequency}
-                class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              >
-                <option value="one_time">One-Time</option>
-                <option value="monthly">Monthly</option>
-                <option value="yearly">Yearly</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Allocated Service -->
-          <div class="space-y-1.5">
-            <Label for="serviceId">Allocated to Service (Optional)</Label>
-            <select
-              id="serviceId"
-              name="serviceId"
-              bind:value={serviceId}
-              class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="">No Allocation (General Overhead)</option>
-              {#each data.services as service}
-                <option value={service.id}>{service.name} ({service.status})</option>
-              {/each}
-            </select>
-          </div>
-        </CardContent>
-        
-        <CardFooter class="border-t border-border bg-black/10 py-3 flex justify-end space-x-2">
-          <Button variant="outline" onclick={() => showEditDialog = false} disabled={isSaving}>Cancel</Button>
-          <Button type="submit" disabled={isSaving}>
-            {#if isSaving}Saving...{:else}Save Cost Item{/if}
-          </Button>
-        </CardFooter>
-      </form>
-    </Card>
-  </div>
-{/if}
+  <FormSection title="Allocation" columns={1}>
+    <FormField
+      label="Allocated to Service"
+      forId="serviceId"
+      help="Optional — attributes this cost to one AI service"
+    >
+      <select
+        id="serviceId"
+        name="serviceId"
+        bind:value={serviceId}
+        class="h-9 w-full rounded-md border border-input bg-(--glass-inset-bg) px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+      >
+        <option value="">No Allocation (General Overhead)</option>
+        {#each data.services as service}
+          <option value={service.id}>{service.name} ({service.status})</option>
+        {/each}
+      </select>
+    </FormField>
+  </FormSection>
+</FormDialog>

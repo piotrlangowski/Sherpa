@@ -1,7 +1,8 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { onMount } from 'svelte';
-  import { formatCurrency } from '$lib/utils/format';
+  import { formatCurrency, getCurrencySymbol } from '$lib/utils/format';
+  import { FormDialog, FormSection, FormField, NumberField } from '$lib/components/forms';
   import { PROVIDER_PRICES_AS_OF } from '$lib/utils/constants';
   import type { Currency } from '$lib/shared/types';
   import Button from '$lib/components/ui/button/button.svelte';
@@ -350,78 +351,79 @@
 </div>
 
 <!-- Edit / Create Provider Dialog -->
-{#if showEditDialog}
-  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
-    <Card class="w-full max-w-md border-border shadow-2xl bg-card">
-      <form method="POST" action="?/saveProvider" use:enhance={() => {
-        isSaving = true;
-        return async ({ update }) => {
-          await update();
-          isSaving = false;
-          showEditDialog = false;
-        };
-      }}>
-        <CardHeader class="border-b border-border bg-black/10">
-          <CardTitle class="text-lg font-bold">
-            {id ? 'Edit Model Pricing' : 'Add Custom AI Model'}
-          </CardTitle>
-          <CardDescription>
-            Input pricing parameters below. Prices should be input in USD per million tokens.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent class="py-4 space-y-4">
-          <input type="hidden" name="id" value={id} />
+<FormDialog
+  bind:open={showEditDialog}
+  bind:busy={isSaving}
+  size="sm"
+  icon={Server}
+  title={id ? 'Edit Model Pricing' : 'Add Custom AI Model'}
+  description="Token prices per million tokens."
+  action="?/saveProvider"
+  submitLabel="Save Model"
+>
+  <input type="hidden" name="id" value={id} />
 
-          <div class="space-y-1.5">
-            <Label for="name">Provider Name</Label>
-            <Input id="name" name="name" placeholder="e.g. OpenAI, Anthropic, Custom" bind:value={name} required class="bg-background/50" />
-          </div>
+  <FormSection title="Identity" hero columns={1}>
+    <FormField label="Provider Name" forId="name" required>
+      <Input
+        id="name"
+        name="name"
+        placeholder="e.g. OpenAI, Anthropic, Custom"
+        bind:value={name}
+        required
+        class="h-11 bg-(--glass-inset-bg) text-base"
+      />
+    </FormField>
+    <FormField label="Model Name" forId="modelName" required help="Exact API model id">
+      <Input
+        id="modelName"
+        name="modelName"
+        placeholder="e.g. gpt-4o-custom"
+        bind:value={modelName}
+        required
+        class="bg-(--glass-inset-bg) font-mono"
+      />
+    </FormField>
+  </FormSection>
 
-          <div class="space-y-1.5">
-            <Label for="modelName">Model Name</Label>
-            <Input id="modelName" name="modelName" placeholder="e.g. gpt-4o-custom" bind:value={modelName} required class="bg-background/50" />
-          </div>
-
-          <div class="space-y-1.5">
-            <Label for="currency">Currency</Label>
-            <select
-              id="currency"
-              name="currency"
-              bind:value={currency}
-              disabled={isPredefined}
-              class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <option value="USD">USD ($)</option>
-              <option value="EUR">EUR (€)</option>
-              <option value="PLN">PLN (zł)</option>
-              <option value="GBP">GBP (£)</option>
-            </select>
-            {#if isPredefined}
-              <p class="text-[10px] text-muted-foreground">Predefined models are always priced in USD.</p>
-            {/if}
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <div class="space-y-1.5">
-              <Label for="inputPrice">Input Price (per 1M)</Label>
-              <Input id="inputPrice" name="inputPrice" type="number" step="0.0001" min="0" bind:value={inputPrice} required class="bg-background/50 text-right font-mono" />
-            </div>
-            <div class="space-y-1.5">
-              <Label for="outputPrice">Output Price (per 1M)</Label>
-              <Input id="outputPrice" name="outputPrice" type="number" step="0.0001" min="0" bind:value={outputPrice} required class="bg-background/50 text-right font-mono" />
-            </div>
-          </div>
-        </CardContent>
-        
-        <CardFooter class="border-t border-border bg-black/10 py-3 flex justify-end space-x-2">
-          <Button variant="outline" onclick={() => showEditDialog = false} disabled={isSaving}>Cancel</Button>
-          <Button type="submit" disabled={isSaving}>
-            {#if isSaving}Saving...{:else}Save Model{/if}
-          </Button>
-        </CardFooter>
-      </form>
-    </Card>
-  </div>
-{/if}
+  <FormSection title="Token pricing" description="Prices per 1,000,000 (1M) tokens.">
+    <FormField label="Currency" forId="currency" span={2}>
+      <select
+        id="currency"
+        name="currency"
+        bind:value={currency}
+        disabled={isPredefined}
+        class="h-9 w-full rounded-md border border-input bg-(--glass-inset-bg) px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <option value="USD">USD ($)</option>
+        <option value="EUR">EUR (€)</option>
+        <option value="PLN">PLN (zł)</option>
+        <option value="GBP">GBP (£)</option>
+      </select>
+      {#if isPredefined}
+        <p class="text-[10px] text-muted-foreground">Predefined models are always priced in USD.</p>
+      {/if}
+    </FormField>
+    <NumberField
+      id="inputPrice"
+      name="inputPrice"
+      bind:value={inputPrice}
+      label="Input Price"
+      prefix={getCurrencySymbol(currency)}
+      suffix="/1M"
+      step={0.0001}
+      min={0}
+    />
+    <NumberField
+      id="outputPrice"
+      name="outputPrice"
+      bind:value={outputPrice}
+      label="Output Price"
+      prefix={getCurrencySymbol(currency)}
+      suffix="/1M"
+      step={0.0001}
+      min={0}
+    />
+  </FormSection>
+</FormDialog>
 
