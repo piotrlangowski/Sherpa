@@ -1,8 +1,12 @@
 #!/usr/bin/env node
+import './stderr-guard.js';
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import db, { dbPath } from "./db.js";
 import { ensureDashboard, openBrowser, stopDashboard } from "./launcher.js";
 import {
@@ -21,11 +25,17 @@ import type {
   CalculationResult
 } from "./shared/types.js";
 
+const manifestPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../manifest.json');
+let version = "1.1.0";
+try {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  version = manifest.version || "1.1.0";
+} catch {}
 
 // Initialize MCP Server
 const server = new McpServer({
   name: "sherpa-roi-calculator",
-  version: "1.0.0"
+  version: version
 }, {
   capabilities: {
     prompts: {}
@@ -1242,9 +1252,9 @@ server.tool(
       const url = `http://127.0.0.1:${port}${sub}`;
       openBrowser(url);
       return { content: [{ type: "text", text:
-        `Dashboard ${reused ? 'already running' : 'started'} — opened ${url} in the browser (database: ${dbPath}). If no window appeared, open the URL manually.` }] };
+        `Dashboard ${reused ? 'already running' : 'started'} — served in-process by this MCP server (stays available as long as Claude Desktop keeps the extension running). Opened ${url} in the browser (database: ${dbPath}). If no window appeared, open the URL manually.` }] };
     } catch (err: any) {
-      return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+      return { content: [{ type: "text", text: `${err.message}` }], isError: true };
     }
   }
 );
@@ -1255,8 +1265,8 @@ server.tool(
   {},
   async () => {
     try {
-      const stopped = await stopDashboard();
-      return { content: [{ type: "text", text: stopped ? "Dashboard stopped." : "Dashboard is not running." }] };
+      const { stopped, message } = await stopDashboard();
+      return { content: [{ type: "text", text: message }] };
     } catch (err: any) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
