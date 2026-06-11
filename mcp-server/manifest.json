@@ -57,47 +57,47 @@
   "tools": [
     {
       "name": "settings_action",
-      "description": "Read or update global workspace settings (currency, discount rate, company name). Use this tool to inspect current settings or modify defaults like projection horizon, exchange rates, and the home currency. Always specify the 'action' parameter ('get' or 'update'). Do not call this tool unless you need to view or modify workspace configuration settings."
+      "description": "Read or update global workspace settings (currency, discount rate, company name)"
     },
     {
       "name": "client_base_action",
-      "description": "Retrieve or modify the global customer base parameters (total users, ARPU, acquisition, churn, and AI adoption rates). These global settings serve as defaults when creating new cohorts or scenarios. Always specify the 'action' parameter ('get' or 'update'). Do not use this tool unless you need to view or modify default client base properties."
+      "description": "Retrieve or modify default customer base parameters"
     },
     {
       "name": "provider_action",
-      "description": "List, create, update, or delete AI model providers (e.g. OpenAI, Anthropic, Google) and their pricing per million tokens. Always specify the 'action' parameter. To prevent accidental data loss, deletions require setting 'confirm' to true. Note that predefined providers cannot be deleted."
+      "description": "List, create, update, or delete AI model providers and token pricing"
     },
     {
       "name": "vertical_action",
-      "description": "List, create, update, or delete customer vertical markets (e.g. LegalTech, E-commerce) in the catalog. Verticals help categorize customer cohorts and track total addressable market (TAM/SAM/SOM). Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true."
+      "description": "List, create, update, or delete customer vertical markets in the catalog"
     },
     {
       "name": "cohort_action",
-      "description": "List, create, update, or delete customer cohorts. Cohorts define customer growth models (initial users, acquisition, churn, ARPU, expansion, and AI adoption rates) over the projection horizon. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true."
+      "description": "List, create, update, or delete customer growth cohort configurations"
     },
     {
       "name": "cost_item_action",
-      "description": "List, create, update, or delete fixed infrastructure, development, or operating cost items (Capex/Opex). Fixed cost items are attached to scenarios to compute total cost of ownership (TCO). Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true."
+      "description": "List, create, update, or delete Capex/Opex fixed cost items"
     },
     {
       "name": "service_action",
-      "description": "List, create, update, or delete AI services in the catalog. Each service tracks token usage parameters (input/output tokens) and cost info used for ROI modeling. Always specify the 'action' parameter. To prevent accidental data loss, deletions require setting 'confirm' to true. Do not use this tool unless you need to read or modify AI services."
+      "description": "List, create, update, or delete AI services in the catalog"
     },
     {
       "name": "pack_action",
-      "description": "List, create, update, or delete feature packs in the catalog. Feature packs group multiple AI services together to bundle them into plans. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true. Do not use this tool unless you need to view or modify feature packs."
+      "description": "List, create, update, or delete feature packs bundling AI services"
     },
     {
       "name": "plan_action",
-      "description": "List, create, update, or delete SaaS pricing plans (e.g. Starter, Growth, Enterprise). Pricing plans wrap individual services or feature packs and define base MRR. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true. Do not use this tool unless you need to view or modify pricing plans."
+      "description": "List, create, update, or delete SaaS pricing plan tiers"
     },
     {
       "name": "scenario_action",
-      "description": "List, create, retrieve, update, or delete SaaS ROI scenarios, or execute scenario projections (calculating NPV/IRR, performing sensitivity analysis, comparing scenarios, and parsing natural language descriptions). Scenarios map pricing plans, services, and Capex/Opex costs to user growth cohorts. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true."
+      "description": "Manage ROI scenarios, execute projections, and compare alternatives"
     },
     {
       "name": "dashboard_action",
-      "description": "Launch or stop the local Sherpa web dashboard interface, which displays cashflow graphs and scenario comparisons. Use the 'open' action to deep-link to specific routes (e.g. /scenarios/<id>) in the default browser, or 'close' to terminate the local server. Always specify the 'action' parameter. Do not call this tool unless the user explicitly asks to view or manage the dashboard."
+      "description": "Launch, stop, or deep-link to the local web dashboard interface"
     }
   ],
   "prompts": [
