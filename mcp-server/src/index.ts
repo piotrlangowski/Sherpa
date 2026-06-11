@@ -1767,7 +1767,6 @@ server.resource(
 server.prompt(
   "sherpa-catalog-manager",
   "Manages the AI service catalog, feature packs, and pricing plans. Use when adding or updating services, model parameters (input/output token costs), or pricing tiers.",
-  {},
   async () => {
     return {
       messages: [
@@ -1823,7 +1822,6 @@ server.prompt(
 server.prompt(
   "sherpa-financial-analyst",
   "Calculates and analyzes ROI, NPV, IRR, TCO, and sensitivity for Sherpa scenarios. Use when the user requests financial metrics, performance forecasts, or parameter sensitivity.",
-  {},
   async () => {
     return {
       messages: [
@@ -1877,7 +1875,6 @@ When reporting to CPOs or RevOps:
 server.prompt(
   "sherpa-scenario-comparator",
   "Compares different SaaS ROI scenarios and calculates opportunity costs. Use when comparing options (e.g. low-tier chatbot vs premium copilot) or querying the dashboard summary.",
-  {},
   async () => {
     return {
       messages: [
@@ -1923,7 +1920,6 @@ When presenting choices to product leaders (CPO/RevOps):
 server.prompt(
   "sherpa-scenario-manager",
   "Guides creating and configuring SaaS ROI scenarios in Sherpa. Use when setting up new scenarios from plain text or structured metrics.",
-  {},
   async () => {
     return {
       messages: [
