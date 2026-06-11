@@ -9,11 +9,12 @@
 Built for product leaders (CPO/RevOps) at SaaS companies, it also ships as an **MCP server**, so you can model scenarios conversationally from Claude Desktop: *"create a scenario with 5,000 users, 4% churn and a $150 ARPU chatbot rollout"*.
 
 **Work your way**
-Work as a Claude Desktop App with permanent data
+Work as a Claude Desktop App connecting to a permanent data source that **lives only on your computer, locally, private**
 <img width="1090" height="837" alt="image" src="https://github.com/user-attachments/assets/b8ad0e5c-9fae-42e5-a18e-7def845818c0" />
 or as a separate App with its own UI
 <img width="1397" height="779" alt="image" src="https://github.com/user-attachments/assets/c9519369-fc08-4352-b7aa-6cd28d2d4625" />
 data:
+* **is stored on your computer**
 * **stays in sync between the two modes**
 * **is computed outside of LLM, in Sherpa's engine, so it provieds you the same results every session you ask**
 * **saves you tokens, because you don't have to run the same scenario end to end in Claude. Claude just reads the data or manipulates the data**
@@ -33,7 +34,7 @@ data:
 4. Confirm that is the right extension and hit install
 <img width="805" height="811" alt="image" src="https://github.com/user-attachments/assets/3035f33a-014f-4dbb-9205-d8249627528c" />
 
-You are ready to go. Restart your Claude
+You are ready to go. **Restart your Claude app**
 <img width="795" height="619" alt="image" src="https://github.com/user-attachments/assets/be19bd6a-ea0e-4728-9b2d-65be1aff261d" />
 
 5. Claude will show Connector as ready to use in Claude Chat or Cowork
