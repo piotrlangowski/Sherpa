@@ -1,6 +1,6 @@
 ---
 name: sherpa-catalog-manager
-description: Manages the AI service catalog, feature packs, and pricing plans. Use when adding or updating services, model parameters (input/output token costs), or pricing tiers.
+description: Assists with managing the AI service catalog, feature packs, pricing plans, and LLM model parameters.
 ---
 
 ## Core Concepts
@@ -18,26 +18,25 @@ description: Manages the AI service catalog, feature packs, and pricing plans. U
 ## Workflow Patterns
 
 ### 1. Catalog Management (Services)
-- **List services**: Use `list_services` to inspect current items in the catalog and retrieve their `provider_id` values.
-- **Create service**: Use `create_service` to register a new service.
+- **List services**: The tool `list_services` retrieves current catalog items and their provider IDs.
+- **Create service**: The tool `create_service` registers a new service.
   - Arguments: `{ name, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, status, fixed_cost_per_month }`
-- **Update service**: Use `update_service` to edit service specifications (e.g. if the team optimizes prompt sizes, lowering `avg_input_tokens`).
+- **Update service**: The tool `update_service` modifies service specifications (e.g., adjusting average token parameters).
 
 ### 2. Feature Packaging (Packs)
-- **List Packs**: Use `list_packs` to see existing groups.
-- **Create Pack**: Use `create_pack` to group multiple services.
+- **List Packs**: The tool `list_packs` retrieves existing service groups.
+- **Create Pack**: The tool `create_pack` groups multiple services.
   - Arguments: `{ name, description, service_ids: ["id1", "id2", ...] }`
 
 ### 3. Subscription & Pricing Setup (Plans)
-- **List Plans**: Use `list_plans` to see existing tiers.
-- **Create Plan**: Use `create_plan` to link pricing to packs.
+- **List Plans**: The tool `list_plans` retrieves existing tiers.
+- **Create Plan**: The tool `create_plan` links pricing to packs or services.
   - Arguments: `{ name, base_price, pack_ids: ["pack1", ...], service_ids: ["service1", ...] }`
 
-### 4. Global Settings CRUD
-- **Get Settings**: Use `get_settings` to retrieve company details.
-- **Update Settings**: Use `update_settings` to adjust corporate WACC / default discount rates or projection horizons.
+### 4. Global Settings
+- **Get Settings**: The tool `get_settings` retrieves current company settings.
+- **Update Settings**: The tool `update_settings` updates settings (e.g., currency, default discount rate, or projection horizon).
 
-## Design Tips
-
-1.  **Status**: A service's status can be `"planned"` or `"existing"`. Existing services are already running, whereas planned services indicate features to be rolled out.
-2.  **Model Cost Estimates**: If creating a service and the provider is unknown, search or prompt the user for the best matching predefined provider (e.g., OpenAI GPT-4o, Anthropic Claude 3.5 Sonnet) from the database providers list.
+## Design Details
+- A service status can be "planned" or "existing".
+- Predefined LLM providers (e.g., OpenAI, Anthropic) are available in the database to determine cost estimates.
