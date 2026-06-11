@@ -9,15 +9,15 @@
 Built for product leaders (CPO/RevOps) at SaaS companies, it also ships as an **MCP server**, so you can model scenarios conversationally from Claude Desktop: *"create a scenario with 5,000 users, 4% churn and a $150 ARPU chatbot rollout"*.
 
 **Work your way**
-Work as a Claude Desktop App connecting to a permanent data source that **lives only on your computer, locally, private**
+Work as a Claude Desktop App user connecting to a permanent data source that **lives only on your computer, locally, private**
 <img width="1090" height="837" alt="image" src="https://github.com/user-attachments/assets/b8ad0e5c-9fae-42e5-a18e-7def845818c0" />
 or as a separate App with its own UI
 <img width="1397" height="779" alt="image" src="https://github.com/user-attachments/assets/c9519369-fc08-4352-b7aa-6cd28d2d4625" />
 data:
 * **is stored on your computer**
 * **stays in sync between the two modes**
-* **is computed outside of LLM, in Sherpa's engine, so it provieds you the same results every session you ask**
-* **saves you tokens, because you don't have to run the same scenario end to end in Claude. Claude just reads the data or manipulates the data**
+* **is computed outside of LLM, in Sherpa's math engine, so it provieds you the same results every session you ask**
+* **saves you tokens, because you don't have to compute the same scenario end to end in Claude. Claude just reads the data or manipulates the data**
 
 ---
 
