@@ -15,8 +15,8 @@ description: Provides context for comparing SaaS ROI scenarios and evaluating op
 - The general dashboard summary (names, discount rates, projection horizons, and cached results) is available via the resource URI: `sherpa://dashboard/summary`
 
 ### 2. Multi-scenario Comparison
-- The tool `compare_scenarios` performs side-by-side financial comparisons and calculates opportunity costs.
-  - Arguments: `{ ids: ["uuid-1", "uuid-2", ...] }`
+- Use `scenario_action` with `action: "compare"` to perform side-by-side financial comparisons and calculate opportunity costs.
+  - Arguments: `{ action: "compare", ids: ["uuid-1", "uuid-2", ...] }`
   - Output: Markdown comparison table detailing Net Present Value differences.
 
 ## Strategic Comparison Guidelines

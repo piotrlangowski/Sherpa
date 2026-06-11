@@ -52,9 +52,8 @@ The dev registration pins the database to the repo's `data/sherpa.db` (via `SHER
 
 You can open and close the web dashboard directly from your chat with Claude using the new MCP tools:
 
-- **Open Dashboard**: Say *"open the dashboard"* or *"show me the dashboard"*. Claude will call the `open_dashboard` tool, which starts the SvelteKit app in-process (directly inside the MCP server process using port `4848` or another available port if occupied) and automatically opens it in your default browser. It stays available as long as Claude Desktop is running.
-- **Deep-linking Scenarios**: Claude can deep-link directly to a scenario page (e.g. `open_dashboard(path: "/scenarios/<id>")`) immediately after calculating ROI or creating a scenario.
-- **Close Dashboard**: Say *"close the dashboard"*. Claude will call `close_dashboard` to stop the in-process HTTP server and clean up the lockfile.
+- **Open/Close Dashboard**: Say *"open the dashboard"* or *"close the dashboard"*. Claude will call the `dashboard_action` tool with the appropriate action parameter (`"open"` or `"close"`). The `"open"` action starts the SvelteKit app in-process (directly inside the MCP server process using port `4848` or another available port if occupied) and automatically opens it in your default browser.
+- **Deep-linking Scenarios**: Claude can deep-link directly to a scenario page (e.g. `dashboard_action(action: "open", path: "/scenarios/<id>")`) immediately after calculating ROI or creating a scenario.
 
 **In-process Lifecycle & Port Caching**: Because SvelteKit's handler imports and caches environment variables (like `ORIGIN`) at load time, the server binds to a single port per runtime process. If you stop the dashboard, reopening it will start the listener on the same port. If there is a port conflict, you will receive a diagnostic message advising you to restart Claude Desktop.
 
@@ -76,7 +75,7 @@ Typical ROI calculators don't understand LLM economics; token cost calculators d
 - **Scenario comparison** — side-by-side KPIs, cumulative ROI curves and opportunity cost (ΔNPV) between alternatives.
 - **Import & export** — model your real customer base from a CSV export (CRM/billing), export scenarios to JSON/CSV, download the dashboard as a high-res PNG.
 - **Current model prices** — bundled price list for OpenAI, Anthropic and Google models with a visible "prices as of" date and one-click sync.
-- **MCP server** — 43 tools and 2 resources exposing the same engine to LLM hosts; includes full database CRUD capabilities, natural-language scenario generation, and 4 bundled agent skills.
+- **MCP server** — 11 consolidated tools and 2 resources exposing the same engine to LLM hosts; includes full database CRUD capabilities with action parameters and Human-in-the-Loop safety confirmation for deletions, natural-language scenario generation, and 4 bundled agent skills.
 
 ## Architecture
 
@@ -96,7 +95,7 @@ graph LR
     end
 
     subgraph mcp ["MCP server (stdio)"]
-        TOOLS["43 tools + 2 resources"]
+        TOOLS["11 tools + 2 resources"]
     end
 
     DB[("SQLite<br/>data/sherpa.db")]
