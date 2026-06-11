@@ -3,6 +3,9 @@
   import { untrack } from 'svelte';
   import { formatCurrency } from '$lib/utils/format';
   import { COST_SUBCATEGORIES } from '$lib/utils/constants';
+  import { appState } from '$lib/stores/app.svelte';
+  import { convertAmount } from '$lib/shared/currency.js';
+  import type { Currency } from '$lib/shared/types';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -37,6 +40,7 @@
   let subcategory = $state('personnel');
   let amount = $state(0);
   let frequency = $state<'one_time' | 'monthly' | 'yearly'>('monthly');
+  let currency = $state<Currency>('USD');
   let serviceId = $state('');
 
   // Derived subcategories list
@@ -67,9 +71,10 @@
     data.costs
       .filter(c => c.category === 'capex')
       .reduce((sum, c) => {
-        if (c.frequency === 'one_time') return sum + c.amount;
-        if (c.frequency === 'monthly') return sum + c.amount * 12; // annualized/standardized (though capex is usually one_time)
-        return sum + c.amount;
+        const converted = convertAmount(c.amount, c.currency || 'USD', appState.currency, appState.exchangeRates);
+        if (c.frequency === 'one_time') return sum + converted;
+        if (c.frequency === 'monthly') return sum + converted * 12; // annualized/standardized
+        return sum + converted;
       }, 0)
   );
 
@@ -77,9 +82,10 @@
     data.costs
       .filter(c => c.category === 'opex')
       .reduce((sum, c) => {
-        if (c.frequency === 'monthly') return sum + c.amount;
-        if (c.frequency === 'yearly') return sum + c.amount / 12;
-        return sum + c.amount; // one-time opex (rare, treated as monthly here for simplicity)
+        const converted = convertAmount(c.amount, c.currency || 'USD', appState.currency, appState.exchangeRates);
+        if (c.frequency === 'monthly') return sum + converted;
+        if (c.frequency === 'yearly') return sum + converted / 12;
+        return sum + converted; // one-time opex (rare)
       }, 0)
   );
 
@@ -90,6 +96,7 @@
     subcategory = 'personnel';
     amount = 0;
     frequency = 'monthly';
+    currency = appState.currency;
     serviceId = '';
     showEditDialog = true;
   }
@@ -101,6 +108,7 @@
     subcategory = cost.subcategory;
     amount = cost.amount;
     frequency = cost.frequency;
+    currency = cost.currency || 'USD';
     serviceId = cost.service_id || '';
     showEditDialog = true;
   }
@@ -122,7 +130,7 @@
     <Card class="border-border bg-card/40 backdrop-blur-sm shadow-md">
       <CardHeader class="pb-2">
         <CardDescription class="text-xs uppercase font-bold tracking-wider">Total CAPEX (One-Time)</CardDescription>
-        <CardTitle class="text-3xl font-black text-primary">{formatCurrency(totalCapex, 'USD', 0)}</CardTitle>
+        <CardTitle class="text-3xl font-black text-primary">{formatCurrency(totalCapex, appState.currency, 0)}</CardTitle>
       </CardHeader>
       <CardContent class="text-xs text-muted-foreground">
         Sum of setup, custom model training, and integration expenses.
@@ -132,7 +140,7 @@
     <Card class="border-border bg-card/40 backdrop-blur-sm shadow-md">
       <CardHeader class="pb-2">
         <CardDescription class="text-xs uppercase font-bold tracking-wider">Total OPEX (Monthly Recurring)</CardDescription>
-        <CardTitle class="text-3xl font-black text-cyan-400">{formatCurrency(totalMonthlyOpex, 'USD', 0)}/mo</CardTitle>
+        <CardTitle class="text-3xl font-black text-cyan-400">{formatCurrency(totalMonthlyOpex, appState.currency, 0)}/mo</CardTitle>
       </CardHeader>
       <CardContent class="text-xs text-muted-foreground">
         Sum of salary allocations, cloud monitoring, and fixed server overheads.
@@ -210,7 +218,7 @@
                           {/if}
                         </td>
                         <td class="px-6 py-4 text-right font-semibold text-foreground">
-                          {formatCurrency(cost.amount, 'USD', 2)}
+                          {formatCurrency(cost.amount, cost.currency || 'USD', 2)}
                         </td>
                         <td class="px-6 py-4 text-right space-x-1">
                           <Button variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-foreground" onclick={() => openEdit(cost)}>
@@ -295,10 +303,25 @@
             </select>
           </div>
 
-          <!-- Amount & Frequency -->
-          <div class="grid grid-cols-2 gap-4">
+          <!-- Currency, Amount & Frequency -->
+          <div class="grid grid-cols-3 gap-4">
             <div class="space-y-1.5">
-              <Label for="amount">Amount ($)</Label>
+              <Label for="currency">Currency</Label>
+              <select
+                id="currency"
+                name="currency"
+                bind:value={currency}
+                class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="PLN">PLN (zł)</option>
+                <option value="GBP">GBP (£)</option>
+              </select>
+            </div>
+
+            <div class="space-y-1.5">
+              <Label for="amount">Amount</Label>
               <Input id="amount" name="amount" type="number" step="0.01" min="0.01" bind:value={amount} required class="bg-background/50 text-right" />
             </div>
             

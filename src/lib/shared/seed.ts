@@ -1,6 +1,7 @@
 import type { DatabaseConnection } from './db-schema.js';
 import { randomUUID as uuidv4 } from 'crypto';
 import { PREDEFINED_PROVIDERS } from './provider-catalog.js';
+import { FALLBACK_EXCHANGE_RATES, EXCHANGE_RATES_AS_OF } from './currency.js';
 
 export function seedDatabase(db: DatabaseConnection): void {
   // Check if already seeded by checking settings
@@ -21,6 +22,8 @@ export function seedDatabase(db: DatabaseConnection): void {
     insertSetting.run('default_discount_rate', '0.10');
     insertSetting.run('setup_completed', '0'); // Show wizard on first visit
     insertSetting.run('projection_horizon_months', '36');
+    insertSetting.run('exchange_rates', JSON.stringify(FALLBACK_EXCHANGE_RATES));
+    insertSetting.run('exchange_rates_as_of', EXCHANGE_RATES_AS_OF);
 
     // 1.5 Insert Client Base (Global defaults)
     // OR REPLACE: runMigrations already creates a placeholder singleton row
@@ -45,8 +48,8 @@ export function seedDatabase(db: DatabaseConnection): void {
 
     // 2. Insert AI Providers
     const insertProvider = db.prepare(`
-      INSERT INTO providers (id, name, model_name, input_price, output_price, is_predefined, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO providers (id, name, model_name, input_price, output_price, is_predefined, currency, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'USD', ?)
     `);
 
     const providersMap: Record<string, string> = {}; 
@@ -60,8 +63,8 @@ export function seedDatabase(db: DatabaseConnection): void {
 
     // 3. Insert Services
     const insertService = db.prepare(`
-      INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, fixed_cost_currency, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?)
     `);
 
     const sSummarization = uuidv4();
@@ -129,7 +132,7 @@ export function seedDatabase(db: DatabaseConnection): void {
     insertVerticalPlan.run(vEcommerce, plEnterprise);
 
     // 8. Cost Items
-    const insertCost = db.prepare(`INSERT INTO cost_items (id, name, category, subcategory, amount, frequency, service_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertCost = db.prepare(`INSERT INTO cost_items (id, name, category, subcategory, amount, frequency, currency, service_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`);
 
     const cSalary = uuidv4();
     const cInfra = uuidv4();

@@ -13,6 +13,8 @@
         currency: any;
         defaultDiscountRate: number;
         setupCompleted: boolean;
+        exchangeRates: any;
+        ratesAsOf: string;
       };
     };
     children: import('svelte').Snippet;

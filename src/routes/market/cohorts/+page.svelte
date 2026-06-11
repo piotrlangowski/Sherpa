@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import { onMount } from 'svelte';
   import { formatNumber, formatCurrency, formatPercent } from '$lib/utils/format';
+  import { appState } from '$lib/stores/app.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -275,7 +276,7 @@
               </div>
               <div class="flex items-center justify-between pt-1 border-t border-border/40">
                 <span class="text-xs text-muted-foreground font-semibold">Starting Base ARPU</span>
-                <span class="font-mono text-xs font-black text-foreground">{formatCurrency(cohort.base_arpu, 'USD')}</span>
+                <span class="font-mono text-xs font-black text-foreground">{formatCurrency(cohort.base_arpu, appState.currency)}</span>
               </div>
             </CardContent>
 
@@ -333,7 +334,7 @@
                 </TableCell>
                 <TableCell class="text-right font-mono text-emerald-400 font-medium">+{formatPercent(cohort.monthly_expansion_rate)}/mo</TableCell>
                 <TableCell class="text-right font-mono font-semibold text-primary">{formatPercent(cohort.ai_adoption_rate)}</TableCell>
-                <TableCell class="text-right font-mono font-bold">{formatCurrency(cohort.base_arpu, 'USD')}</TableCell>
+                <TableCell class="text-right font-mono font-bold">{formatCurrency(cohort.base_arpu, appState.currency)}</TableCell>
                 <TableCell class="text-center">
                   <div class="flex items-center justify-center gap-1">
                     <Button variant="ghost" size="icon" onclick={() => openEditDialog(cohort)} class="h-8 w-8 hover:bg-white/5">
@@ -401,7 +402,7 @@
 
           <!-- Base ARPU -->
           <div class="space-y-1.5">
-            <Label for="baseArpu" class="font-semibold">Starting ARPU ($/mo)</Label>
+            <Label for="baseArpu" class="font-semibold">Starting ARPU ({appState.currency}/mo)</Label>
             <Input id="baseArpu" name="baseArpu" type="number" step="0.01" min="0" bind:value={baseArpu} required class="bg-black/10 border-border font-mono" />
           </div>
 

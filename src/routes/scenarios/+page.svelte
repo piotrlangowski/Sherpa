@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { formatCurrency, formatPercent, formatMonths } from '$lib/utils/format';
+  import { appState } from '$lib/stores/app.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
@@ -245,7 +246,7 @@
                   <div>
                     <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">NPV</span>
                     <span class="text-xs font-black text-emerald-400 mt-0.5 block">
-                      {formatCurrency(scenario.results.npv, 'USD', 0)}
+                      {formatCurrency(scenario.results.npv, appState.currency, 0)}
                     </span>
                   </div>
                   <div>
@@ -263,7 +264,7 @@
                   <div>
                     <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">TCO</span>
                     <span class="text-xs font-black text-foreground mt-0.5 block">
-                      {formatCurrency(scenario.results.tco, 'USD', 0)}
+                      {formatCurrency(scenario.results.tco, appState.currency, 0)}
                     </span>
                   </div>
                 </div>
@@ -308,7 +309,7 @@
                 <TableCell class="text-right font-mono text-xs">{formatPercent(scenario.discount_rate)}</TableCell>
                 <TableCell class="text-right font-mono font-bold text-emerald-400">
                   {#if scenario.results}
-                    {formatCurrency(scenario.results.npv, 'USD', 0)}
+                    {formatCurrency(scenario.results.npv, appState.currency, 0)}
                   {:else}
                     —
                   {/if}
@@ -329,7 +330,7 @@
                 </TableCell>
                 <TableCell class="text-right font-mono text-xs text-foreground">
                   {#if scenario.results}
-                    {formatCurrency(scenario.results.tco, 'USD', 0)}
+                    {formatCurrency(scenario.results.tco, appState.currency, 0)}
                   {:else}
                     —
                   {/if}

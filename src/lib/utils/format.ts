@@ -5,8 +5,10 @@ export function getCurrencySymbol(currency: Currency): string {
   return CURRENCIES.find(c => c.value === currency)?.symbol || '$';
 }
 
-export function formatCurrency(value: number, currency: Currency = 'USD', decimals: number = 0): string {
-  const symbol = getCurrencySymbol(currency);
+export function formatCurrency(value: number, currency: Currency, decimals: number = 0): string {
+  const currencyInfo = CURRENCIES.find(c => c.value === currency);
+  const symbol = currencyInfo?.symbol || '$';
+  const position = currencyInfo?.position || 'prefix';
   
   // Format with commas and optional decimals
   const formattedValue = new Intl.NumberFormat('en-US', {
@@ -14,8 +16,7 @@ export function formatCurrency(value: number, currency: Currency = 'USD', decima
     maximumFractionDigits: decimals
   }).format(value);
   
-  // Position symbol based on standard conventions (left for $, right/left for others depending on preferences, keeping simple left for all in this dashboard context)
-  return `${symbol}${formattedValue}`;
+  return position === 'prefix' ? `${symbol}${formattedValue}` : `${formattedValue} ${symbol}`;
 }
 
 export function formatNumber(value: number, decimals: number = 0): string {

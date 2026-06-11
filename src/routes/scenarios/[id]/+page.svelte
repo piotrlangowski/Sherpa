@@ -98,7 +98,7 @@
         axisLabel: {
           color: axisColor,
           fontSize: 10,
-          formatter: (value: number) => `$${formatNumber(value)}`
+          formatter: (value: number) => formatCurrency(value, appState.currency, 0)
         },
         axisLine: { lineStyle: { color: lineColor } },
         splitLine: { lineStyle: { color: splitLineColor } }
@@ -153,7 +153,7 @@
           const p = params[0];
           return `<div class="px-2 py-1 select-none text-xs">
             <span class="text-muted-foreground">${p.name}</span><br/>
-            <span class="font-bold text-foreground">Cumulative: ${formatCurrency(p.value, 'USD')}</span>
+            <span class="font-bold text-foreground">Cumulative: ${formatCurrency(p.value, appState.currency)}</span>
           </div>`;
         }
       },
@@ -169,7 +169,7 @@
         axisLabel: {
           color: axisColor,
           fontSize: 10,
-          formatter: (value: number) => `$${formatNumber(value)}`
+          formatter: (value: number) => formatCurrency(value, appState.currency, 0)
         },
         axisLine: { lineStyle: { color: lineColor } },
         splitLine: { lineStyle: { color: splitLineColor } }
@@ -343,9 +343,9 @@
       <Card class="border-border bg-card/30 backdrop-blur-sm select-none p-4 flex flex-col justify-between shadow-sm">
         <div>
           <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Net Present Value</span>
-          <span class="text-xl font-black mt-2 block {results.npv >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
-            {formatCurrency(results.npv, 'USD', 0)}
-          </span>
+          <CardTitle class="text-xl font-black mt-2 block {results.npv >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+            {formatCurrency(results.npv, appState.currency, 0)}
+          </CardTitle>
         </div>
         <div class="text-[10px] text-muted-foreground/80 mt-1">Discounted lifetime net value</div>
       </Card>
@@ -378,9 +378,9 @@
       <Card class="border-border bg-card/30 backdrop-blur-sm select-none p-4 flex flex-col justify-between shadow-sm">
         <div>
           <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">TCO (T-Horizon)</span>
-          <span class="text-xl font-black text-foreground mt-2 block">
-            {formatCurrency(results.tco, 'USD', 0)}
-          </span>
+          <CardTitle class="text-xl font-black text-foreground mt-2 block">
+            {formatCurrency(results.tco, appState.currency, 0)}
+          </CardTitle>
         </div>
         <div class="text-[10px] text-muted-foreground/80 mt-1">Capex + opex + token totals</div>
       </Card>
@@ -508,7 +508,7 @@
                       <div class="bg-muted/40 p-1.5 rounded text-[10px]">
                         <strong>{ov.target_type === 'all_clients' ? 'Global Base' : ov.target_id}</strong>
                         <div class="grid grid-cols-2 gap-x-2">
-                          {#if ov.arpu_override !== null}<span>ARPU: ${ov.arpu_override}</span>{/if}
+                          {#if ov.arpu_override !== null}<span>ARPU: {formatCurrency(ov.arpu_override, appState.currency, 0)}</span>{/if}
                           {#if ov.monthly_churn_rate !== null}<span>Churn: {ov.monthly_churn_rate * 100}%</span>{/if}
                           {#if ov.ai_adoption_rate !== null}<span>Adoption: {ov.ai_adoption_rate * 100}%</span>{/if}
                           {#if ov.monthly_acquisition !== null}<span>Acq: {ov.monthly_acquisition}/mo</span>{/if}
@@ -564,7 +564,7 @@
                 {#each scenario.costs as cost}
                   <div class="flex justify-between items-center">
                     <span class="truncate pr-2">{cost.name} ({cost.category})</span>
-                    <span class="font-mono text-rose-400 font-bold shrink-0">${cost.amount.toLocaleString()}</span>
+                    <span class="font-mono text-rose-400 font-bold shrink-0">{formatCurrency(cost.amount, cost.currency || 'USD', 0)}</span>
                   </div>
                 {/each}
               {/if}

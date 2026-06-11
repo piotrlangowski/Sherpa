@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { mode } from 'mode-watcher';
-  import { formatCurrency, formatPercent, formatNumber, formatMonths } from '$lib/utils/format';
+  import { formatCurrency, formatPercent, formatNumber, formatMonths, getCurrencySymbol } from '$lib/utils/format';
+  import { appState } from '$lib/stores/app.svelte';
+  import { CURRENCIES } from '$lib/utils/constants';
   import Button from '$lib/components/ui/button/button.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
@@ -89,7 +91,7 @@
             const actualNpv = isLowSeries ? resultItem.lowNpv : resultItem.highNpv;
             const valText = isLowSeries ? resultItem.lowValueText : resultItem.highValueText;
             const directionText = isLowSeries ? `Reduced (${valText})` : `Increased (${valText})`;
-            const deviationText = p.value >= 0 ? `+${formatCurrency(p.value, 'USD', 0)}` : formatCurrency(p.value, 'USD', 0);
+            const deviationText = p.value >= 0 ? `+${formatCurrency(p.value, appState.currency, 0)}` : formatCurrency(p.value, appState.currency, 0);
             const color = p.color;
 
             tooltipContent += `
@@ -99,7 +101,7 @@
                   ${directionText}
                 </span>
                 <span class="font-mono text-right font-bold" style="color: ${tooltipText}">
-                  ${formatCurrency(actualNpv, 'USD', 0)} <span class="text-[10px]" style="color: ${textColor}">(${deviationText})</span>
+                  ${formatCurrency(actualNpv, appState.currency, 0)} <span class="text-[10px]" style="color: ${textColor}">(${deviationText})</span>
                 </span>
               </div>`;
           });
@@ -121,7 +123,10 @@
           fontSize: 10,
           formatter: (value: number) => {
             const actualVal = baseNpv + value;
-            return `$${formatNumber(Math.round(actualVal / 1000))}k`;
+            const symbol = getCurrencySymbol(appState.currency);
+            const position = CURRENCIES.find(c => c.value === appState.currency)?.position || 'prefix';
+            const kVal = formatNumber(Math.round(actualVal / 1000));
+            return position === 'prefix' ? `${symbol}${kVal}k` : `${kVal}k ${symbol}`;
           }
         },
         axisLine: { lineStyle: { color: lineColor } },
@@ -254,7 +259,7 @@
       <Card class="border-border lg:col-span-2 bg-card/35 backdrop-blur-sm shadow-sm flex flex-col justify-between">
         <CardHeader class="pb-2 border-b border-border bg-black/5 select-none">
           <CardTitle class="text-base font-bold text-foreground">NPV Tornado Chart Impact Analysis</CardTitle>
-          <CardDescription class="text-xs">Bars show deviation in NPV from the base case of {formatCurrency(sensitivityData.baseNpv, 'USD', 0)}.</CardDescription>
+          <CardDescription class="text-xs">Bars show deviation in NPV from the base case of {formatCurrency(sensitivityData.baseNpv, appState.currency, 0)}.</CardDescription>
         </CardHeader>
         <CardContent class="p-4 bg-background/5">
           <div bind:this={chartElement} class="h-[400px] w-full"></div>
@@ -276,7 +281,7 @@
           <div class="grid grid-cols-3 gap-2 text-center">
             <div class="bg-muted/40 p-2 rounded border border-border/40">
               <span class="text-[9px] text-muted-foreground uppercase font-bold block">Base NPV</span>
-              <span class="text-xs font-mono font-bold text-foreground block mt-0.5">{formatCurrency(sensitivityData.baseNpv, 'USD', 0)}</span>
+              <span class="text-xs font-mono font-bold text-foreground block mt-0.5">{formatCurrency(sensitivityData.baseNpv, appState.currency, 0)}</span>
             </div>
             <div class="bg-muted/40 p-2 rounded border border-border/40">
               <span class="text-[9px] text-muted-foreground uppercase font-bold block">Base IRR</span>
@@ -300,7 +305,7 @@
               <p>
                 The NPV is most sensitive to changes in <strong class="text-foreground">{topParam.parameter}</strong>.
                 Varying it by ±{variationPct}% changes the NPV by up to 
-                <strong class="text-primary">{formatCurrency(topParam.impactRange, 'USD', 0)}</strong>.
+                <strong class="text-primary">{formatCurrency(topParam.impactRange, appState.currency, 0)}</strong>.
               </p>
               <p>
                 To maximize ROI, prioritize optimizing conversion/acquisition rates or pricing structures related to this factor.
@@ -340,7 +345,7 @@
                   <!-- Decreased Values -->
                   <TableCell class="p-3 text-right font-mono text-muted-foreground">{item.lowValueText}</TableCell>
                   <TableCell class="p-3 text-right font-mono font-medium {item.lowNpv >= sensitivityData.baseNpv ? 'text-emerald-400' : 'text-rose-400'}">
-                    {formatCurrency(item.lowNpv, 'USD', 0)}
+                    {formatCurrency(item.lowNpv, appState.currency, 0)}
                   </TableCell>
                   <TableCell class="p-3 text-center font-mono text-muted-foreground text-[10px]">
                     {item.lowIrr !== null ? formatPercent(item.lowIrr) : 'N/A'} / {formatMonths(item.lowPayback)}
@@ -349,7 +354,7 @@
                   <!-- Increased Values -->
                   <TableCell class="p-3 text-right font-mono text-muted-foreground">{item.highValueText}</TableCell>
                   <TableCell class="p-3 text-right font-mono font-medium {item.highNpv >= sensitivityData.baseNpv ? 'text-emerald-400' : 'text-rose-400'}">
-                    {formatCurrency(item.highNpv, 'USD', 0)}
+                    {formatCurrency(item.highNpv, appState.currency, 0)}
                   </TableCell>
                   <TableCell class="p-3 text-center font-mono text-muted-foreground text-[10px]">
                     {item.highIrr !== null ? formatPercent(item.highIrr) : 'N/A'} / {formatMonths(item.highPayback)}
@@ -357,7 +362,7 @@
 
                   <!-- Delta -->
                   <TableCell class="p-3 text-right font-mono font-bold text-primary">
-                    {formatCurrency(item.impactRange, 'USD', 0)}
+                    {formatCurrency(item.impactRange, appState.currency, 0)}
                   </TableCell>
                 </TableRow>
               {/each}

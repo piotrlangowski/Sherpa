@@ -12,6 +12,7 @@
   import AlertTitle from '$lib/components/ui/alert/alert-title.svelte';
   import AlertDescription from '$lib/components/ui/alert/alert-description.svelte';
   import { formatNumber, formatCurrency, formatPercent } from '$lib/utils/format';
+  import { appState } from '$lib/stores/app.svelte';
 
   // Lucide Icons
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
@@ -252,7 +253,7 @@
                       {/if}
                       <td class="p-4 font-semibold text-primary/90">{cohort.name}</td>
                       <td class="p-4 text-right font-mono font-medium">{formatNumber(cohort.currentUsers)}</td>
-                      <td class="p-4 text-right font-mono font-bold text-foreground">{formatCurrency(cohort.baseArpu, 'USD')}</td>
+                      <td class="p-4 text-right font-mono font-bold text-foreground">{formatCurrency(cohort.baseArpu, appState.currency)}</td>
                       <td class="p-4 text-right font-mono text-rose-400">{formatPercent(cohort.monthlyChurnRate)}</td>
                       <td class="p-4 text-right font-mono text-emerald-400">+{formatNumber(cohort.monthlyAcquisition)} /mo</td>
                     </tr>

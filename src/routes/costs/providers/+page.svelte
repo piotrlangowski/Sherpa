@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { formatCurrency } from '$lib/utils/format';
   import { PROVIDER_PRICES_AS_OF } from '$lib/utils/constants';
+  import type { Currency } from '$lib/shared/types';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -41,6 +42,8 @@
   let modelName = $state('');
   let inputPrice = $state(0);
   let outputPrice = $state(0);
+  let currency = $state<Currency>('USD');
+  let isPredefined = $state(false);
 
   function openCreate() {
     id = '';
@@ -48,6 +51,8 @@
     modelName = '';
     inputPrice = 0;
     outputPrice = 0;
+    currency = 'USD';
+    isPredefined = false;
     showEditDialog = true;
   }
 
@@ -57,6 +62,8 @@
     modelName = provider.model_name;
     inputPrice = provider.input_price;
     outputPrice = provider.output_price;
+    currency = provider.currency || 'USD';
+    isPredefined = provider.is_predefined;
     showEditDialog = true;
   }
 
@@ -240,14 +247,14 @@
             <div class="flex items-center justify-between">
               <span class="text-xs text-muted-foreground">Input Price</span>
               <span class="font-mono text-xs font-bold text-foreground">
-                {formatCurrency(provider.input_price, 'USD', 2)}
+                {formatCurrency(provider.input_price, provider.currency || 'USD', 2)}
                 <span class="text-[10px] text-muted-foreground font-normal">/1M</span>
               </span>
             </div>
             <div class="flex items-center justify-between">
               <span class="text-xs text-muted-foreground">Output Price</span>
               <span class="font-mono text-xs font-bold text-foreground">
-                {formatCurrency(provider.output_price, 'USD', 2)}
+                {formatCurrency(provider.output_price, provider.currency || 'USD', 2)}
                 <span class="text-[10px] text-muted-foreground font-normal">/1M</span>
               </span>
             </div>
@@ -303,8 +310,8 @@
                     <span>{provider.name}</span>
                   </td>
                   <td class="px-6 py-4 font-mono text-muted-foreground">{provider.model_name}</td>
-                  <td class="px-6 py-4 text-right">{formatCurrency(provider.input_price, 'USD', 2)}</td>
-                  <td class="px-6 py-4 text-right">{formatCurrency(provider.output_price, 'USD', 2)}</td>
+                  <td class="px-6 py-4 text-right">{formatCurrency(provider.input_price, provider.currency || 'USD', 2)}</td>
+                  <td class="px-6 py-4 text-right">{formatCurrency(provider.output_price, provider.currency || 'USD', 2)}</td>
                   <td class="px-6 py-4">
                     {#if provider.is_predefined}
                       <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
@@ -376,13 +383,32 @@
             <Input id="modelName" name="modelName" placeholder="e.g. gpt-4o-custom" bind:value={modelName} required class="bg-background/50" />
           </div>
 
+          <div class="space-y-1.5">
+            <Label for="currency">Currency</Label>
+            <select
+              id="currency"
+              name="currency"
+              bind:value={currency}
+              disabled={isPredefined}
+              class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="PLN">PLN (zł)</option>
+              <option value="GBP">GBP (£)</option>
+            </select>
+            {#if isPredefined}
+              <p class="text-[10px] text-muted-foreground">Predefined models are always priced in USD.</p>
+            {/if}
+          </div>
+
           <div class="grid grid-cols-2 gap-4">
             <div class="space-y-1.5">
-              <Label for="inputPrice">Input Price ($/1M)</Label>
+              <Label for="inputPrice">Input Price (per 1M)</Label>
               <Input id="inputPrice" name="inputPrice" type="number" step="0.0001" min="0" bind:value={inputPrice} required class="bg-background/50 text-right font-mono" />
             </div>
             <div class="space-y-1.5">
-              <Label for="outputPrice">Output Price ($/1M)</Label>
+              <Label for="outputPrice">Output Price (per 1M)</Label>
               <Input id="outputPrice" name="outputPrice" type="number" step="0.0001" min="0" bind:value={outputPrice} required class="bg-background/50 text-right font-mono" />
             </div>
           </div>

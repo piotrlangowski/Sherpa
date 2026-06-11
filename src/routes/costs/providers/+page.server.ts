@@ -18,6 +18,8 @@ export const actions: Actions = {
     const inputPrice = parseFloat(formData.get('inputPrice') as string);
     const outputPrice = parseFloat(formData.get('outputPrice') as string);
 
+    const currency = formData.get('currency') as any || 'USD';
+
     if (!name || !modelName) {
       return fail(400, { error: 'Provider and model names are required' });
     }
@@ -32,7 +34,8 @@ export const actions: Actions = {
           name,
           model_name: modelName,
           input_price: inputPrice,
-          output_price: outputPrice
+          output_price: outputPrice,
+          currency
         });
       } else {
         providersRepository.create({
@@ -40,7 +43,8 @@ export const actions: Actions = {
           model_name: modelName,
           input_price: inputPrice,
           output_price: outputPrice,
-          is_predefined: false
+          is_predefined: false,
+          currency
         });
       }
       return { success: true };

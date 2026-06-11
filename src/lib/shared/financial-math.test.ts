@@ -128,6 +128,7 @@ describe('Financial Math Module Tests', () => {
       input_price: 5.0,
       output_price: 15.0,
       is_predefined: true,
+      currency: 'USD',
       updated_at: ''
     };
 
@@ -185,7 +186,8 @@ describe('Financial Math Module Tests', () => {
       name: 'Setup Fee',
       category: 'capex',
       amount: 10000,
-      frequency: 'one_time'
+      frequency: 'one_time',
+      currency: 'USD'
     };
 
     const costOpexMonthly: CostItem = {
@@ -193,7 +195,8 @@ describe('Financial Math Module Tests', () => {
       name: 'Support',
       category: 'opex',
       amount: 500,
-      frequency: 'monthly'
+      frequency: 'monthly',
+      currency: 'USD'
     };
 
     const costOpexYearly: CostItem = {
@@ -201,7 +204,8 @@ describe('Financial Math Module Tests', () => {
       name: 'License Renewal',
       category: 'opex',
       amount: 2000,
-      frequency: 'yearly'
+      frequency: 'yearly',
+      currency: 'USD'
     };
 
     const scenario: Scenario = {
@@ -240,6 +244,7 @@ describe('Financial Math Module Tests', () => {
       input_price: 5.0,
       output_price: 15.0,
       is_predefined: true,
+      currency: 'USD',
       updated_at: ''
     };
 
@@ -273,7 +278,8 @@ describe('Financial Math Module Tests', () => {
       name: 'Setup Fee',
       category: 'capex',
       amount: 10000,
-      frequency: 'one_time'
+      frequency: 'one_time',
+      currency: 'USD'
     };
 
     const scenario: Scenario = {

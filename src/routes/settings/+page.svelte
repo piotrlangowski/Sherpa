@@ -27,6 +27,34 @@
   let currency = $state(data.settings.currency);
   let discountRate = $state([Math.round(data.settings.defaultDiscountRate * 100)]);
   let projectionHorizonMonths = $state(data.settings.projectionHorizonMonths);
+  
+  let exchangeRates = $state(JSON.parse(JSON.stringify(data.settings.exchangeRates || {})));
+  let ratesAsOf = $state(data.settings.exchangeRatesAsOf);
+  let isRefreshing = $state(false);
+  let refreshError = $state<string | null>(null);
+
+  async function handleRefresh() {
+    isRefreshing = true;
+    refreshError = null;
+    try {
+      const response = await fetch('/api/exchange-rates/refresh', {
+        method: 'POST'
+      });
+      const resData = await response.json();
+      if (resData.success) {
+        exchangeRates = resData.rates;
+        ratesAsOf = resData.asOf;
+        // Reload to propagate new rates to AppState
+        window.location.reload();
+      } else {
+        refreshError = resData.error || 'Failed to refresh rates.';
+      }
+    } catch (e: any) {
+      refreshError = e.message || 'Network error.';
+    } finally {
+      isRefreshing = false;
+    }
+  }
 
   let showResetConfirm = $state(false);
   let isSaving = $state(false);
@@ -121,6 +149,41 @@
           <Slider id="discountRateSlider" bind:value={discountRate} min={0} max={30} step={1} type="multiple" />
           <input type="hidden" name="defaultDiscountRate" value={discountRate[0] / 100} />
           <p class="text-xs text-muted-foreground">Used as the cost of capital to compute Net Present Value (NPV).</p>
+        </div>
+
+        <!-- Exchange Rates -->
+        <div class="space-y-4 pt-4 border-t border-border">
+          <div class="flex items-center justify-between max-w-md">
+            <div>
+              <h3 class="text-sm font-semibold">Exchange Rates</h3>
+              <p class="text-xs text-muted-foreground">Rates relative to 1 USD. Last refreshed: {ratesAsOf || 'Never'}</p>
+            </div>
+            <Button type="button" variant="outline" size="sm" onclick={handleRefresh} disabled={isRefreshing}>
+              <RefreshCw class="h-3.5 w-3.5 mr-1.5 {isRefreshing ? 'animate-spin' : ''}" />
+              Refresh from ECB
+            </Button>
+          </div>
+          
+          {#if refreshError}
+            <p class="text-xs text-destructive">{refreshError}</p>
+          {/if}
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-md">
+            <div class="space-y-2">
+              <Label for="rate_EUR">1 USD = EUR</Label>
+              <Input type="number" step="any" id="rate_EUR" name="rate_EUR" bind:value={exchangeRates.EUR} class="bg-background/50" />
+            </div>
+            <div class="space-y-2">
+              <Label for="rate_PLN">1 USD = PLN</Label>
+              <Input type="number" step="any" id="rate_PLN" name="rate_PLN" bind:value={exchangeRates.PLN} class="bg-background/50" />
+            </div>
+            <div class="space-y-2">
+              <Label for="rate_GBP">1 USD = GBP</Label>
+              <Input type="number" step="any" id="rate_GBP" name="rate_GBP" bind:value={exchangeRates.GBP} class="bg-background/50" />
+            </div>
+            <input type="hidden" name="rate_USD" value="1.0" />
+            <input type="hidden" name="exchangeRatesAsOf" value={ratesAsOf} />
+          </div>
         </div>
 
       </CardContent>

@@ -25,6 +25,7 @@ export function runMigrations(db: DatabaseConnection): void {
         input_price     REAL NOT NULL,
         output_price    REAL NOT NULL,
         is_predefined   INTEGER DEFAULT 0,
+        currency        TEXT NOT NULL DEFAULT 'USD',
         updated_at      TEXT NOT NULL
       )
     `).run();
@@ -41,6 +42,7 @@ export function runMigrations(db: DatabaseConnection): void {
         avg_output_tokens  INTEGER DEFAULT 0,
         avg_requests_per_user_month INTEGER DEFAULT 0,
         fixed_cost_per_month REAL,
+        fixed_cost_currency TEXT NOT NULL DEFAULT 'USD',
         created_at      TEXT NOT NULL,
         updated_at      TEXT NOT NULL
       )
@@ -143,6 +145,7 @@ export function runMigrations(db: DatabaseConnection): void {
         subcategory TEXT,
         amount      REAL NOT NULL,
         frequency   TEXT NOT NULL,
+        currency    TEXT NOT NULL DEFAULT 'USD',
         service_id  TEXT REFERENCES services(id) ON DELETE SET NULL,
         created_at  TEXT NOT NULL,
         updated_at  TEXT NOT NULL
@@ -315,6 +318,27 @@ function runDataMigrations(db: DatabaseConnection): void {
 
   if (!scenarioColumns.includes('scope_type')) {
     db.prepare("ALTER TABLE scenarios ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'cohorts'").run();
+  }
+
+  // Migration 3: Add currency to cost_items if it doesn't exist
+  const costItemColumns = (db.prepare("PRAGMA table_info(cost_items)").all() as any[])
+    .map(c => c.name);
+  if (!costItemColumns.includes('currency')) {
+    db.prepare("ALTER TABLE cost_items ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'").run();
+  }
+
+  // Migration 4: Add currency to providers if it doesn't exist
+  const providerColumns = (db.prepare("PRAGMA table_info(providers)").all() as any[])
+    .map(c => c.name);
+  if (!providerColumns.includes('currency')) {
+    db.prepare("ALTER TABLE providers ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'").run();
+  }
+
+  // Migration 5: Add fixed_cost_currency to services if it doesn't exist
+  const serviceColumns = (db.prepare("PRAGMA table_info(services)").all() as any[])
+    .map(c => c.name);
+  if (!serviceColumns.includes('fixed_cost_currency')) {
+    db.prepare("ALTER TABLE services ADD COLUMN fixed_cost_currency TEXT NOT NULL DEFAULT 'USD'").run();
   }
 
   // Migration 2: Migrate old cohort_config_id → scenario_cohorts junction

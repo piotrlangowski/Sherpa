@@ -143,7 +143,7 @@ export const scenariosRepository = {
     // Load services in scenario
     const serviceRows = db.prepare(`
       SELECT s.id, s.name, s.status, s.provider_id, s.avg_input_tokens, s.avg_output_tokens,
-             s.avg_requests_per_user_month, s.fixed_cost_per_month, ss.rollout_month
+             s.avg_requests_per_user_month, s.fixed_cost_per_month, s.fixed_cost_currency, ss.rollout_month
       FROM services s
       JOIN scenario_services ss ON s.id = ss.service_id
       WHERE ss.scenario_id = ?
@@ -170,7 +170,7 @@ export const scenariosRepository = {
 
     // Load cost items in scenario
     const costRows = db.prepare(`
-      SELECT c.id, c.name, c.category, c.subcategory, c.amount, c.frequency, c.service_id, c.created_at, c.updated_at
+      SELECT c.id, c.name, c.category, c.subcategory, c.amount, c.frequency, c.currency, c.service_id, c.created_at, c.updated_at
       FROM cost_items c
       JOIN scenario_costs sc ON c.id = sc.cost_item_id
       WHERE sc.scenario_id = ?
@@ -414,6 +414,10 @@ export const scenariosRepository = {
     if (scenarioIds.length === 0) return;
     const placeholders = scenarioIds.map(() => '?').join(',');
     db.prepare(`DELETE FROM scenario_results WHERE scenario_id IN (${placeholders})`).run(...scenarioIds);
+  },
+  
+  invalidateAllResults(): void {
+    db.prepare("DELETE FROM scenario_results").run();
   },
 
   findScenarioIdsByServiceId(serviceId: string): string[] {

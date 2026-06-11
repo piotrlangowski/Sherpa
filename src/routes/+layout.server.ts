@@ -10,7 +10,9 @@ export const load: LayoutServerLoad = async () => {
       companyName: settings.company_name,
       currency: settings.currency,
       defaultDiscountRate: settings.default_discount_rate,
-      setupCompleted: settings.setup_completed
+      setupCompleted: settings.setup_completed,
+      exchangeRates: settings.exchange_rates,
+      ratesAsOf: settings.exchange_rates_as_of
     }
   };
 };

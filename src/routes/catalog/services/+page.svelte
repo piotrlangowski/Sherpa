@@ -269,7 +269,7 @@
                 <div class="flex items-center justify-between pt-1 border-t border-border/40">
                   <span class="text-xs text-muted-foreground/75">Fixed Expense</span>
                   <span class="text-xs font-bold text-foreground">
-                    {formatCurrency(service.fixed_cost_per_month, 'USD', 2)}/mo
+                    {formatCurrency(service.fixed_cost_per_month, service.fixed_cost_currency || 'USD', 2)}/mo
                   </span>
                 </div>
               {/if}
@@ -338,7 +338,7 @@
                 </TableCell>
                 <TableCell class="text-right font-semibold text-foreground font-mono">
                   {#if service.fixed_cost_per_month !== null && service.fixed_cost_per_month !== undefined}
-                    {formatCurrency(service.fixed_cost_per_month, 'USD', 2)}/mo
+                    {formatCurrency(service.fixed_cost_per_month, service.fixed_cost_currency || 'USD', 2)}/mo
                   {:else}
                     —
                   {/if}

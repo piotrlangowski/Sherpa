@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { formatCurrency } from '$lib/utils/format';
+  import type { Currency } from '$lib/shared/types';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -31,6 +32,7 @@
   let avgOutputTokens = $state(service.avg_output_tokens || 0);
   let avgRequests = $state(service.avg_requests_per_user_month || 0);
   let fixedCost = $state(service.fixed_cost_per_month || null);
+  let fixedCostCurrency = $state<Currency>(service.fixed_cost_currency || 'USD');
   let isSaving = $state(false);
 
   // Find active provider and calculate cost estimations
@@ -150,13 +152,13 @@
                 <div>
                   <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Cost per request</span>
                   <span class="text-sm font-bold text-foreground mt-0.5 block">
-                    {formatCurrency(costPerRequest, 'USD', 4)}
+                    {formatCurrency(costPerRequest, activeProvider?.currency || 'USD', 4)}
                   </span>
                 </div>
                 <div>
                   <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Monthly per-user cost</span>
                   <span class="text-sm font-bold text-primary mt-0.5 block">
-                    {formatCurrency(estMonthlyCostPerUser, 'USD', 2)}/user
+                    {formatCurrency(estMonthlyCostPerUser, activeProvider?.currency || 'USD', 2)}/user
                   </span>
                 </div>
               </div>
@@ -165,9 +167,22 @@
         {/if}
 
         <!-- Fixed cost override -->
-        <div class="space-y-1.5">
-          <Label for="fixedCost">Fixed Cost Override ($ / month)</Label>
-          <Input id="fixedCost" name="fixedCost" type="number" step="0.01" min="0" placeholder="e.g. flat model hosting fee" bind:value={fixedCost} class="max-w-xs bg-background/50 text-right" />
+        <div class="space-y-1.5 max-w-md">
+          <Label for="fixedCost">Fixed Cost Override</Label>
+          <div class="grid grid-cols-3 gap-3">
+            <select
+              id="fixedCostCurrency"
+              name="fixedCostCurrency"
+              bind:value={fixedCostCurrency}
+              class="col-span-1 bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            >
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="PLN">PLN (zł)</option>
+              <option value="GBP">GBP (£)</option>
+            </select>
+            <Input id="fixedCost" name="fixedCost" type="number" step="0.01" min="0" placeholder="Flat cost" bind:value={fixedCost} class="col-span-2 bg-background/50 text-right" />
+          </div>
           <p class="text-xs text-muted-foreground">
             Optional. Use this if you pay a flat monthly fee for this service rather than per token.
           </p>

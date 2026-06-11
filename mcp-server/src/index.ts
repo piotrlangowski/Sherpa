@@ -15,6 +15,11 @@ import {
   buildCohortModel,
   applyScopeOverrides
 } from "./shared/financial-math.js";
+import {
+  convertAmount,
+  normalizeScenarioCurrency,
+  FALLBACK_EXCHANGE_RATES
+} from "./shared/currency.js";
 import type {
   Scenario,
   Provider,
@@ -22,7 +27,9 @@ import type {
   CohortConfig,
   ScopeOverride,
   CostItem,
-  CalculationResult
+  CalculationResult,
+  Currency,
+  ExchangeRates
 } from "./shared/types.js";
 
 const manifestPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../manifest.json');
@@ -42,10 +49,36 @@ const server = new McpServer({
   }
 });
 
+interface CurrencyContext {
+  currency: Currency;
+  exchangeRates: ExchangeRates;
+}
+
+// Helper: Load currency and exchange rates from settings
+function loadCurrencyContext(): CurrencyContext {
+  try {
+    const rows = db.prepare("SELECT key, value FROM settings").all() as { key: string; value: string }[];
+    const settings: Record<string, string> = {};
+    for (const row of rows) {
+      settings[row.key] = row.value;
+    }
+    const currency = (settings['currency'] as Currency) || 'USD';
+    let exchangeRates = FALLBACK_EXCHANGE_RATES;
+    if (settings['exchange_rates']) {
+      try {
+        exchangeRates = JSON.parse(settings['exchange_rates']);
+      } catch {}
+    }
+    return { currency, exchangeRates };
+  } catch {
+    return { currency: 'USD', exchangeRates: FALLBACK_EXCHANGE_RATES };
+  }
+}
+
 // Helper: Query all providers from database
 function getProviders(): Provider[] {
   return db.prepare(`
-    SELECT id, name, model_name, input_price, output_price, is_predefined, updated_at
+    SELECT id, name, model_name, input_price, output_price, is_predefined, currency, updated_at
     FROM providers
   `).all() as any[];
 }
@@ -105,7 +138,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
   s.services = db.prepare(`
     SELECT s.id, s.name, s.description, s.status, s.provider_id,
            s.avg_input_tokens, s.avg_output_tokens, s.avg_requests_per_user_month,
-           s.fixed_cost_per_month, ss.rollout_month
+           s.fixed_cost_per_month, s.fixed_cost_currency, ss.rollout_month
     FROM services s
     JOIN scenario_services ss ON s.id = ss.service_id
     WHERE ss.scenario_id = ?
@@ -114,7 +147,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
 
   // Load cost items
   s.costs = db.prepare(`
-    SELECT c.id, c.name, c.category, c.subcategory, c.amount, c.frequency, c.service_id
+    SELECT c.id, c.name, c.category, c.subcategory, c.amount, c.frequency, c.currency, c.service_id
     FROM cost_items c
     JOIN scenario_costs sc ON c.id = sc.cost_item_id
     WHERE sc.scenario_id = ?
@@ -153,21 +186,29 @@ server.tool(
 
 server.tool(
   "update_settings",
-  "Modify company parameters like company_name, currency, default_discount_rate, etc.",
+  "Modify company parameters like company_name, currency, default_discount_rate, exchange_rates, etc.",
   {
     company_name: z.string().optional(),
     currency: z.enum(["USD", "EUR", "PLN", "GBP"]).optional(),
     default_discount_rate: z.number().min(0).max(1).optional(),
-    projection_horizon_months: z.number().min(12).max(120).optional()
+    projection_horizon_months: z.number().min(12).max(120).optional(),
+    exchange_rates: z.record(z.enum(["USD", "EUR", "PLN", "GBP"]), z.number()).optional(),
+    exchange_rates_as_of: z.string().optional()
   },
   async (args) => {
     try {
       db.transaction(() => {
+        let shouldInvalidateCache = false;
+
         if (args.company_name !== undefined) {
           db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('company_name', ?)")
             .run(args.company_name);
         }
         if (args.currency !== undefined) {
+          const currentCurrency = db.prepare("SELECT value FROM settings WHERE key = 'currency'").get() as any;
+          if (!currentCurrency || currentCurrency.value !== args.currency) {
+            shouldInvalidateCache = true;
+          }
           db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('currency', ?)")
             .run(args.currency);
         }
@@ -178,6 +219,19 @@ server.tool(
         if (args.projection_horizon_months !== undefined) {
           db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('projection_horizon_months', ?)")
             .run(args.projection_horizon_months.toString());
+        }
+        if (args.exchange_rates !== undefined) {
+          shouldInvalidateCache = true;
+          db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('exchange_rates', ?)")
+            .run(JSON.stringify(args.exchange_rates));
+        }
+        if (args.exchange_rates_as_of !== undefined) {
+          db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('exchange_rates_as_of', ?)")
+            .run(args.exchange_rates_as_of);
+        }
+
+        if (shouldInvalidateCache) {
+          db.prepare("DELETE FROM scenario_results").run();
         }
       })();
       return {
@@ -294,21 +348,22 @@ server.tool(
 
 server.tool(
   "create_provider",
-  "Register a new custom AI provider catalog item with name, model_name, and token pricing.",
+  "Register a new custom AI provider catalog item with name, model_name, token pricing, and currency.",
   {
     name: z.string(),
     model_name: z.string(),
     input_price: z.number().nonnegative(),
-    output_price: z.number().nonnegative()
+    output_price: z.number().nonnegative(),
+    currency: z.enum(["USD", "EUR", "PLN", "GBP"]).default("USD")
   },
   async (args) => {
     try {
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
       db.prepare(`
-        INSERT INTO providers (id, name, model_name, input_price, output_price, is_predefined, updated_at)
-        VALUES (?, ?, ?, ?, ?, 0, ?)
-      `).run(id, args.name, args.model_name, args.input_price, args.output_price, now);
+        INSERT INTO providers (id, name, model_name, input_price, output_price, is_predefined, currency, updated_at)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+      `).run(id, args.name, args.model_name, args.input_price, args.output_price, args.currency, now);
       return { content: [{ type: "text", text: `Provider '${args.name}' (${args.model_name}) created with ID: ${id}` }] };
     } catch (err: any) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
@@ -318,13 +373,14 @@ server.tool(
 
 server.tool(
   "update_provider",
-  "Modify the token pricing or name of an existing AI provider by ID.",
+  "Modify the token pricing, currency, or name of an existing AI provider by ID.",
   {
     id: z.string(),
     name: z.string().optional(),
     model_name: z.string().optional(),
     input_price: z.number().nonnegative().optional(),
-    output_price: z.number().nonnegative().optional()
+    output_price: z.number().nonnegative().optional(),
+    currency: z.enum(["USD", "EUR", "PLN", "GBP"]).optional()
   },
   async (args) => {
     try {
@@ -336,12 +392,13 @@ server.tool(
       const model_name = args.model_name !== undefined ? args.model_name : current.model_name;
       const input_price = args.input_price !== undefined ? args.input_price : current.input_price;
       const output_price = args.output_price !== undefined ? args.output_price : current.output_price;
+      const currency = args.currency !== undefined ? args.currency : current.currency;
       const now = new Date().toISOString();
       db.prepare(`
         UPDATE providers
-        SET name = ?, model_name = ?, input_price = ?, output_price = ?, updated_at = ?
+        SET name = ?, model_name = ?, input_price = ?, output_price = ?, currency = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, model_name, input_price, output_price, now, args.id);
+      `).run(name, model_name, input_price, output_price, currency, now, args.id);
       return { content: [{ type: "text", text: `Provider '${name}' updated successfully.` }] };
     } catch (err: any) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
@@ -618,6 +675,7 @@ server.tool(
     subcategory: z.string().optional(),
     amount: z.number().nonnegative(),
     frequency: z.enum(["one_time", "monthly", "yearly"]),
+    currency: z.enum(["USD", "EUR", "PLN", "GBP"]).default("USD"),
     service_id: z.string().nullable().optional()
   },
   async (args) => {
@@ -625,9 +683,9 @@ server.tool(
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
       db.prepare(`
-        INSERT INTO cost_items (id, name, category, subcategory, amount, frequency, service_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, args.name, args.category, args.subcategory || null, args.amount, args.frequency, args.service_id || null, now, now);
+        INSERT INTO cost_items (id, name, category, subcategory, amount, frequency, currency, service_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, args.name, args.category, args.subcategory || null, args.amount, args.frequency, args.currency, args.service_id || null, now, now);
       return { content: [{ type: "text", text: `Cost item '${args.name}' created with ID: ${id}` }] };
     } catch (err: any) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
@@ -645,6 +703,7 @@ server.tool(
     subcategory: z.string().optional(),
     amount: z.number().nonnegative().optional(),
     frequency: z.enum(["one_time", "monthly", "yearly"]).optional(),
+    currency: z.enum(["USD", "EUR", "PLN", "GBP"]).optional(),
     service_id: z.string().nullable().optional()
   },
   async (args) => {
@@ -658,14 +717,15 @@ server.tool(
       const subcategory = args.subcategory !== undefined ? args.subcategory : current.subcategory;
       const amount = args.amount !== undefined ? args.amount : current.amount;
       const frequency = args.frequency !== undefined ? args.frequency : current.frequency;
+      const currency = args.currency !== undefined ? args.currency : current.currency;
       const service_id = args.service_id !== undefined ? args.service_id : current.service_id;
       const now = new Date().toISOString();
 
       db.prepare(`
         UPDATE cost_items
-        SET name = ?, category = ?, subcategory = ?, amount = ?, frequency = ?, service_id = ?, updated_at = ?
+        SET name = ?, category = ?, subcategory = ?, amount = ?, frequency = ?, currency = ?, service_id = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, category, subcategory, amount, frequency, service_id, now, args.id);
+      `).run(name, category, subcategory, amount, frequency, currency, service_id, now, args.id);
       return { content: [{ type: "text", text: `Cost item '${name}' updated successfully.` }] };
     } catch (err: any) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
@@ -701,7 +761,7 @@ server.tool(
       const services = db.prepare(`
         SELECT s.id, s.name, s.description, s.status, s.provider_id, 
                s.avg_input_tokens, s.avg_output_tokens, s.avg_requests_per_user_month,
-               s.fixed_cost_per_month, s.created_at, s.updated_at,
+               s.fixed_cost_per_month, s.fixed_cost_currency, s.created_at, s.updated_at,
                p.name as provider_name, p.model_name as provider_model_name
         FROM services s
         LEFT JOIN providers p ON s.provider_id = p.id
@@ -731,7 +791,8 @@ server.tool(
     avg_input_tokens: z.number().default(0),
     avg_output_tokens: z.number().default(0),
     avg_requests_per_user_month: z.number().default(0),
-    fixed_cost_per_month: z.number().nullable().optional()
+    fixed_cost_per_month: z.number().nullable().optional(),
+    fixed_cost_currency: z.enum(["USD", "EUR", "PLN", "GBP"]).default("USD")
   },
   async (args) => {
     try {
@@ -739,8 +800,8 @@ server.tool(
       const now = new Date().toISOString();
 
       db.prepare(`
-        INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, fixed_cost_currency, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         args.name,
@@ -751,6 +812,7 @@ server.tool(
         args.avg_output_tokens,
         args.avg_requests_per_user_month,
         args.fixed_cost_per_month ?? null,
+        args.fixed_cost_currency,
         now,
         now
       );
@@ -779,7 +841,8 @@ server.tool(
     avg_input_tokens: z.number().optional(),
     avg_output_tokens: z.number().optional(),
     avg_requests_per_user_month: z.number().optional(),
-    fixed_cost_per_month: z.number().nullable().optional()
+    fixed_cost_per_month: z.number().nullable().optional(),
+    fixed_cost_currency: z.enum(["USD", "EUR", "PLN", "GBP"]).optional()
   },
   async (args) => {
     try {
@@ -796,13 +859,14 @@ server.tool(
       const output = args.avg_output_tokens !== undefined ? args.avg_output_tokens : current.avg_output_tokens;
       const reqs = args.avg_requests_per_user_month !== undefined ? args.avg_requests_per_user_month : current.avg_requests_per_user_month;
       const fixed = args.fixed_cost_per_month !== undefined ? args.fixed_cost_per_month : current.fixed_cost_per_month;
+      const fixedCurrency = args.fixed_cost_currency !== undefined ? args.fixed_cost_currency : current.fixed_cost_currency;
       const now = new Date().toISOString();
 
       db.prepare(`
         UPDATE services
-        SET name = ?, description = ?, status = ?, provider_id = ?, avg_input_tokens = ?, avg_output_tokens = ?, avg_requests_per_user_month = ?, fixed_cost_per_month = ?, updated_at = ?
+        SET name = ?, description = ?, status = ?, provider_id = ?, avg_input_tokens = ?, avg_output_tokens = ?, avg_requests_per_user_month = ?, fixed_cost_per_month = ?, fixed_cost_currency = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, description, status, providerId, input, output, reqs, fixed, now, args.id);
+      `).run(name, description, status, providerId, input, output, reqs, fixed, fixedCurrency, now, args.id);
 
       return {
         content: [{ type: "text", text: `Service '${name}' updated successfully.` }]
@@ -1210,7 +1274,14 @@ server.tool(
       // Run and cache calculations
       const fullScenario = getFullScenario(scenarioId)!;
       const providers = getProviders();
-      const results = calculateScenario(fullScenario, providers);
+      const { currency, exchangeRates } = loadCurrencyContext();
+      const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+        fullScenario,
+        providers,
+        currency,
+        exchangeRates
+      );
+      const results = calculateScenario(normalizedScenario, normalizedProviders);
       const resultsId = crypto.randomUUID();
 
       db.prepare(`
@@ -1297,7 +1368,14 @@ server.tool(
       // Re-calculate projections after modification
       const fullScenario = getFullScenario(args.id)!;
       const providers = getProviders();
-      const results = calculateScenario(fullScenario, providers);
+      const { currency, exchangeRates } = loadCurrencyContext();
+      const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+        fullScenario,
+        providers,
+        currency,
+        exchangeRates
+      );
+      const results = calculateScenario(normalizedScenario, normalizedProviders);
       const now = new Date().toISOString();
 
       db.prepare(`
@@ -1357,7 +1435,14 @@ server.tool(
       }
 
       const providers = getProviders();
-      const results = calculateScenario(scenario, providers);
+      const { currency, exchangeRates } = loadCurrencyContext();
+      const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+        scenario,
+        providers,
+        currency,
+        exchangeRates
+      );
+      const results = calculateScenario(normalizedScenario, normalizedProviders);
 
       // Save results
       const now = new Date().toISOString();
@@ -1381,7 +1466,7 @@ server.tool(
       return {
         content: [{
           type: "text",
-          text: `ROI Results calculated successfully:\n- NPV: $${results.npv.toLocaleString()}\n- IRR (Annualized): ${results.irrAnnual !== null ? (results.irrAnnual * 100).toFixed(2) + '%' : 'N/A'}\n- Payback Period: ${results.paybackMonths !== null ? results.paybackMonths + ' months' : 'Never'}\n- TCO: $${results.tco.toLocaleString()}\n- ROI%: ${(results.roiPercent * 100).toFixed(1)}%`
+          text: `ROI Results calculated successfully:\n- NPV: ${results.npv.toLocaleString()} ${currency}\n- IRR (Annualized): ${results.irrAnnual !== null ? (results.irrAnnual * 100).toFixed(2) + '%' : 'N/A'}\n- Payback Period: ${results.paybackMonths !== null ? results.paybackMonths + ' months' : 'Never'}\n- TCO: ${results.tco.toLocaleString()} ${currency}\n- ROI%: ${(results.roiPercent * 100).toFixed(1)}%`
         }]
       };
     } catch (err: any) {
@@ -1408,15 +1493,22 @@ server.tool(
       }
 
       const providers = getProviders();
-      const sensitivity = runSensitivityAnalysis(scenario, providers, args.variation_percent);
+      const { currency, exchangeRates } = loadCurrencyContext();
+      const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+        scenario,
+        providers,
+        currency,
+        exchangeRates
+      );
+      const sensitivity = runSensitivityAnalysis(normalizedScenario, normalizedProviders, args.variation_percent);
 
       let md = `### Sensitivity Analysis (Tornado Chart Data) for ${scenario.name}\n`;
-      md += `*Base NPV: $${sensitivity.baseNpv.toLocaleString()}*\n\n`;
+      md += `*Base NPV: ${sensitivity.baseNpv.toLocaleString()} ${currency}*\n\n`;
       md += `| Parameter | Variation | Low NPV | High NPV | Impact Range |\n`;
       md += `|---|---|---|---|---|\n`;
 
       for (const res of sensitivity.results) {
-        md += `| ${res.parameter} | ±${args.variation_percent * 100}% | $${res.lowNpv.toLocaleString()} | $${res.highNpv.toLocaleString()} | $${res.impactRange.toLocaleString()} |\n`;
+        md += `| ${res.parameter} | ±${args.variation_percent * 100}% | ${res.lowNpv.toLocaleString()} ${currency} | ${res.highNpv.toLocaleString()} ${currency} | ${res.impactRange.toLocaleString()} ${currency} |\n`;
       }
 
       return {
@@ -1444,6 +1536,7 @@ server.tool(
       }
 
       const providers = getProviders();
+      const { currency, exchangeRates } = loadCurrencyContext();
       const scenarios: { scenario: Scenario; results: CalculationResult }[] = [];
 
       for (const id of args.ids) {
@@ -1451,7 +1544,13 @@ server.tool(
         if (!scenario) {
           return { content: [{ type: "text", text: `Scenario '${id}' not found.` }], isError: true };
         }
-        const results = calculateScenario(scenario, providers);
+        const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+          scenario,
+          providers,
+          currency,
+          exchangeRates
+        );
+        const results = calculateScenario(normalizedScenario, normalizedProviders);
         scenarios.push({ scenario, results });
       }
 
@@ -1463,7 +1562,7 @@ server.tool(
       md += `|---|---|---|---|---|---|\n`;
 
       for (const s of scenarios) {
-        md += `| ${s.scenario.name} | **$${s.results.npv.toLocaleString()}** | ${s.results.irrAnnual !== null ? (s.results.irrAnnual * 100).toFixed(1) + '%' : 'N/A'} | ${s.results.paybackMonths !== null ? s.results.paybackMonths + ' mo' : 'Never'} | $${s.results.tco.toLocaleString()} | ${(s.results.roiPercent * 100).toFixed(1)}% |\n`;
+        md += `| ${s.scenario.name} | **${s.results.npv.toLocaleString()} ${currency}** | ${s.results.irrAnnual !== null ? (s.results.irrAnnual * 100).toFixed(1) + '%' : 'N/A'} | ${s.results.paybackMonths !== null ? s.results.paybackMonths + ' mo' : 'Never'} | ${s.results.tco.toLocaleString()} ${currency} | ${(s.results.roiPercent * 100).toFixed(1)}% |\n`;
       }
 
       md += `\n#### Opportunity Cost Breakdown:\n`;
@@ -1471,7 +1570,7 @@ server.tool(
       for (let i = 1; i < scenarios.length; i++) {
         const comparison = scenarios[i];
         const deltaNpv = best.results.npv - comparison.results.npv;
-        md += `- Choosing **${comparison.scenario.name}** instead of **${best.scenario.name}** carries an NPV opportunity cost of **$${deltaNpv.toLocaleString()}**.\n`;
+        md += `- Choosing **${comparison.scenario.name}** instead of **${best.scenario.name}** carries an NPV opportunity cost of **${deltaNpv.toLocaleString()} ${currency}**.\n`;
       }
 
       return {
@@ -1584,7 +1683,14 @@ server.tool(
       // Run and cache ROI results
       const fullScenario = getFullScenario(scenarioId)!;
       const providers = getProviders();
-      const results = calculateScenario(fullScenario, providers);
+      const { currency, exchangeRates } = loadCurrencyContext();
+      const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+        fullScenario,
+        providers,
+        currency,
+        exchangeRates
+      );
+      const results = calculateScenario(normalizedScenario, normalizedProviders);
       const resultsId = crypto.randomUUID();
 
       db.prepare(`
@@ -1609,7 +1715,7 @@ server.tool(
       responseText += `- Starting Users: **${currentUsers}**\n`;
       responseText += `- Monthly Acquisition: **${monthlyAcquisition}**\n`;
       responseText += `- Churn Rate: **${(monthlyChurnRate * 100).toFixed(1)}%**\n`;
-      responseText += `- Base ARPU: **$${baseArpu}/mo**\n`;
+      responseText += `- Base ARPU: **${baseArpu} ${currency}/mo**\n`;
       responseText += `- AI Adoption: **${(aiAdoptionRate * 100).toFixed(1)}%**\n`;
       responseText += `- WACC/Discount Rate: **${(discountRate * 100).toFixed(1)}%**\n`;
       responseText += `- Horizon: **${projectionMonths} months**\n\n`;
@@ -1626,10 +1732,10 @@ server.tool(
       }
 
       responseText += `#### Simulated ROI Summary:\n`;
-      responseText += `- **NPV**: $${results.npv.toLocaleString()}\n`;
+      responseText += `- **NPV**: ${results.npv.toLocaleString()} ${currency}\n`;
       responseText += `- **IRR**: ${results.irrAnnual !== null ? (results.irrAnnual * 100).toFixed(1) + '%' : 'N/A'}\n`;
       responseText += `- **Payback period**: ${results.paybackMonths !== null ? results.paybackMonths + ' months' : 'Never'}\n`;
-      responseText += `- **TCO**: $${results.tco.toLocaleString()}\n`;
+      responseText += `- **TCO**: ${results.tco.toLocaleString()} ${currency}\n`;
       responseText += `\n*Scenario ID: \`${scenarioId}\`. View this scenario inside the SvelteKit dashboard.*`;
 
       return {

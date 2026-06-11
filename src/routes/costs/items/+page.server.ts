@@ -23,6 +23,8 @@ export const actions: Actions = {
     const frequency = formData.get('frequency') as any;
     const serviceId = formData.get('serviceId') as string;
 
+    const currency = formData.get('currency') as any || 'USD';
+
     if (!name || !category || !subcategory || !frequency) {
       return fail(400, { error: 'Required fields are missing' });
     }
@@ -38,6 +40,7 @@ export const actions: Actions = {
         subcategory,
         amount,
         frequency,
+        currency,
         service_id: serviceId || null
       };
 

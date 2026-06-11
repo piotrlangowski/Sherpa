@@ -3,11 +3,11 @@ import type { Currency } from '../types';
 // Provider price catalog lives in shared/ so the MCP server can seed it too
 export { PREDEFINED_PROVIDERS, PROVIDER_PRICES_AS_OF } from '../shared/provider-catalog';
 
-export const CURRENCIES: { value: Currency; label: string; symbol: string }[] = [
-  { value: 'USD', label: 'US Dollar', symbol: '$' },
-  { value: 'EUR', label: 'Euro', symbol: '€' },
-  { value: 'PLN', label: 'Polish Zloty', symbol: 'zł' },
-  { value: 'GBP', label: 'British Pound', symbol: '£' }
+export const CURRENCIES: { value: Currency; label: string; symbol: string; position: 'prefix' | 'suffix' }[] = [
+  { value: 'USD', label: 'US Dollar', symbol: '$', position: 'prefix' },
+  { value: 'EUR', label: 'Euro', symbol: '€', position: 'prefix' },
+  { value: 'PLN', label: 'Polish Zloty', symbol: 'zł', position: 'suffix' },
+  { value: 'GBP', label: 'British Pound', symbol: '£', position: 'prefix' }
 ];
 
 export const COST_SUBCATEGORIES = {

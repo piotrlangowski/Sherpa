@@ -29,6 +29,7 @@ export const actions: Actions = {
     const avgRequests = parseInt(formData.get('avgRequests') as string || '0', 10);
     const fixedCostStr = formData.get('fixedCost') as string;
     const fixedCost = fixedCostStr ? parseFloat(fixedCostStr) : null;
+    const fixedCostCurrency = formData.get('fixedCostCurrency') as any || 'USD';
 
     if (!name || !status) {
       return fail(400, { error: 'Name and Status are required fields' });
@@ -43,7 +44,8 @@ export const actions: Actions = {
         avg_input_tokens: avgInputTokens,
         avg_output_tokens: avgOutputTokens,
         avg_requests_per_user_month: avgRequests,
-        fixed_cost_per_month: fixedCost
+        fixed_cost_per_month: fixedCost,
+        fixed_cost_currency: fixedCostCurrency
       });
     } catch (err: any) {
       return fail(500, { error: err.message });

@@ -152,7 +152,8 @@ export const POST: RequestHandler = async ({ request }) => {
                   model_name: s.provider.model_name,
                   input_price: s.provider.input_price,
                   output_price: s.provider.output_price,
-                  is_predefined: s.provider.is_predefined ?? false
+                  is_predefined: s.provider.is_predefined ?? false,
+                  currency: 'USD'
                 });
                 providerIdMap.set(key, created.id);
               }
@@ -410,6 +411,7 @@ export const POST: RequestHandler = async ({ request }) => {
               subcategory: c.subcategory || '',
               amount: c.amount,
               frequency: c.frequency,
+              currency: 'USD',
               service_id: serviceId
             });
             cId = createdC.id;

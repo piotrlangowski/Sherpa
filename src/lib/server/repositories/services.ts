@@ -1,5 +1,5 @@
 import db from '../db';
-import type { Service, ServiceStatus, ServiceDependency, DependencyType } from '../../types';
+import type { Service, ServiceStatus, ServiceDependency, DependencyType, Currency } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
 import { scenariosRepository } from './scenarios';
 
@@ -8,7 +8,7 @@ export const servicesRepository = {
     const rows = db.prepare(`
       SELECT s.id, s.name, s.description, s.status, s.provider_id, 
              s.avg_input_tokens, s.avg_output_tokens, s.avg_requests_per_user_month,
-             s.fixed_cost_per_month, s.created_at, s.updated_at,
+             s.fixed_cost_per_month, s.fixed_cost_currency, s.created_at, s.updated_at,
              p.name as provider_name, p.model_name as provider_model_name
       FROM services s
       LEFT JOIN providers p ON s.provider_id = p.id
@@ -25,6 +25,7 @@ export const servicesRepository = {
       avg_output_tokens: r.avg_output_tokens,
       avg_requests_per_user_month: r.avg_requests_per_user_month,
       fixed_cost_per_month: r.fixed_cost_per_month,
+      fixed_cost_currency: (r.fixed_cost_currency as Currency) || 'USD',
       created_at: r.created_at,
       updated_at: r.updated_at,
       provider: r.provider_id ? {
@@ -34,6 +35,7 @@ export const servicesRepository = {
         input_price: 0,
         output_price: 0,
         is_predefined: false,
+        currency: 'USD',
         updated_at: ''
       } : null
     }));
@@ -43,9 +45,10 @@ export const servicesRepository = {
     const r = db.prepare(`
       SELECT s.id, s.name, s.description, s.status, s.provider_id, 
              s.avg_input_tokens, s.avg_output_tokens, s.avg_requests_per_user_month,
-             s.fixed_cost_per_month, s.created_at, s.updated_at,
+             s.fixed_cost_per_month, s.fixed_cost_currency, s.created_at, s.updated_at,
              p.name as provider_name, p.model_name as provider_model_name,
-             p.input_price as provider_input_price, p.output_price as provider_output_price
+             p.input_price as provider_input_price, p.output_price as provider_output_price,
+             p.currency as provider_currency
       FROM services s
       LEFT JOIN providers p ON s.provider_id = p.id
       WHERE s.id = ?
@@ -82,6 +85,7 @@ export const servicesRepository = {
       avg_output_tokens: r.avg_output_tokens,
       avg_requests_per_user_month: r.avg_requests_per_user_month,
       fixed_cost_per_month: r.fixed_cost_per_month,
+      fixed_cost_currency: (r.fixed_cost_currency as Currency) || 'USD',
       created_at: r.created_at,
       updated_at: r.updated_at,
       provider: r.provider_id ? {
@@ -91,6 +95,7 @@ export const servicesRepository = {
         input_price: r.provider_input_price,
         output_price: r.provider_output_price,
         is_predefined: false,
+        currency: (r.provider_currency as Currency) || 'USD',
         updated_at: ''
       } : null,
       dependencies
@@ -100,10 +105,11 @@ export const servicesRepository = {
   create(data: Omit<Service, 'id' | 'created_at' | 'updated_at'>): Service {
     const id = uuidv4();
     const now = new Date().toISOString();
+    const fixed_cost_currency = data.fixed_cost_currency || 'USD';
     
     db.prepare(`
-      INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, fixed_cost_currency, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.name,
@@ -114,6 +120,7 @@ export const servicesRepository = {
       data.avg_output_tokens,
       data.avg_requests_per_user_month,
       data.fixed_cost_per_month === undefined ? null : data.fixed_cost_per_month,
+      fixed_cost_currency,
       now,
       now
     );
@@ -121,6 +128,7 @@ export const servicesRepository = {
     return {
       id,
       ...data,
+      fixed_cost_currency,
       created_at: now,
       updated_at: now
     };
@@ -138,13 +146,14 @@ export const servicesRepository = {
     const avg_output_tokens = data.avg_output_tokens !== undefined ? data.avg_output_tokens : current.avg_output_tokens;
     const avg_requests_per_user_month = data.avg_requests_per_user_month !== undefined ? data.avg_requests_per_user_month : current.avg_requests_per_user_month;
     const fixed_cost_per_month = data.fixed_cost_per_month !== undefined ? data.fixed_cost_per_month : current.fixed_cost_per_month;
+    const fixed_cost_currency = data.fixed_cost_currency !== undefined ? data.fixed_cost_currency : current.fixed_cost_currency;
     const now = new Date().toISOString();
     
     db.prepare(`
       UPDATE services
       SET name = ?, description = ?, status = ?, provider_id = ?, 
           avg_input_tokens = ?, avg_output_tokens = ?, avg_requests_per_user_month = ?, 
-          fixed_cost_per_month = ?, updated_at = ?
+          fixed_cost_per_month = ?, fixed_cost_currency = ?, updated_at = ?
       WHERE id = ?
     `).run(
       name,
@@ -155,6 +164,7 @@ export const servicesRepository = {
       avg_output_tokens,
       avg_requests_per_user_month,
       fixed_cost_per_month,
+      fixed_cost_currency,
       now,
       id
     );

@@ -4,6 +4,7 @@
  */
 
 export type Currency = 'USD' | 'EUR' | 'PLN' | 'GBP';
+export type ExchangeRates = Record<Currency, number>;
 export type ServiceStatus = 'existing' | 'planned';
 export type DependencyType = 'requires' | 'enhanced_by' | 'replaces';
 export type CostCategory = 'capex' | 'opex';
@@ -29,6 +30,8 @@ export interface Settings {
   default_discount_rate: number;
   setup_completed: boolean;
   projection_horizon_months: number;
+  exchange_rates: ExchangeRates;
+  exchange_rates_as_of: string;
 }
 
 export interface Provider {
@@ -38,6 +41,7 @@ export interface Provider {
   input_price: number;
   output_price: number;
   is_predefined: boolean;
+  currency: Currency;
   updated_at: string;
 }
 
@@ -60,6 +64,7 @@ export interface Service {
   avg_output_tokens: number;
   avg_requests_per_user_month: number;
   fixed_cost_per_month?: number | null;
+  fixed_cost_currency?: Currency | null;
   created_at?: string;
   updated_at?: string;
   
@@ -112,6 +117,7 @@ export interface CostItem {
   subcategory?: string | null;
   amount: number;
   frequency: CostFrequency;
+  currency: Currency;
   service_id?: string | null;
   created_at?: string;
   updated_at?: string;

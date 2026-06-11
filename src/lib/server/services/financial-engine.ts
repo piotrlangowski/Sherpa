@@ -6,10 +6,12 @@ import {
   calculateTCO,
   calculateScenario as pureCalculateScenario,
   applyScopeOverrides
-} from '../../shared/financial-math';
+} from '../../shared/financial-math.js';
 import { scenariosRepository } from '../repositories/scenarios';
 import { providersRepository } from '../repositories/providers';
 import { cohortsRepository } from '../repositories/cohorts';
+import { settingsRepository } from '../repositories/settings';
+import { normalizeScenarioCurrency } from '../../shared/currency.js';
 import type { CalculationResult, MonthlyBreakdown } from '../../shared/types';
 
 export { calculateNPV, calculatePaybackPeriod, calculateIRR, calculateTCO };
@@ -39,7 +41,15 @@ export function calculateScenario(scenario: Scenario): CalculationResult {
     scope_cohorts: resolvedConfigs
   };
   
-  return pureCalculateScenario(runtimeScenario, allProviders);
+  const settings = settingsRepository.get();
+  const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+    runtimeScenario,
+    allProviders,
+    settings.currency,
+    settings.exchange_rates
+  );
+  
+  return pureCalculateScenario(normalizedScenario, normalizedProviders);
 }
 
 export function runAndSaveScenario(scenarioId: string): CalculationResult {

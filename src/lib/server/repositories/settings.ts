@@ -1,5 +1,7 @@
 import db from '../db';
 import type { Settings, Currency } from '../../types';
+import { FALLBACK_EXCHANGE_RATES, EXCHANGE_RATES_AS_OF } from '../../shared/currency.js';
+import { scenariosRepository } from './scenarios';
 
 export const settingsRepository = {
   get(): Settings {
@@ -9,23 +11,37 @@ export const settingsRepository = {
       settingsMap[r.key] = r.value;
     }
     
+    let exchangeRates = FALLBACK_EXCHANGE_RATES;
+    if (settingsMap['exchange_rates']) {
+      try {
+        exchangeRates = JSON.parse(settingsMap['exchange_rates']);
+      } catch (e) {
+        console.error('Failed to parse exchange_rates, using fallback', e);
+      }
+    }
+    
     return {
       company_name: settingsMap['company_name'] || 'Acme Analytics',
       currency: (settingsMap['currency'] as Currency) || 'USD',
       default_discount_rate: parseFloat(settingsMap['default_discount_rate'] || '0.10'),
       setup_completed: settingsMap['setup_completed'] === '1',
-      projection_horizon_months: parseInt(settingsMap['projection_horizon_months'] || '36', 10)
+      projection_horizon_months: parseInt(settingsMap['projection_horizon_months'] || '36', 10),
+      exchange_rates: exchangeRates,
+      exchange_rates_as_of: settingsMap['exchange_rates_as_of'] || EXCHANGE_RATES_AS_OF
     };
   },
 
   update(settings: Partial<Settings>): void {
     const updateStmt = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
+    let shouldInvalidateAllResults = false;
+    
     db.transaction(() => {
       if (settings.company_name !== undefined) {
         updateStmt.run('company_name', settings.company_name);
       }
       if (settings.currency !== undefined) {
         updateStmt.run('currency', settings.currency);
+        shouldInvalidateAllResults = true;
       }
       if (settings.default_discount_rate !== undefined) {
         updateStmt.run('default_discount_rate', settings.default_discount_rate.toString());
@@ -35,6 +51,17 @@ export const settingsRepository = {
       }
       if (settings.projection_horizon_months !== undefined) {
         updateStmt.run('projection_horizon_months', settings.projection_horizon_months.toString());
+      }
+      if (settings.exchange_rates !== undefined) {
+        updateStmt.run('exchange_rates', JSON.stringify(settings.exchange_rates));
+        shouldInvalidateAllResults = true;
+      }
+      if (settings.exchange_rates_as_of !== undefined) {
+        updateStmt.run('exchange_rates_as_of', settings.exchange_rates_as_of);
+      }
+      
+      if (shouldInvalidateAllResults) {
+        scenariosRepository.invalidateAllResults();
       }
     })();
   },

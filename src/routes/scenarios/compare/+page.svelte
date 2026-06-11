@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { mode } from 'mode-watcher';
-  import { formatCurrency, formatPercent, formatNumber, formatMonths } from '$lib/utils/format';
+  import { formatCurrency, formatPercent, formatNumber, formatMonths, getCurrencySymbol } from '$lib/utils/format';
+  import { appState } from '$lib/stores/app.svelte';
+  import { CURRENCIES } from '$lib/utils/constants';
   import Button from '$lib/components/ui/button/button.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
@@ -181,7 +183,7 @@
           params.forEach(p => {
             const formattedVal = activeTab === 'customers' 
               ? formatNumber(Math.round(p.value))
-              : formatCurrency(p.value, 'USD', 0);
+              : formatCurrency(p.value, appState.currency, 0);
               
             tooltipContent += `
               <div class="flex items-center justify-between gap-5 mt-1 font-medium">
@@ -218,7 +220,10 @@
           fontSize: 10,
           formatter: (value: number) => {
             if (activeTab === 'customers') return formatNumber(value);
-            return `$${formatNumber(Math.round(value / 1000))}k`;
+            const symbol = getCurrencySymbol(appState.currency);
+            const position = CURRENCIES.find(c => c.value === appState.currency)?.position || 'prefix';
+            const kVal = formatNumber(Math.round(value / 1000));
+            return position === 'prefix' ? `${symbol}${kVal}k` : `${kVal}k ${symbol}`;
           }
         },
         axisLine: { lineStyle: { color: lineColor } },
@@ -309,7 +314,7 @@
               <span class="text-sm font-bold text-foreground block">{s.name}</span>
               {#if s.results}
                 <span class="text-[10px] text-muted-foreground block mt-0.5">
-                  NPV: <strong class="text-emerald-400 font-mono font-bold">${formatNumber(Math.round(s.results.npv))}</strong> • Payback: <strong class="text-cyan-400 font-mono font-bold">{s.results.payback_months !== null ? s.results.payback_months + 'm' : 'N/A'}</strong>
+                  NPV: <strong class="text-emerald-400 font-mono font-bold">{formatCurrency(s.results.npv, appState.currency, 0)}</strong> • Payback: <strong class="text-cyan-400 font-mono font-bold">{s.results.payback_months !== null ? s.results.payback_months + 'm' : 'N/A'}</strong>
                 </span>
               {:else}
                 <span class="text-[10px] text-rose-400 font-medium italic block mt-0.5">No results (run calculations)</span>
@@ -398,7 +403,7 @@
                       
                       <!-- NPV -->
                       <td class="p-3 text-right font-mono font-bold {bestMetrics.maxNpvId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-400 font-extrabold' : ''}">
-                        {formatCurrency(res.npv, 'USD', 0)}
+                        {formatCurrency(res.npv, appState.currency, 0)}
                       </td>
                       
                       <!-- IRR -->
@@ -413,7 +418,7 @@
 
                       <!-- TCO -->
                       <td class="p-3 text-right font-mono font-bold {bestMetrics.minTcoId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-400 font-extrabold' : ''}">
-                        {formatCurrency(res.tco, 'USD', 0)}
+                        {formatCurrency(res.tco, appState.currency, 0)}
                       </td>
 
                       <!-- ROI -->
@@ -444,7 +449,7 @@
               {#if Math.abs(rA.npv - rB.npv) < 0.1}
                 <div class="flex items-center space-x-2 text-muted-foreground p-3 rounded-lg bg-black/10 border border-border/40">
                   <Info class="h-5 w-5 text-primary shrink-0" />
-                  <p>Both scenarios generate identical Net Present Value ({formatCurrency(rA.npv, 'USD', 0)}).</p>
+                  <p>Both scenarios generate identical Net Present Value ({formatCurrency(rA.npv, appState.currency, 0)}).</p>
                 </div>
               {:else}
                 {@const betterSc = rA.npv > rB.npv ? sA : sB}
@@ -460,7 +465,7 @@
                     <div>
                       <h4 class="font-bold text-foreground">Recommended Selection: {betterSc.name}</h4>
                       <p class="text-muted-foreground mt-1">
-                        Choosing <strong class="text-foreground">{betterSc.name}</strong> instead of <strong class="text-foreground">{worseSc.name}</strong> delivers an additional <strong class="text-emerald-400 font-mono font-extrabold">{formatCurrency(deltaNpv, 'USD', 0)}</strong> in discounted net value (NPV) to the organization.
+                        Choosing <strong class="text-foreground">{betterSc.name}</strong> instead of <strong class="text-foreground">{worseSc.name}</strong> delivers an additional <strong class="text-emerald-400 font-mono font-extrabold">{formatCurrency(deltaNpv, appState.currency, 0)}</strong> in discounted net value (NPV) to the organization.
                       </p>
                     </div>
                   </div>
@@ -469,13 +474,13 @@
                   <div class="space-y-1.5 pl-2 border-l border-border/80">
                     <div class="flex justify-between items-center text-muted-foreground">
                       <span>NPV Increase (Delta NPV):</span>
-                      <strong class="text-emerald-400 font-mono font-bold">+{formatCurrency(deltaNpv, 'USD', 0)}</strong>
+                      <strong class="text-emerald-400 font-mono font-bold">+{formatCurrency(deltaNpv, appState.currency, 0)}</strong>
                     </div>
 
                     <div class="flex justify-between items-center text-muted-foreground">
                       <span>Investment Cost Delta (Delta TCO):</span>
                       <strong class="font-mono font-bold {deltaTco >= 0 ? 'text-rose-400' : 'text-emerald-400'}">
-                        {deltaTco >= 0 ? '+' : ''}{formatCurrency(deltaTco, 'USD', 0)}
+                        {deltaTco >= 0 ? '+' : ''}{formatCurrency(deltaTco, appState.currency, 0)}
                       </strong>
                     </div>
 
@@ -499,7 +504,7 @@
 
                   <div class="p-3 rounded bg-black/10 border border-border/40 flex items-start space-x-2 text-[10px] text-muted-foreground">
                     <AlertCircle class="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-                    <p>The **opportunity cost** of implementing {worseSc.name} instead of {betterSc.name} is {formatCurrency(deltaNpv, 'USD', 0)}. Ensure the qualitative benefits of {worseSc.name} (e.g. strategic alignment, brand equity) exceed this financial deficit.</p>
+                    <p>The **opportunity cost** of implementing {worseSc.name} instead of {betterSc.name} is {formatCurrency(deltaNpv, appState.currency, 0)}. Ensure the qualitative benefits of {worseSc.name} (e.g. strategic alignment, brand equity) exceed this financial deficit.</p>
                   </div>
                 </div>
               {/if}
