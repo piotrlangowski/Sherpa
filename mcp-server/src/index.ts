@@ -99,14 +99,16 @@ function getFullScenario(scenarioId: string): Scenario | null {
     baseCohorts = db.prepare(`
       SELECT id, name, vertical_id, current_users, monthly_acquisition,
              acquisition_growth_rate, monthly_churn_rate, retention_floor,
-             monthly_expansion_rate, ai_adoption_rate, base_arpu
+             monthly_expansion_rate, ai_adoption_rate, base_arpu,
+             arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
       FROM cohort_configs
     `).all() as any[];
   } else if (s.scope_type === 'verticals') {
     baseCohorts = db.prepare(`
       SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition,
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor,
-             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
+             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift
       FROM cohort_configs c
       JOIN verticals v ON c.vertical_id = v.id
       JOIN scenario_verticals sv ON sv.vertical_id = v.id
@@ -117,7 +119,8 @@ function getFullScenario(scenarioId: string): Scenario | null {
     baseCohorts = db.prepare(`
       SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition,
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor,
-             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
+             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift
       FROM cohort_configs c
       JOIN scenario_cohorts sc ON sc.cohort_config_id = c.id
       WHERE sc.scenario_id = ?
@@ -127,7 +130,8 @@ function getFullScenario(scenarioId: string): Scenario | null {
   // Load scope overrides and apply cascade
   const overrides = db.prepare(`
     SELECT id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
-           acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override
+           acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
+           arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
     FROM scenario_scope_overrides
     WHERE scenario_id = ?
   `).all(scenarioId) as ScopeOverride[];
@@ -270,7 +274,11 @@ server.tool(
     default_acquisition_growth_rate: z.number().min(0).max(1).optional().describe("Default monthly growth rate of the acquisition channel (e.g. 0.02 for 2% growth per month)."),
     default_ai_adoption_rate: z.number().min(0).max(1).optional().describe("Default fraction of the user base adopting AI features (e.g. 0.30 for 30%)."),
     default_retention_floor: z.number().min(0).max(1).optional().describe("Default minimum customer retention percentage below which churn stops."),
-    default_expansion_rate: z.number().min(0).max(1).optional().describe("Default monthly expansion revenue rate (upsell/expansion) as a decimal.")
+    default_expansion_rate: z.number().min(0).max(1).optional().describe("Default monthly expansion revenue rate (upsell/expansion) as a decimal."),
+    default_arpu_uplift: z.number().optional().describe("Default flat monthly ARPU increase for users adopting AI."),
+    default_arpu_uplift_percent: z.number().min(0).max(1).optional().describe("Default percentage increase in ARPU for users adopting AI."),
+    default_churn_reduction: z.number().min(0).max(1).optional().describe("Default percentage reduction of monthly churn for users adopting AI."),
+    default_acquisition_uplift: z.number().min(0).max(5).optional().describe("Default percentage increase in new customer acquisition.")
   },
   async (args) => {
     try {
@@ -298,6 +306,10 @@ server.tool(
           const default_ai_adoption_rate = args.default_ai_adoption_rate !== undefined ? args.default_ai_adoption_rate : current.default_ai_adoption_rate;
           const default_retention_floor = args.default_retention_floor !== undefined ? args.default_retention_floor : current.default_retention_floor;
           const default_expansion_rate = args.default_expansion_rate !== undefined ? args.default_expansion_rate : current.default_expansion_rate;
+          const default_arpu_uplift = args.default_arpu_uplift !== undefined ? args.default_arpu_uplift : current.default_arpu_uplift;
+          const default_arpu_uplift_percent = args.default_arpu_uplift_percent !== undefined ? args.default_arpu_uplift_percent : current.default_arpu_uplift_percent;
+          const default_churn_reduction = args.default_churn_reduction !== undefined ? args.default_churn_reduction : current.default_churn_reduction;
+          const default_acquisition_uplift = args.default_acquisition_uplift !== undefined ? args.default_acquisition_uplift : current.default_acquisition_uplift;
           const now = new Date().toISOString();
 
           db.prepare(`
@@ -305,13 +317,15 @@ server.tool(
             SET total_users = ?, default_arpu = ?, default_monthly_churn_rate = ?,
                 default_monthly_acquisition = ?, default_acquisition_growth_rate = ?,
                 default_ai_adoption_rate = ?, default_retention_floor = ?,
-                default_expansion_rate = ?, updated_at = ?
+                default_expansion_rate = ?, default_arpu_uplift = ?, default_arpu_uplift_percent = ?,
+                default_churn_reduction = ?, default_acquisition_uplift = ?, updated_at = ?
             WHERE id = 'singleton'
           `).run(
             total_users, default_arpu, default_monthly_churn_rate,
             default_monthly_acquisition, default_acquisition_growth_rate,
             default_ai_adoption_rate, default_retention_floor,
-            default_expansion_rate, now
+            default_expansion_rate, default_arpu_uplift, default_arpu_uplift_percent,
+            default_churn_reduction, default_acquisition_uplift, now
           );
 
           const row = db.prepare("SELECT * FROM client_base WHERE id = 'singleton'").get() as any;
@@ -523,12 +537,16 @@ server.tool(
     monthly_expansion_rate: z.number().min(0).max(1).optional().describe("Monthly expansion revenue rate (upsell/expansion) as a decimal (e.g. 0.02)."),
     ai_adoption_rate: z.number().min(0).max(1).optional().describe("Fraction of the user base in this cohort adopting AI features (e.g. 0.30 for 30%)."),
     base_arpu: z.number().nonnegative().optional().describe("Average Revenue Per User per month (e.g. 100)."),
+    arpu_uplift: z.number().optional().describe("Flat monthly ARPU increase for users adopting AI (e.g. 15.0). Weighted by adoption rate."),
+    arpu_uplift_percent: z.number().min(0).max(1).optional().describe("Percentage increase in ARPU for users adopting AI (e.g. 0.10 for 10%). Weighted by adoption rate."),
+    churn_reduction: z.number().min(0).max(1).optional().describe("Percentage reduction of monthly churn for users adopting AI (e.g. 0.15 for 15%). Weighted by adoption rate."),
+    acquisition_uplift: z.number().min(0).max(5).optional().describe("Percentage increase in new customer acquisition (e.g. 0.10 for 10%). Applied directly, NOT weighted by adoption."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
   async (args) => {
     try {
       if (args.action === "list") {
-        const cohorts = db.prepare("SELECT id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu FROM cohort_configs ORDER BY name ASC").all() as any[];
+        const cohorts = db.prepare("SELECT id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift FROM cohort_configs ORDER BY name ASC").all() as any[];
         return { content: [{ type: "text", text: JSON.stringify(cohorts, null, 2) }] };
       }
       if (args.action === "create") {
@@ -547,11 +565,13 @@ server.tool(
           INSERT INTO cohort_configs (
             id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate,
             monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu,
+            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           id, args.name, args.vertical_id || null, args.current_users, args.monthly_acquisition, args.acquisition_growth_rate ?? 0,
           args.monthly_churn_rate ?? 0.05, args.retention_floor ?? 0.60, args.monthly_expansion_rate ?? 0.02, args.ai_adoption_rate ?? 0.30, args.base_arpu ?? 100,
+          args.arpu_uplift ?? 0, args.arpu_uplift_percent ?? 0, args.churn_reduction ?? 0, args.acquisition_uplift ?? 0,
           now, now
         );
         return { content: [{ type: "text", text: `Cohort '${args.name}' created with ID: ${id}` }] };
@@ -574,18 +594,26 @@ server.tool(
         const monthly_expansion_rate = args.monthly_expansion_rate !== undefined ? args.monthly_expansion_rate : current.monthly_expansion_rate;
         const ai_adoption_rate = args.ai_adoption_rate !== undefined ? args.ai_adoption_rate : current.ai_adoption_rate;
         const base_arpu = args.base_arpu !== undefined ? args.base_arpu : current.base_arpu;
+        const arpu_uplift = args.arpu_uplift !== undefined ? args.arpu_uplift : current.arpu_uplift;
+        const arpu_uplift_percent = args.arpu_uplift_percent !== undefined ? args.arpu_uplift_percent : current.arpu_uplift_percent;
+        const churn_reduction = args.churn_reduction !== undefined ? args.churn_reduction : current.churn_reduction;
+        const acquisition_uplift = args.acquisition_uplift !== undefined ? args.acquisition_uplift : current.acquisition_uplift;
         const now = new Date().toISOString();
 
         db.prepare(`
           UPDATE cohort_configs
           SET name = ?, vertical_id = ?, current_users = ?, monthly_acquisition = ?,
               acquisition_growth_rate = ?, monthly_churn_rate = ?, retention_floor = ?,
-              monthly_expansion_rate = ?, ai_adoption_rate = ?, base_arpu = ?, updated_at = ?
+              monthly_expansion_rate = ?, ai_adoption_rate = ?, base_arpu = ?,
+              arpu_uplift = ?, arpu_uplift_percent = ?, churn_reduction = ?, acquisition_uplift = ?,
+              updated_at = ?
           WHERE id = ?
         `).run(
           name, vertical_id, current_users, monthly_acquisition,
           acquisition_growth_rate, monthly_churn_rate, retention_floor,
-          monthly_expansion_rate, ai_adoption_rate, base_arpu, now, args.id
+          monthly_expansion_rate, ai_adoption_rate, base_arpu,
+          arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+          now, args.id
         );
         return { content: [{ type: "text", text: `Cohort '${name}' updated successfully.` }] };
       }
@@ -1092,6 +1120,10 @@ server.tool(
       monthly_expansion_rate: z.number().default(0.02),
       ai_adoption_rate: z.number().default(0.30),
       base_arpu: z.number().default(100),
+      arpu_uplift: z.number().default(0),
+      arpu_uplift_percent: z.number().default(0),
+      churn_reduction: z.number().default(0),
+      acquisition_uplift: z.number().default(0),
       vertical_id: z.string().nullable().optional()
     }).optional().describe("Embedded cohort configuration. Required for 'create' action."),
     services: z.array(z.object({ id: z.string(), rollout_month: z.number().default(0) })).optional().describe("AI services to attach, with rollout month offsets."),
@@ -1151,9 +1183,9 @@ server.tool(
         db.transaction(() => {
           const cc = args.cohort_config!;
           db.prepare(`
-            INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate ?? 0, cc.monthly_churn_rate ?? 0.05, cc.retention_floor ?? 0.60, cc.monthly_expansion_rate ?? 0.02, cc.ai_adoption_rate ?? 0.30, cc.base_arpu ?? 100, now, now);
+            INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate ?? 0, cc.monthly_churn_rate ?? 0.05, cc.retention_floor ?? 0.60, cc.monthly_expansion_rate ?? 0.02, cc.ai_adoption_rate ?? 0.30, cc.base_arpu ?? 100, cc.arpu_uplift ?? 0, cc.arpu_uplift_percent ?? 0, cc.churn_reduction ?? 0, cc.acquisition_uplift ?? 0, now, now);
 
           db.prepare(`
             INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, created_at, updated_at)
@@ -1457,9 +1489,9 @@ server.tool(
 
         db.transaction(() => {
           db.prepare(`
-            INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(cohortId, `${scenarioName} Cohort`, null, currentUsers, monthlyAcquisition, acquisitionGrowthRate, monthlyChurnRate, retentionFloor, monthlyExpansionRate, aiAdoptionRate, baseArpu, now, now);
+            INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(cohortId, `${scenarioName} Cohort`, null, currentUsers, monthlyAcquisition, acquisitionGrowthRate, monthlyChurnRate, retentionFloor, monthlyExpansionRate, aiAdoptionRate, baseArpu, 0, 0, 0, 0, now, now);
 
           db.prepare(`
             INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, created_at, updated_at)

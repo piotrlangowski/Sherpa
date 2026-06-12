@@ -25,7 +25,7 @@
   import Wallet from '@lucide/svelte/icons/wallet';
 
   let { data } = $props();
-  const scenarios = data.scenarios;
+  const scenarios = $derived(data.scenarios);
 
   // Selected scenarios state
   let selectedIds = $state<string[]>([]);
@@ -239,15 +239,18 @@
     tick().then(() => {
       import('echarts').then((echarts) => {
         if (!isMounted || !chartElement) return;
-        cleanupChart();
 
-        chartInstance = echarts.init(chartElement);
-        chartInstance.setOption(chartOption);
+        if (chartInstance) {
+          chartInstance.setOption(chartOption, true);
+        } else {
+          chartInstance = echarts.init(chartElement);
+          chartInstance.setOption(chartOption, true);
 
-        resizeListener = () => {
-          chartInstance?.resize();
-        };
-        window.addEventListener('resize', resizeListener);
+          resizeListener = () => {
+            chartInstance?.resize();
+          };
+          window.addEventListener('resize', resizeListener);
+        }
       });
     });
   }
@@ -312,9 +315,14 @@
             />
             <div>
               <span class="text-sm font-bold text-foreground block">{s.name}</span>
+              {#if s.scopeSummary}
+                <span class="text-[9px] text-muted-foreground block mt-0.5">
+                  Scope: <span class="capitalize">{s.scope_type.replace('_', ' ')}</span> ({s.scopeSummary.cohortsCount} cohorts, ~{formatNumber(s.scopeSummary.totalUsers)} users)
+                </span>
+              {/if}
               {#if s.results}
                 <span class="text-[10px] text-muted-foreground block mt-0.5">
-                  NPV: <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">{formatCurrency(s.results.npv, appState.currency, 0)}</strong> • Payback: <strong class="text-cyan-600 dark:text-cyan-400 font-mono font-bold">{s.results.payback_months !== null ? s.results.payback_months + 'm' : 'N/A'}</strong>
+                  Incremental NPV: <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">{formatCurrency(s.results.npv, appState.currency, 0)}</strong> • Payback: <strong class="text-cyan-600 dark:text-cyan-400 font-mono font-bold">{s.results.payback_months === 0 ? 'Immediate' : s.results.payback_months !== null ? s.results.payback_months + 'm' : 'N/A'}</strong>
                 </span>
               {:else}
                 <span class="text-[10px] text-rose-600 dark:text-rose-400 font-medium italic block mt-0.5">No results (run calculations)</span>
@@ -386,8 +394,8 @@
                     <th class="p-3">Scenario Name</th>
                     <th class="p-3 text-right">Horizon</th>
                     <th class="p-3 text-right">Discount Rate</th>
-                    <th class="p-3 text-right">NPV</th>
-                    <th class="p-3 text-right">IRR (Annual)</th>
+                    <th class="p-3 text-right">Incremental NPV</th>
+                    <th class="p-3 text-right">IRR (AI Investment)</th>
                     <th class="p-3 text-right">Payback Period</th>
                     <th class="p-3 text-right">TCO</th>
                     <th class="p-3 text-right">ROI (%)</th>
@@ -397,7 +405,14 @@
                   {#each selectedScenarios as s}
                     {@const res = s.results!}
                     <tr class="hover:bg-foreground/5 transition-all duration-150">
-                      <td class="p-3 font-bold text-foreground truncate max-w-[150px]">{s.name}</td>
+                      <td class="p-3 max-w-[200px]">
+                        <span class="font-bold text-foreground block truncate">{s.name}</span>
+                        {#if s.scopeSummary}
+                          <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block mt-0.5 leading-tight">
+                            {s.scope_type.replace('_', ' ')}: {s.scopeSummary.cohortsCount} {s.scopeSummary.cohortsCount === 1 ? 'cohort' : 'cohorts'} (~{formatNumber(s.scopeSummary.totalUsers)})
+                          </span>
+                        {/if}
+                      </td>
                       <td class="p-3 text-right font-mono text-muted-foreground">{s.projection_months}m</td>
                       <td class="p-3 text-right font-mono text-muted-foreground">{formatPercent(s.discount_rate)}</td>
                       
@@ -413,7 +428,7 @@
 
                       <!-- Payback -->
                       <td class="p-3 text-right font-mono font-bold {bestMetrics.minPaybackId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
-                        {formatMonths(res.payback_months)}
+                        {res.payback_months === 0 ? 'Immediate' : res.payback_months === null ? 'Not within horizon' : formatMonths(res.payback_months)}
                       </td>
 
                       <!-- TCO -->
@@ -449,7 +464,7 @@
               {#if Math.abs(rA.npv - rB.npv) < 0.1}
                 <div class="flex items-center space-x-2 text-muted-foreground p-3 rounded-lg glass-inset border border-border/40">
                   <Info class="h-5 w-5 text-primary shrink-0" />
-                  <p>Both scenarios generate identical Net Present Value ({formatCurrency(rA.npv, appState.currency, 0)}).</p>
+                  <p>Both scenarios generate identical Incremental NPV ({formatCurrency(rA.npv, appState.currency, 0)}).</p>
                 </div>
               {:else}
                 {@const betterSc = rA.npv > rB.npv ? sA : sB}
@@ -465,7 +480,7 @@
                     <div>
                       <h4 class="font-bold text-foreground">Recommended Selection: {betterSc.name}</h4>
                       <p class="text-muted-foreground mt-1">
-                        Choosing <strong class="text-foreground">{betterSc.name}</strong> instead of <strong class="text-foreground">{worseSc.name}</strong> delivers an additional <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-extrabold">{formatCurrency(deltaNpv, appState.currency, 0)}</strong> in discounted net value (NPV) to the organization.
+                        Choosing <strong class="text-foreground">{betterSc.name}</strong> instead of <strong class="text-foreground">{worseSc.name}</strong> delivers an additional <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-extrabold">{formatCurrency(deltaNpv, appState.currency, 0)}</strong> in incremental discounted net value (NPV) to the organization.
                       </p>
                     </div>
                   </div>
@@ -473,7 +488,7 @@
                   <!-- Delta metrics list -->
                   <div class="space-y-1.5 pl-2 border-l border-border/80">
                     <div class="flex justify-between items-center text-muted-foreground">
-                      <span>NPV Increase (Delta NPV):</span>
+                      <span>Incremental NPV Increase (Delta NPV):</span>
                       <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">+{formatCurrency(deltaNpv, appState.currency, 0)}</strong>
                     </div>
 

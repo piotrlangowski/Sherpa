@@ -143,7 +143,10 @@ export function exportScenarioToCSV(scenarioId: string): string {
     'Token Costs',
     'Total Costs',
     'Net Cash Flow',
-    'Cumulative Cash Flow'
+    'Cumulative Cash Flow',
+    'Gross MRR',
+    'Baseline MRR',
+    'Baseline Customers'
   ];
   lines.push(headers.join(','));
 
@@ -159,7 +162,10 @@ export function exportScenarioToCSV(scenarioId: string): string {
       m.tokenCosts.toFixed(2),
       m.totalCosts.toFixed(2),
       m.netCashFlow.toFixed(2),
-      m.cumulativeCashFlow.toFixed(2)
+      m.cumulativeCashFlow.toFixed(2),
+      m.grossRevenue.toFixed(2),
+      m.baselineRevenue.toFixed(2),
+      m.baselineCustomers
     ];
     lines.push(row.join(','));
   }

@@ -12,6 +12,7 @@
   import CardContent from '$lib/components/ui/card/card-content.svelte';
   import CardFooter from '$lib/components/ui/card/card-footer.svelte';
   import Slider from '$lib/components/ui/slider/slider.svelte';
+  import Badge from '$lib/components/ui/badge/badge.svelte';
 
   // Lucide Icons
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -21,35 +22,24 @@
   import CalendarRange from '@lucide/svelte/icons/calendar-range';
   import DollarSign from '@lucide/svelte/icons/dollar-sign';
   import Edit2 from '@lucide/svelte/icons/edit-2';
+  import Info from '@lucide/svelte/icons/info';
 
   let { data } = $props();
-  const scenario = data.scenario;
+  const scenario = $derived(data.scenario);
 
   // Wizard Navigation
   let currentStep = $state(1);
 
   // Step 1: Details & Scope
-  let name = $state(scenario.name);
-  let description = $state(scenario.description || '');
-  let projectionMonths = $state(scenario.projection_months);
-  let discountRateArr = $state([Math.round(scenario.discount_rate * 100)]); // slider
+  let name = $state('');
+  let description = $state('');
+  let projectionMonths = $state(36);
+  let discountRateArr = $state([10]); // slider
   const discountRate = $derived(discountRateArr[0]);
 
-  let scopeType = $state(scenario.scope_type);
+  let scopeType = $state<'all_clients' | 'verticals' | 'cohorts'>('all_clients');
   let selectedVerticals = $state<Record<string, boolean>>({});
   let selectedCohorts = $state<Record<string, boolean>>({});
-
-  // Initialize checks
-  if (scenario.scope_verticals) {
-    for (const v of scenario.scope_verticals) {
-      selectedVerticals[v.id] = true;
-    }
-  }
-  if (scenario.scope_cohorts) {
-    for (const c of scenario.scope_cohorts) {
-      selectedCohorts[c.id] = true;
-    }
-  }
 
   // Step 2: Overrides
   type OverrideRow = {
@@ -63,6 +53,10 @@
     retention_floor: number | null;
     expansion_rate: number | null;
     arpu_override: number | null;
+    arpu_uplift: number | null;
+    arpu_uplift_percent: number | null;
+    churn_reduction: number | null;
+    acquisition_uplift: number | null;
   };
   let overrides = $state<OverrideRow[]>([]);
   let scopeOverridesJSON = $derived(JSON.stringify(overrides.map(o => ({
@@ -71,32 +65,113 @@
     acquisition_growth_rate: o.acquisition_growth_rate !== null ? o.acquisition_growth_rate / 100 : null,
     ai_adoption_rate: o.ai_adoption_rate !== null ? o.ai_adoption_rate / 100 : null,
     retention_floor: o.retention_floor !== null ? o.retention_floor / 100 : null,
-    expansion_rate: o.expansion_rate !== null ? o.expansion_rate / 100 : null
+    expansion_rate: o.expansion_rate !== null ? o.expansion_rate / 100 : null,
+    arpu_uplift: o.arpu_uplift !== null ? parseFloat(o.arpu_uplift as any) : null,
+    arpu_uplift_percent: o.arpu_uplift_percent !== null ? o.arpu_uplift_percent / 100 : null,
+    churn_reduction: o.churn_reduction !== null ? o.churn_reduction / 100 : null,
+    acquisition_uplift: o.acquisition_uplift !== null ? o.acquisition_uplift / 100 : null
   }))));
 
-  // Pre-populate overrides from scenario
-  if (scenario.scope_overrides) {
-    overrides = scenario.scope_overrides.map((ov: any) => {
-      let targetName = 'Global Client Base';
-      if (ov.target_type === 'vertical') {
-        targetName = data.verticals.find((v: any) => v.id === ov.target_id)?.name || ov.target_id;
-      } else if (ov.target_type === 'cohort') {
-        targetName = data.cohorts.find((c: any) => c.id === ov.target_id)?.name || ov.target_id;
+  // Step 3: Rollout Offerings
+  let selectedServices = $state<Record<string, boolean>>({});
+  let rolloutServices = $state<Record<string, number>>({});
+  let selectedPacks = $state<Record<string, boolean>>({});
+  let rolloutPacks = $state<Record<string, number>>({});
+  let selectedPlans = $state<Record<string, boolean>>({});
+  let rolloutPlans = $state<Record<string, number>>({});
+
+  // Step 4: Cost Items
+  let selectedCosts = $state<Record<string, boolean>>({});
+
+  // Synchronize local states when scenario changes
+  $effect(() => {
+    const s = scenario;
+    if (!s) return;
+    untrack(() => {
+      name = s.name;
+      description = s.description || '';
+      projectionMonths = s.projection_months;
+      discountRateArr = [Math.round(s.discount_rate * 100)];
+      scopeType = s.scope_type;
+
+      selectedVerticals = {};
+      if (s.scope_verticals) {
+        for (const v of s.scope_verticals) {
+          selectedVerticals[v.id] = true;
+        }
       }
-      return {
-        target_type: ov.target_type,
-        target_id: ov.target_id,
-        name: targetName,
-        monthly_churn_rate: ov.monthly_churn_rate !== null ? Math.round(ov.monthly_churn_rate * 1000) / 10 : null,
-        monthly_acquisition: ov.monthly_acquisition,
-        acquisition_growth_rate: ov.acquisition_growth_rate !== null ? Math.round(ov.acquisition_growth_rate * 1000) / 10 : null,
-        ai_adoption_rate: ov.ai_adoption_rate !== null ? Math.round(ov.ai_adoption_rate * 1000) / 10 : null,
-        retention_floor: ov.retention_floor !== null ? Math.round(ov.retention_floor * 1000) / 10 : null,
-        expansion_rate: ov.expansion_rate !== null ? Math.round(ov.expansion_rate * 1000) / 10 : null,
-        arpu_override: ov.arpu_override
-      };
+
+      selectedCohorts = {};
+      if (s.scope_cohorts) {
+        for (const c of s.scope_cohorts) {
+          selectedCohorts[c.id] = true;
+        }
+      }
+
+      if (s.scope_overrides) {
+        overrides = s.scope_overrides.map((ov: any) => {
+          let targetName = 'Global Client Base';
+          if (ov.target_type === 'vertical') {
+            targetName = data.verticals.find((v: any) => v.id === ov.target_id)?.name || ov.target_id;
+          } else if (ov.target_type === 'cohort') {
+            targetName = data.cohorts.find((c: any) => c.id === ov.target_id)?.name || ov.target_id;
+          }
+          return {
+            target_type: ov.target_type,
+            target_id: ov.target_id,
+            name: targetName,
+            monthly_churn_rate: ov.monthly_churn_rate !== null ? Math.round(ov.monthly_churn_rate * 1000) / 10 : null,
+            monthly_acquisition: ov.monthly_acquisition,
+            acquisition_growth_rate: ov.acquisition_growth_rate !== null ? Math.round(ov.acquisition_growth_rate * 1000) / 10 : null,
+            ai_adoption_rate: ov.ai_adoption_rate !== null ? Math.round(ov.ai_adoption_rate * 1000) / 10 : null,
+            retention_floor: ov.retention_floor !== null ? Math.round(ov.retention_floor * 1000) / 10 : null,
+            expansion_rate: ov.expansion_rate !== null ? Math.round(ov.expansion_rate * 1000) / 10 : null,
+            arpu_override: ov.arpu_override,
+            arpu_uplift: ov.arpu_uplift,
+            arpu_uplift_percent: ov.arpu_uplift_percent !== null ? Math.round(ov.arpu_uplift_percent * 1000) / 10 : null,
+            churn_reduction: ov.churn_reduction !== null ? Math.round(ov.churn_reduction * 1000) / 10 : null,
+            acquisition_uplift: ov.acquisition_uplift !== null ? Math.round(ov.acquisition_uplift * 1000) / 10 : null
+          };
+        });
+      } else {
+        overrides = [];
+      }
+
+      selectedServices = {};
+      rolloutServices = {};
+      if (s.services) {
+        for (const srv of s.services) {
+          selectedServices[srv.id] = true;
+          rolloutServices[srv.id] = srv.rollout_month;
+        }
+      }
+
+      selectedPacks = {};
+      rolloutPacks = {};
+      if (s.packs) {
+        for (const p of s.packs) {
+          selectedPacks[p.id] = true;
+          rolloutPacks[p.id] = p.rollout_month;
+        }
+      }
+
+      selectedPlans = {};
+      rolloutPlans = {};
+      if (s.plans) {
+        for (const pl of s.plans) {
+          selectedPlans[pl.id] = true;
+          rolloutPlans[pl.id] = pl.rollout_month;
+        }
+      }
+
+      selectedCosts = {};
+      if (s.costs) {
+        for (const c of s.costs) {
+          selectedCosts[c.id] = true;
+        }
+      }
     });
-  }
+  });
 
   $effect(() => {
     const _scopeType = scopeType;
@@ -111,7 +186,8 @@
         newOverrides.push(existing || {
           target_type: 'all_clients', target_id: 'all', name: 'Global Client Base',
           monthly_churn_rate: null, monthly_acquisition: null, acquisition_growth_rate: null,
-          ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null
+          ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null,
+          arpu_uplift: null, arpu_uplift_percent: null, churn_reduction: null, acquisition_uplift: null
         });
       } else if (_scopeType === 'verticals') {
         for (const v of data.verticals) {
@@ -120,7 +196,8 @@
             newOverrides.push(existing || {
               target_type: 'vertical', target_id: v.id, name: v.name,
               monthly_churn_rate: null, monthly_acquisition: null, acquisition_growth_rate: null,
-              ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null
+              ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null,
+              arpu_uplift: null, arpu_uplift_percent: null, churn_reduction: null, acquisition_uplift: null
             });
           }
         }
@@ -131,7 +208,8 @@
             newOverrides.push(existing || {
               target_type: 'cohort', target_id: c.id, name: c.name,
               monthly_churn_rate: null, monthly_acquisition: null, acquisition_growth_rate: null,
-              ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null
+              ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null,
+              arpu_uplift: null, arpu_uplift_percent: null, churn_reduction: null, acquisition_uplift: null
             });
           }
         }
@@ -139,34 +217,6 @@
       overrides = newOverrides;
     });
   });
-
-  // Step 3: Rollout Offerings
-  let selectedServices = $state<Record<string, boolean>>({});
-  let rolloutServices = $state<Record<string, number>>({});
-  let selectedPacks = $state<Record<string, boolean>>({});
-  let rolloutPacks = $state<Record<string, number>>({});
-  let selectedPlans = $state<Record<string, boolean>>({});
-  let rolloutPlans = $state<Record<string, number>>({});
-
-  // Pre-populate selections and rollout months
-  if (scenario.services) {
-    for (const s of scenario.services) {
-      selectedServices[s.id] = true;
-      rolloutServices[s.id] = s.rollout_month;
-    }
-  }
-  if (scenario.packs) {
-    for (const p of scenario.packs) {
-      selectedPacks[p.id] = true;
-      rolloutPacks[p.id] = p.rollout_month;
-    }
-  }
-  if (scenario.plans) {
-    for (const pl of scenario.plans) {
-      selectedPlans[pl.id] = true;
-      rolloutPlans[pl.id] = pl.rollout_month;
-    }
-  }
 
   $effect(() => {
     // Only track data.services/packs/plans as dependencies (server-provided, stable).
@@ -189,12 +239,155 @@
     });
   });
 
-  // Step 4: Cost Items
-  let selectedCosts = $state<Record<string, boolean>>({});
+  // Cascade Inspector State
+  let openOverrides = $state<Record<string, boolean>>({});
+  let selectedCohortIdForInspector = $state<Record<string, string>>({});
+  let activeInspectorParam = $state<Record<string, string | null>>({});
 
-  if (scenario.costs) {
-    for (const c of scenario.costs) {
-      selectedCosts[c.id] = true;
+  const paramMeta: Record<string, { label: string, isPercent: boolean, symbol: string }> = {
+    arpu_override: { label: 'ARPU Override', isPercent: false, symbol: '$' },
+    monthly_acquisition: { label: 'Monthly Acquisition', isPercent: false, symbol: '' },
+    monthly_churn_rate: { label: 'Monthly Churn Rate', isPercent: true, symbol: '%' },
+    ai_adoption_rate: { label: 'AI Adoption Rate', isPercent: true, symbol: '%' },
+    arpu_uplift: { label: 'AI ARPU Uplift ($ Flat)', isPercent: false, symbol: '$' },
+    arpu_uplift_percent: { label: 'AI ARPU Uplift (%)', isPercent: true, symbol: '%' },
+    churn_reduction: { label: 'AI Churn Reduction', isPercent: true, symbol: '%' },
+    acquisition_uplift: { label: 'AI Acquisition Uplift', isPercent: true, symbol: '%' }
+  };
+
+  function getCohortListForTarget(ov: OverrideRow) {
+    if (ov.target_type === 'cohort') {
+      return data.cohorts.filter(c => c.id === ov.target_id);
+    } else if (ov.target_type === 'vertical') {
+      return data.cohorts.filter(c => c.vertical_id === ov.target_id);
+    } else {
+      return data.cohorts;
+    }
+  }
+
+  function getParameterCascade(
+    cohortId: string,
+    paramKey: string
+  ) {
+    const cohort = data.cohorts.find(c => c.id === cohortId);
+    if (!cohort) return null;
+
+    const meta = paramMeta[paramKey];
+    if (!meta) return null;
+
+    // Map OverrideRow keys to CohortConfig keys for Cohort Base
+    let baseKey: string = paramKey;
+    if (paramKey === 'arpu_override') baseKey = 'base_arpu';
+    if (paramKey === 'expansion_rate') baseKey = 'monthly_expansion_rate';
+
+    const getRawBaseValue = (c: any, key: string) => {
+      return c[key] !== undefined ? c[key] : null;
+    };
+
+    const baseValRaw = getRawBaseValue(cohort, baseKey);
+
+    // Read overrides from current reactive overrides array
+    const globalOv = overrides.find(o => o.target_type === 'all_clients');
+    const verticalOv = cohort.vertical_id 
+      ? overrides.find(o => o.target_type === 'vertical' && o.target_id === cohort.vertical_id)
+      : null;
+    const cohortOv = overrides.find(o => o.target_type === 'cohort' && o.target_id === cohort.id);
+
+    const formatValForDisplay = (val: number | null) => {
+      if (val === null || val === undefined) return null;
+      return val;
+    };
+
+    const formatBaseValForDisplay = (val: number | null) => {
+      if (val === null || val === undefined) return null;
+      return meta.isPercent ? val * 100 : val;
+    };
+
+    const baseVal = formatBaseValForDisplay(baseValRaw);
+    const globalVal = globalOv ? formatValForDisplay(globalOv[paramKey as keyof OverrideRow] as number | null) : null;
+    const verticalVal = verticalOv ? formatValForDisplay(verticalOv[paramKey as keyof OverrideRow] as number | null) : null;
+    const cohortVal = cohortOv ? formatValForDisplay(cohortOv[paramKey as keyof OverrideRow] as number | null) : null;
+
+    let winner: 'Cohort Base' | 'Global Override' | 'Vertical Override' | 'Cohort Override' = 'Cohort Base';
+    let effVal = baseVal || 0;
+
+    const isDefined = (val: any) => val !== null && val !== undefined && val !== '';
+
+    if (isDefined(cohortVal)) {
+      winner = 'Cohort Override';
+      effVal = cohortVal!;
+    } else if (isDefined(verticalVal)) {
+      winner = 'Vertical Override';
+      effVal = verticalVal!;
+    } else if (isDefined(globalVal)) {
+      winner = 'Global Override';
+      effVal = globalVal!;
+    } else if (isDefined(baseVal)) {
+      winner = 'Cohort Base';
+      effVal = baseVal!;
+    }
+
+    const nodes = [
+      {
+        level: 'Cohort Base',
+        value: baseVal,
+        isDefined: isDefined(baseVal),
+        isWinner: winner === 'Cohort Base',
+        label: `Base (${cohort.name})`
+      },
+      {
+        level: 'Global Override',
+        value: globalVal,
+        isDefined: isDefined(globalVal),
+        isWinner: winner === 'Global Override',
+        label: 'Global Override'
+      },
+      {
+        level: 'Vertical Override',
+        value: verticalVal,
+        isDefined: isDefined(verticalVal),
+        isWinner: winner === 'Vertical Override',
+        label: cohort.vertical_name ? `Vertical (${cohort.vertical_name})` : 'Vertical Override'
+      },
+      {
+        level: 'Cohort Override',
+        value: cohortVal,
+        isDefined: isDefined(cohortVal),
+        isWinner: winner === 'Cohort Override',
+        label: `Cohort Override`
+      }
+    ];
+
+    return { nodes, effectiveValue: effVal, meta };
+  }
+
+  function toggleInspector(targetId: string, paramKey: string) {
+    if (activeInspectorParam[targetId] === paramKey) {
+      activeInspectorParam[targetId] = null;
+    } else {
+      activeInspectorParam[targetId] = paramKey;
+      
+      // Initialize selected cohort for the target if not set
+      if (!selectedCohortIdForInspector[targetId]) {
+        const ov = overrides.find(o => o.target_id === targetId);
+        if (ov) {
+          const cohortsList = getCohortListForTarget(ov);
+          if (cohortsList.length > 0) {
+            selectedCohortIdForInspector[targetId] = cohortsList[0].id;
+          }
+        }
+      }
+    }
+  }
+
+  function formatValueForInspector(val: number | null, isPercent: boolean, symbol: string) {
+    if (val === null || val === undefined) return '—';
+    if (isPercent) {
+      return `${val}%`;
+    } else if (symbol === '$') {
+      return `$${val.toFixed(2)}`;
+    } else {
+      return val.toString();
     }
   }
 
@@ -366,37 +559,208 @@
           {#if overrides.length === 0}
             <p class="text-sm text-muted-foreground italic">No targets selected in Step 1.</p>
           {:else}
-            <div class="overflow-x-auto border border-border/40 rounded-lg">
-              <table class="w-full text-left text-sm">
-                <thead class="bg-black/20 text-xs uppercase text-muted-foreground">
-                  <tr>
-                    <th class="px-3 py-2 font-semibold">Target</th>
-                    <th class="px-3 py-2 font-semibold">ARPU ($)</th>
-                    <th class="px-3 py-2 font-semibold">Acquisition /mo</th>
-                    <th class="px-3 py-2 font-semibold">Churn (%)</th>
-                    <th class="px-3 py-2 font-semibold">Adoption (%)</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-border/20">
-                  {#each overrides as ov}
-                    <tr class="hover:bg-foreground/5 transition-colors">
-                      <td class="px-3 py-2 font-medium">{ov.name}</td>
-                      <td class="px-3 py-2">
-                        <Input type="number" step="0.01" min="0" placeholder="Inherit" bind:value={ov.arpu_override} class="h-8 w-24 text-xs font-mono" />
-                      </td>
-                      <td class="px-3 py-2">
-                        <Input type="number" min="0" placeholder="Inherit" bind:value={ov.monthly_acquisition} class="h-8 w-24 text-xs font-mono" />
-                      </td>
-                      <td class="px-3 py-2">
-                        <Input type="number" step="0.1" min="0" max="100" placeholder="Inherit" bind:value={ov.monthly_churn_rate} class="h-8 w-24 text-xs font-mono" />
-                      </td>
-                      <td class="px-3 py-2">
-                        <Input type="number" step="0.1" min="0" max="100" placeholder="Inherit" bind:value={ov.ai_adoption_rate} class="h-8 w-24 text-xs font-mono" />
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
+            <div class="space-y-4">
+              {#each overrides as ov}
+                {@const isOpen = !!openOverrides[ov.target_id]}
+                <Card class="border border-border/60 bg-muted/20">
+                  <button
+                    type="button"
+                    onclick={() => openOverrides[ov.target_id] = !openOverrides[ov.target_id]}
+                    class="w-full text-left p-4 flex justify-between items-center hover:bg-foreground/5 transition duration-150 rounded-t-lg"
+                  >
+                    <div class="flex flex-col">
+                      <span class="text-sm font-bold text-foreground">{ov.name}</span>
+                      <span class="text-[10px] text-muted-foreground uppercase mt-0.5">{ov.target_type === 'all_clients' ? 'Global Scope' : ov.target_type} override assumptions</span>
+                    </div>
+                    <span class="text-xs font-mono font-bold text-primary">
+                      {isOpen ? 'Collapse [-]' : 'Expand [+]'}
+                    </span>
+                  </button>
+                  {#if isOpen}
+                    <div class="p-4 border-t border-border/60 bg-background/5 space-y-6">
+                      <!-- Section 1: Base parameter overrides -->
+                      <div class="space-y-3">
+                        <h4 class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Base Parameter Overrides</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                          <div class="space-y-1">
+                            <div class="flex justify-between items-center">
+                              <Label class="text-xs font-semibold">ARPU Override ($)</Label>
+                              <button
+                                type="button"
+                                onclick={() => toggleInspector(ov.target_id, 'arpu_override')}
+                                class="text-[10px] text-primary hover:underline font-bold"
+                              >
+                                {activeInspectorParam[ov.target_id] === 'arpu_override' ? 'Hide' : 'Inspect'}
+                              </button>
+                            </div>
+                            <Input type="number" step="0.01" min="0" placeholder="Inherit" bind:value={ov.arpu_override} class="bg-background text-xs font-mono" />
+                          </div>
+                          <div class="space-y-1">
+                            <div class="flex justify-between items-center">
+                              <Label class="text-xs font-semibold">Monthly Acquisition (/mo)</Label>
+                              <button
+                                type="button"
+                                onclick={() => toggleInspector(ov.target_id, 'monthly_acquisition')}
+                                class="text-[10px] text-primary hover:underline font-bold"
+                              >
+                                {activeInspectorParam[ov.target_id] === 'monthly_acquisition' ? 'Hide' : 'Inspect'}
+                              </button>
+                            </div>
+                            <Input type="number" min="0" placeholder="Inherit" bind:value={ov.monthly_acquisition} class="bg-background text-xs font-mono" />
+                          </div>
+                          <div class="space-y-1">
+                            <div class="flex justify-between items-center">
+                              <Label class="text-xs font-semibold">Monthly Churn (%)</Label>
+                              <button
+                                type="button"
+                                onclick={() => toggleInspector(ov.target_id, 'monthly_churn_rate')}
+                                class="text-[10px] text-primary hover:underline font-bold"
+                              >
+                                {activeInspectorParam[ov.target_id] === 'monthly_churn_rate' ? 'Hide' : 'Inspect'}
+                              </button>
+                            </div>
+                            <Input type="number" step="0.1" min="0" max="100" placeholder="Inherit" bind:value={ov.monthly_churn_rate} class="bg-background text-xs font-mono" />
+                          </div>
+                          <div class="space-y-1">
+                            <div class="flex justify-between items-center">
+                              <Label class="text-xs font-semibold">AI Adoption Rate (%)</Label>
+                              <button
+                                type="button"
+                                onclick={() => toggleInspector(ov.target_id, 'ai_adoption_rate')}
+                                class="text-[10px] text-primary hover:underline font-bold"
+                              >
+                                {activeInspectorParam[ov.target_id] === 'ai_adoption_rate' ? 'Hide' : 'Inspect'}
+                              </button>
+                            </div>
+                            <Input type="number" step="0.1" min="0" max="100" placeholder="Inherit" bind:value={ov.ai_adoption_rate} class="bg-background text-xs font-mono" />
+                          </div>
+                        </div>
+                      </div>
+ 
+                      <!-- Section 2: AI impact assumptions -->
+                      <div class="space-y-3">
+                        <h4 class="text-[10px] font-bold uppercase tracking-wider text-primary">AI Impact Assumptions (vs. Baseline)</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                          <div class="space-y-1">
+                            <div class="flex justify-between items-center">
+                              <Label class="text-xs font-semibold">AI ARPU Uplift ($ Flat)</Label>
+                              <button
+                                type="button"
+                                onclick={() => toggleInspector(ov.target_id, 'arpu_uplift')}
+                                class="text-[10px] text-primary hover:underline font-bold"
+                              >
+                                {activeInspectorParam[ov.target_id] === 'arpu_uplift' ? 'Hide' : 'Inspect'}
+                              </button>
+                            </div>
+                            <Input type="number" step="0.01" min="0" placeholder="Inherit" bind:value={ov.arpu_uplift} class="bg-background text-xs font-mono" />
+                          </div>
+                          <div class="space-y-1">
+                            <div class="flex justify-between items-center">
+                              <Label class="text-xs font-semibold">AI ARPU Uplift (%)</Label>
+                              <button
+                                type="button"
+                                onclick={() => toggleInspector(ov.target_id, 'arpu_uplift_percent')}
+                                class="text-[10px] text-primary hover:underline font-bold"
+                              >
+                                {activeInspectorParam[ov.target_id] === 'arpu_uplift_percent' ? 'Hide' : 'Inspect'}
+                              </button>
+                            </div>
+                            <Input type="number" step="0.1" min="0" max="200" placeholder="Inherit" bind:value={ov.arpu_uplift_percent} class="bg-background text-xs font-mono" />
+                          </div>
+                          <div class="space-y-1">
+                            <div class="flex justify-between items-center">
+                              <Label class="text-xs font-semibold">AI Churn Reduction (%)</Label>
+                              <button
+                                type="button"
+                                onclick={() => toggleInspector(ov.target_id, 'churn_reduction')}
+                                class="text-[10px] text-primary hover:underline font-bold"
+                              >
+                                {activeInspectorParam[ov.target_id] === 'churn_reduction' ? 'Hide' : 'Inspect'}
+                              </button>
+                            </div>
+                            <Input type="number" step="0.1" min="0" max="100" placeholder="Inherit" bind:value={ov.churn_reduction} class="bg-background text-xs font-mono" />
+                          </div>
+                          <div class="space-y-1">
+                            <div class="flex justify-between items-center">
+                              <Label class="text-xs font-semibold">AI Acquisition Uplift (%)</Label>
+                              <button
+                                type="button"
+                                onclick={() => toggleInspector(ov.target_id, 'acquisition_uplift')}
+                                class="text-[10px] text-primary hover:underline font-bold"
+                              >
+                                {activeInspectorParam[ov.target_id] === 'acquisition_uplift' ? 'Hide' : 'Inspect'}
+                              </button>
+                            </div>
+                            <Input type="number" step="0.1" min="0" max="200" placeholder="Inherit" bind:value={ov.acquisition_uplift} class="bg-background text-xs font-mono" />
+                          </div>
+                        </div>
+                      </div>
+ 
+                      <!-- Cascade Inspector Panel -->
+                      {#if activeInspectorParam[ov.target_id]}
+                        {@const activeParamKey = activeInspectorParam[ov.target_id]}
+                        {@const cohortsList = getCohortListForTarget(ov)}
+                        <div class="p-4 border border-border/80 bg-muted/40 rounded-lg space-y-4">
+                          <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-border pb-2.5">
+                            <div class="flex items-center space-x-2">
+                              <Info class="h-4 w-4 text-primary shrink-0" />
+                              <span class="text-xs font-bold text-foreground">
+                                Inheritance Cascade: {paramMeta[activeParamKey!].label}
+                              </span>
+                            </div>
+                            
+                            {#if cohortsList.length > 1}
+                              <div class="flex items-center space-x-2 text-xs">
+                                <span class="text-muted-foreground font-medium">Cohort context:</span>
+                                <select
+                                  bind:value={selectedCohortIdForInspector[ov.target_id]}
+                                  class="glass-inset border border-input rounded px-2.5 py-1 bg-background text-foreground text-xs font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                                >
+                                  {#each cohortsList as c}
+                                    <option value={c.id}>{c.name}</option>
+                                  {/each}
+                                </select>
+                              </div>
+                            {/if}
+                          </div>
+ 
+                          {#if selectedCohortIdForInspector[ov.target_id]}
+                            {@const cascade = getParameterCascade(selectedCohortIdForInspector[ov.target_id], activeParamKey!)}
+                            {#if cascade}
+                              <div class="flex flex-col md:flex-row items-stretch gap-2 text-xs">
+                                {#each cascade.nodes as node, idx}
+                                  {#if idx > 0}
+                                    <div class="flex items-center justify-center text-muted-foreground font-bold font-mono self-center select-none py-1 md:py-0">➔</div>
+                                  {/if}
+                                  <div class="flex-1 p-3 rounded-lg border flex flex-col justify-between transition-all duration-200 {node.isWinner ? 'bg-primary/15 border-primary text-foreground shadow-sm font-semibold' : node.isDefined ? 'bg-background border-border/60 text-muted-foreground line-through opacity-60' : 'bg-transparent border-dashed border-border/40 text-muted-foreground/40'}">
+                                    <span class="text-[9px] uppercase tracking-wider block font-bold text-muted-foreground/90">{node.label}</span>
+                                    <span class="text-xs font-mono font-bold mt-1.5 block">
+                                      {formatValueForInspector(node.value, cascade.meta.isPercent, cascade.meta.symbol)}
+                                    </span>
+                                    {#if node.isWinner}
+                                      <span class="text-[8px] text-primary uppercase font-bold mt-1 tracking-widest block">Winner</span>
+                                    {/if}
+                                  </div>
+                                {/each}
+                                <div class="flex items-center justify-center text-muted-foreground font-bold font-mono self-center select-none py-1 md:py-0">➔</div>
+                                <div class="flex-1 p-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 dark:bg-emerald-500/5 text-emerald-700 dark:text-emerald-300 font-bold flex flex-col justify-between">
+                                  <span class="text-[9px] uppercase tracking-wider block text-emerald-600 dark:text-emerald-400">Effective Value</span>
+                                  <span class="text-sm font-mono mt-1.5 block">
+                                    {formatValueForInspector(cascade.effectiveValue, cascade.meta.isPercent, cascade.meta.symbol)}
+                                  </span>
+                                  <span class="text-[8px] uppercase tracking-wider block mt-1 text-emerald-500">Applied</span>
+                                </div>
+                              </div>
+                            {/if}
+                          {:else}
+                            <p class="text-xs text-muted-foreground italic">No cohort context resolved.</p>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+                </Card>
+              {/each}
             </div>
           {/if}
         </CardContent>

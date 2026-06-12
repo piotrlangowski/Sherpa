@@ -28,6 +28,10 @@ export const clientBaseRepository = {
     const default_ai_adoption_rate = data.default_ai_adoption_rate !== undefined ? data.default_ai_adoption_rate : current.default_ai_adoption_rate;
     const default_retention_floor = data.default_retention_floor !== undefined ? data.default_retention_floor : current.default_retention_floor;
     const default_expansion_rate = data.default_expansion_rate !== undefined ? data.default_expansion_rate : current.default_expansion_rate;
+    const default_arpu_uplift = data.default_arpu_uplift !== undefined ? data.default_arpu_uplift : current.default_arpu_uplift;
+    const default_arpu_uplift_percent = data.default_arpu_uplift_percent !== undefined ? data.default_arpu_uplift_percent : current.default_arpu_uplift_percent;
+    const default_churn_reduction = data.default_churn_reduction !== undefined ? data.default_churn_reduction : current.default_churn_reduction;
+    const default_acquisition_uplift = data.default_acquisition_uplift !== undefined ? data.default_acquisition_uplift : current.default_acquisition_uplift;
     const now = new Date().toISOString();
     
     db.prepare(`
@@ -35,13 +39,15 @@ export const clientBaseRepository = {
       SET total_users = ?, default_arpu = ?, default_monthly_churn_rate = ?,
           default_monthly_acquisition = ?, default_acquisition_growth_rate = ?,
           default_ai_adoption_rate = ?, default_retention_floor = ?,
-          default_expansion_rate = ?, updated_at = ?
+          default_expansion_rate = ?, default_arpu_uplift = ?, default_arpu_uplift_percent = ?,
+          default_churn_reduction = ?, default_acquisition_uplift = ?, updated_at = ?
       WHERE id = 'singleton'
     `).run(
       total_users, default_arpu, default_monthly_churn_rate,
       default_monthly_acquisition, default_acquisition_growth_rate,
       default_ai_adoption_rate, default_retention_floor,
-      default_expansion_rate, now
+      default_expansion_rate, default_arpu_uplift, default_arpu_uplift_percent,
+      default_churn_reduction, default_acquisition_uplift, now
     );
     
     return this.get();

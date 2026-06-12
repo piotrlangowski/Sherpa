@@ -1,6 +1,6 @@
 import type { PageServerLoad, Actions } from './$types';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
-import { runAndSaveScenario, calculateScenario } from '$lib/server/services/financial-engine';
+import { runAndSaveScenario, calculateScenario, resolveScenarioCohorts } from '$lib/server/services/financial-engine';
 import { error, fail, redirect } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async ({ params }) => {
@@ -28,10 +28,17 @@ export const load: PageServerLoad = async ({ params }) => {
     timeline = [];
   }
 
+  const resolvedConfigs = resolveScenarioCohorts(scenario);
+  const scopeSummary = {
+    cohortsCount: resolvedConfigs.length,
+    totalUsers: resolvedConfigs.reduce((acc, cc) => acc + (cc.current_users || 0), 0)
+  };
+
   return {
     scenario,
     results,
-    timeline
+    timeline,
+    scopeSummary
   };
 };
 

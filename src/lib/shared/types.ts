@@ -21,6 +21,10 @@ export interface ClientBase {
   default_ai_adoption_rate: number;
   default_retention_floor: number;
   default_expansion_rate: number;
+  default_arpu_uplift: number;
+  default_arpu_uplift_percent: number;
+  default_churn_reduction: number;
+  default_acquisition_uplift: number;
   updated_at: string;
 }
 
@@ -137,6 +141,10 @@ export interface CohortConfig {
   monthly_expansion_rate: number;
   ai_adoption_rate: number;
   base_arpu: number;
+  arpu_uplift?: number;
+  arpu_uplift_percent?: number;
+  churn_reduction?: number;
+  acquisition_uplift?: number;
   created_at?: string;
   updated_at?: string;
   
@@ -155,6 +163,10 @@ export interface ScopeOverride {
   retention_floor: number | null;
   expansion_rate: number | null;
   arpu_override: number | null;
+  arpu_uplift?: number | null;
+  arpu_uplift_percent?: number | null;
+  churn_reduction?: number | null;
+  acquisition_uplift?: number | null;
 }
 
 export interface Scenario {
@@ -215,8 +227,8 @@ export interface CohortModelResult {
 
 export interface MonthlyBreakdown {
   month: number;
-  revenue: number;
-  customers: number;
+  revenue: number; // ΔRevenue
+  customers: number; // active customers (with AI)
   aiUsers: number;
   opex: number;
   capex: number;
@@ -224,6 +236,9 @@ export interface MonthlyBreakdown {
   totalCosts: number;
   netCashFlow: number;
   cumulativeCashFlow: number;
+  grossRevenue: number; // MRR with AI
+  baselineRevenue: number; // MRR baseline
+  baselineCustomers: number; // baseline customers
 }
 
 export interface CalculationResult {

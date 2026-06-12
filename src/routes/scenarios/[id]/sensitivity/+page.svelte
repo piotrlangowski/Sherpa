@@ -289,7 +289,7 @@
             </div>
             <div class="bg-muted/40 p-2 rounded border border-border/40">
               <span class="text-[9px] text-muted-foreground uppercase font-bold block">Base Payback</span>
-              <span class="text-xs font-mono font-bold text-cyan-600 dark:text-cyan-400 block mt-0.5">{formatMonths(sensitivityData.basePayback)}</span>
+              <span class="text-xs font-mono font-bold text-cyan-600 dark:text-cyan-400 block mt-0.5">{sensitivityData.basePayback === 0 ? 'Immediate' : sensitivityData.basePayback === null ? 'Never' : formatMonths(sensitivityData.basePayback)}</span>
             </div>
           </div>
 
@@ -348,7 +348,7 @@
                     {formatCurrency(item.lowNpv, appState.currency, 0)}
                   </TableCell>
                   <TableCell class="p-3 text-center font-mono text-muted-foreground text-[10px]">
-                    {item.lowIrr !== null ? formatPercent(item.lowIrr) : 'N/A'} / {formatMonths(item.lowPayback)}
+                    {item.lowIrr !== null ? formatPercent(item.lowIrr) : 'N/A'} / {item.lowPayback === 0 ? 'Immediate' : item.lowPayback === null ? 'Never' : formatMonths(item.lowPayback)}
                   </TableCell>
                   
                   <!-- Increased Values -->
@@ -357,7 +357,7 @@
                     {formatCurrency(item.highNpv, appState.currency, 0)}
                   </TableCell>
                   <TableCell class="p-3 text-center font-mono text-muted-foreground text-[10px]">
-                    {item.highIrr !== null ? formatPercent(item.highIrr) : 'N/A'} / {formatMonths(item.highPayback)}
+                    {item.highIrr !== null ? formatPercent(item.highIrr) : 'N/A'} / {item.highPayback === 0 ? 'Immediate' : item.highPayback === null ? 'Never' : formatMonths(item.highPayback)}
                   </TableCell>
 
                   <!-- Delta -->

@@ -7,7 +7,8 @@ import {
   buildCohortModel,
   calculateScenario,
   runSensitivityAnalysis,
-  applyScopeOverrides
+  applyScopeOverrides,
+  applyAiUplifts
 } from './financial-math.js';
 import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride } from './types.js';
 
@@ -391,6 +392,135 @@ describe('Financial Math Module Tests', () => {
       };
       applyScopeOverrides([baseCohort], [override]);
       expect(baseCohort.monthly_churn_rate).toBe(0.05); // original unchanged
+    });
+  });
+
+  describe('Incremental ROI and applyAiUplifts tests', () => {
+    const provider: Provider = {
+      id: 'p1', name: 'OpenAI', model_name: 'gpt-4', input_price: 5.0, output_price: 15.0, is_predefined: true, currency: 'USD', updated_at: ''
+    };
+
+    const cohort: CohortConfig = {
+      id: 'c1',
+      name: 'Test Cohort',
+      current_users: 1000,
+      monthly_acquisition: 100,
+      acquisition_growth_rate: 0,
+      monthly_churn_rate: 0.05,
+      retention_floor: 0,
+      monthly_expansion_rate: 0,
+      ai_adoption_rate: 0.50,
+      base_arpu: 100,
+      arpu_uplift: 5.0,
+      arpu_uplift_percent: 0.10,
+      churn_reduction: 0.20,
+      acquisition_uplift: 0.30
+    };
+
+    const scenario: Scenario = {
+      id: 'sc1',
+      name: 'Test Scenario',
+      projection_months: 12,
+      discount_rate: 0.10,
+      scope_type: 'cohorts',
+      scope_cohorts: [cohort],
+      services: [],
+      costs: []
+    };
+
+    it('applyAiUplifts: formula correctness', () => {
+      const uplifted = applyAiUplifts(cohort);
+      // churnRate = baseChurn * (1 - churn_reduction * ai_adoption_rate) = 0.05 * (1 - 0.2 * 0.5) = 0.05 * 0.9 = 0.045
+      expect(uplifted.monthly_churn_rate).toBeCloseTo(0.045, 4);
+      // acquisition = baseAcquisition * (1 + acquisition_uplift) = 100 * (1 + 0.3) = 130
+      expect(uplifted.monthly_acquisition).toBeCloseTo(130, 4);
+      // arpu = baseArpu * (1 + arpu_uplift_percent * ai_adoption_rate) + arpu_uplift * ai_adoption_rate = 100 * (1 + 0.1 * 0.5) + 5.0 * 0.5 = 105 + 2.5 = 107.5
+      expect(uplifted.base_arpu).toBeCloseTo(107.5, 4);
+    });
+
+    it('Zero uplifts → ΔRevenue = 0 every month, netCashFlow = -costs, NPV < 0, IRR null, payback null', () => {
+      const zeroUpliftCohort = {
+        ...cohort,
+        arpu_uplift: 0,
+        arpu_uplift_percent: 0,
+        churn_reduction: 0,
+        acquisition_uplift: 0
+      };
+      const costCapex: CostItem = {
+        id: 'cost1', name: 'Setup Fee', category: 'capex', amount: 1000, frequency: 'one_time', currency: 'USD'
+      };
+      const zeroUpliftScenario = {
+        ...scenario,
+        scope_cohorts: [zeroUpliftCohort],
+        costs: [costCapex]
+      };
+      const results = calculateScenario(zeroUpliftScenario, [provider]);
+      expect(results.npv).toBeLessThan(0);
+      expect(results.irrAnnual).toBeNull();
+      expect(results.paybackMonths).toBeNull();
+      results.timeline.forEach(t => {
+        expect(t.revenue).toBeCloseTo(0, 2);
+        expect(t.netCashFlow).toBeLessThanOrEqual(0);
+      });
+    });
+
+    it('Positive uplifts + one-time CAPEX → IRR and payback defined', () => {
+      const costCapex: CostItem = {
+        id: 'cost1', name: 'Setup Fee', category: 'capex', amount: 10000, frequency: 'one_time', currency: 'USD'
+      };
+      const testScenario = {
+        ...scenario,
+        costs: [costCapex]
+      };
+      const results = calculateScenario(testScenario, [provider]);
+      expect(results.npv).toBeGreaterThan(0);
+      expect(results.irrAnnual).not.toBeNull();
+      expect(results.paybackMonths).not.toBeNull();
+      expect(results.paybackMonths).toBeGreaterThan(0);
+    });
+
+    it('No CAPEX + immediate positive delta → payback 0, IRR null', () => {
+      const testScenario = {
+        ...scenario,
+        costs: []
+      };
+      const results = calculateScenario(testScenario, [provider]);
+      expect(results.npv).toBeGreaterThan(0);
+      expect(results.irrAnnual).toBeNull();
+      expect(results.paybackMonths).toBe(0);
+    });
+
+    it('Churn reduction ↑ ⇒ NPV ↑; retention floor binding ⇒ churn reduction delta → 0', () => {
+      const baseRes = calculateScenario(scenario, [provider]);
+      
+      const higherChurnReductionCohort = { ...cohort, churn_reduction: 0.90 };
+      const testScenarioHigher = { ...scenario, scope_cohorts: [higherChurnReductionCohort] };
+      const higherRes = calculateScenario(testScenarioHigher, [provider]);
+      expect(higherRes.npv).toBeGreaterThan(baseRes.npv);
+
+      // floor binding: if retention floor is 100% (floor=1.0) and current users = 1000, no one churns regardless of rate.
+      const floorCohort = { ...cohort, retention_floor: 1.0, current_users: 1000, monthly_acquisition: 0 };
+      const lowUpliftCohort = { ...floorCohort, churn_reduction: 0.1 };
+      const highUpliftCohort = { ...floorCohort, churn_reduction: 0.9 };
+
+      const lowRes = calculateScenario({ ...scenario, scope_cohorts: [lowUpliftCohort] }, [provider]);
+      const highRes = calculateScenario({ ...scenario, scope_cohorts: [highUpliftCohort] }, [provider]);
+      expect(lowRes.npv).toBeCloseTo(highRes.npv, 2);
+    });
+
+    it('Sensitivity: result set contains uplift dimensions and impact ordering is sane', () => {
+      const results = runSensitivityAnalysis(scenario, [provider]);
+      expect(results.results.length).toBeGreaterThan(0);
+      const params = results.results.map(r => r.parameter);
+      expect(params).toContain('AI Adoption Rate');
+      expect(params).toContain('Discount Rate');
+      expect(params).toContain('Churn Reduction Uplift');
+      expect(params).toContain('Acquisition Uplift');
+      expect(params).toContain('ARPU Uplift');
+
+      for (let i = 1; i < results.results.length; i++) {
+        expect(results.results[i-1].impactRange).toBeGreaterThanOrEqual(results.results[i].impactRange);
+      }
     });
   });
 });

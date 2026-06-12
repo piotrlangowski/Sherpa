@@ -36,24 +36,42 @@
 
   // 12-month live projection of the values currently in the form.
   // The /100 on percentage fields mirrors the server actions exactly.
-  let preview = $derived.by(() =>
-    buildCohortModel(
+  let preview = $derived.by(() => {
+    const aiAdoption = (+aiAdoptionRate || 0) / 100;
+    const churnRed = (+churnReduction || 0) / 100;
+    const acqUplift = (+acquisitionUplift || 0) / 100;
+    const arpuUpPct = (+arpuUpliftPercent || 0) / 100;
+    const arpuUp = +arpuUplift || 0;
+
+    const baseChurn = (+monthlyChurnRate || 0) / 100;
+    const baseAcquisition = +monthlyAcquisition || 0;
+    const baseArpuVal = +baseArpu || 0;
+
+    const effectiveChurn = baseChurn * (1 - churnRed * aiAdoption);
+    const effectiveAcquisition = baseAcquisition * (1 + acqUplift);
+    const effectiveArpu = baseArpuVal * (1 + arpuUpPct * aiAdoption) + arpuUp * aiAdoption;
+
+    return buildCohortModel(
       {
         id: 'preview',
         name,
         vertical_id: null,
         current_users: +currentUsers || 0,
-        monthly_acquisition: +monthlyAcquisition || 0,
+        monthly_acquisition: effectiveAcquisition,
         acquisition_growth_rate: (+acquisitionGrowthRate || 0) / 100,
-        monthly_churn_rate: (+monthlyChurnRate || 0) / 100,
+        monthly_churn_rate: effectiveChurn,
         retention_floor: (+retentionFloor || 0) / 100,
         monthly_expansion_rate: (+monthlyExpansionRate || 0) / 100,
-        ai_adoption_rate: (+aiAdoptionRate || 0) / 100,
-        base_arpu: +baseArpu || 0
+        ai_adoption_rate: aiAdoption,
+        base_arpu: effectiveArpu,
+        arpu_uplift: arpuUp,
+        arpu_uplift_percent: arpuUpPct,
+        churn_reduction: churnRed,
+        acquisition_uplift: acqUplift
       },
       12
-    )
-  );
+    );
+  });
 
   // Dialog State
   let showDialog = $state(false);
@@ -71,6 +89,10 @@
   let monthlyExpansionRate = $state(2);
   let aiAdoptionRate = $state(30);
   let baseArpu = $state(100);
+  let arpuUplift = $state(0);
+  let arpuUpliftPercent = $state(10);
+  let churnReduction = $state(15);
+  let acquisitionUplift = $state(10);
 
   const openCreateDialog = () => {
     dialogMode = 'create';
@@ -85,6 +107,10 @@
     monthlyExpansionRate = 2;
     aiAdoptionRate = 30;
     baseArpu = 100;
+    arpuUplift = 0;
+    arpuUpliftPercent = 10;
+    churnReduction = 15;
+    acquisitionUplift = 10;
     showDialog = true;
   };
 
@@ -101,6 +127,10 @@
     monthlyExpansionRate = Math.round(cohort.monthly_expansion_rate * 1000) / 10;
     aiAdoptionRate = Math.round(cohort.ai_adoption_rate * 1000) / 10;
     baseArpu = cohort.base_arpu;
+    arpuUplift = cohort.arpu_uplift || 0;
+    arpuUpliftPercent = Math.round((cohort.arpu_uplift_percent || 0) * 1000) / 10;
+    churnReduction = Math.round((cohort.churn_reduction || 0) * 1000) / 10;
+    acquisitionUplift = Math.round((cohort.acquisition_uplift || 0) * 1000) / 10;
     showDialog = true;
   };
 
@@ -520,6 +550,56 @@
       step={0.1}
       badge={{ text: `+${monthlyExpansionRate}% /mo`, tone: 'positive' }}
       help="Upsell / cross-sell"
+    />
+  </FormSection>
+
+  <FormSection title="AI impact assumptions (vs. baseline)">
+    <NumberField
+      id="arpuUplift"
+      name="arpuUplift"
+      bind:value={arpuUplift}
+      label="AI ARPU Uplift (Flat)"
+      prefix={currencySymbol}
+      suffix="/mo"
+      min={0}
+      step={0.01}
+      help="Flat ARPU increase for users adopting AI"
+    />
+    <NumberField
+      id="arpuUpliftPercent"
+      name="arpuUpliftPercent"
+      bind:value={arpuUpliftPercent}
+      label="AI ARPU Uplift (%)"
+      suffix="%"
+      min={0}
+      max={200}
+      step={0.1}
+      badge={{ text: `+${arpuUpliftPercent}%`, tone: 'positive' }}
+      help="Percentage ARPU increase for users adopting AI"
+    />
+    <NumberField
+      id="churnReduction"
+      name="churnReduction"
+      bind:value={churnReduction}
+      label="AI Churn Reduction"
+      suffix="%"
+      min={0}
+      max={100}
+      step={0.1}
+      badge={{ text: `${churnReduction}% Churn Red.`, tone: 'positive' }}
+      help="Percentage reduction of monthly churn for users adopting AI"
+    />
+    <NumberField
+      id="acquisitionUplift"
+      name="acquisitionUplift"
+      bind:value={acquisitionUplift}
+      label="AI Acquisition Uplift"
+      suffix="%"
+      min={0}
+      max={200}
+      step={0.1}
+      badge={{ text: `+${acquisitionUplift}%`, tone: 'positive' }}
+      help="Percentage increase in new-customer acquisition"
     />
   </FormSection>
 </FormDialog>

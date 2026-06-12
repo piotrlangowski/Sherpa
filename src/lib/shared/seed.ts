@@ -31,8 +31,9 @@ export function seedDatabase(db: DatabaseConnection): void {
       INSERT OR REPLACE INTO client_base (
         id, total_users, default_arpu, default_monthly_churn_rate, default_monthly_acquisition,
         default_acquisition_growth_rate, default_ai_adoption_rate, default_retention_floor,
-        default_expansion_rate, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        default_expansion_rate, default_arpu_uplift, default_arpu_uplift_percent,
+        default_churn_reduction, default_acquisition_uplift, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       'singleton',
       500000,
@@ -43,6 +44,10 @@ export function seedDatabase(db: DatabaseConnection): void {
       0.25,
       0.40,
       0.02,
+      0,
+      0.10,
+      0.15,
+      0.10,
       new Date().toISOString()
     );
 
@@ -146,12 +151,12 @@ export function seedDatabase(db: DatabaseConnection): void {
 
     // 9. Cohorts
     const insertCohort = db.prepare(`
-      INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const coLegalTech = uuidv4();
-    insertCohort.run(coLegalTech, 'LegalTech Professional Cohort', vLegalTech, 500, 50, 0.02, 0.03, 0.60, 0.015, 0.40, 149.00, now, now);
+    insertCohort.run(coLegalTech, 'LegalTech Professional Cohort', vLegalTech, 500, 50, 0.02, 0.03, 0.60, 0.015, 0.40, 149.00, 0, 0.10, 0.15, 0.10, now, now);
 
     // 10. Scenarios
     const insertScenario = db.prepare(`

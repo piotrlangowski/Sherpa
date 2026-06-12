@@ -8,7 +8,9 @@ export const cohortsRepository = {
     const rows = db.prepare(`
       SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition, 
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
-             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu, c.created_at, c.updated_at,
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
+             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.created_at, c.updated_at,
              v.name as vertical_name
       FROM cohort_configs c
       LEFT JOIN verticals v ON c.vertical_id = v.id
@@ -27,6 +29,10 @@ export const cohortsRepository = {
       monthly_expansion_rate: r.monthly_expansion_rate,
       ai_adoption_rate: r.ai_adoption_rate,
       base_arpu: r.base_arpu,
+      arpu_uplift: r.arpu_uplift,
+      arpu_uplift_percent: r.arpu_uplift_percent,
+      churn_reduction: r.churn_reduction,
+      acquisition_uplift: r.acquisition_uplift,
       created_at: r.created_at,
       updated_at: r.updated_at,
       vertical_name: r.vertical_name || undefined
@@ -37,7 +43,9 @@ export const cohortsRepository = {
     const r = db.prepare(`
       SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition, 
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
-             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu, c.created_at, c.updated_at,
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
+             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.created_at, c.updated_at,
              v.name as vertical_name
       FROM cohort_configs c
       LEFT JOIN verticals v ON c.vertical_id = v.id
@@ -57,6 +65,10 @@ export const cohortsRepository = {
       monthly_expansion_rate: r.monthly_expansion_rate,
       ai_adoption_rate: r.ai_adoption_rate,
       base_arpu: r.base_arpu,
+      arpu_uplift: r.arpu_uplift,
+      arpu_uplift_percent: r.arpu_uplift_percent,
+      churn_reduction: r.churn_reduction,
+      acquisition_uplift: r.acquisition_uplift,
       created_at: r.created_at,
       updated_at: r.updated_at,
       vertical_name: r.vertical_name || undefined
@@ -69,7 +81,9 @@ export const cohortsRepository = {
     const rows = db.prepare(`
       SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition, 
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
-             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu, c.created_at, c.updated_at,
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
+             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.created_at, c.updated_at,
              v.name as vertical_name
       FROM cohort_configs c
       LEFT JOIN verticals v ON c.vertical_id = v.id
@@ -89,6 +103,10 @@ export const cohortsRepository = {
       monthly_expansion_rate: r.monthly_expansion_rate,
       ai_adoption_rate: r.ai_adoption_rate,
       base_arpu: r.base_arpu,
+      arpu_uplift: r.arpu_uplift,
+      arpu_uplift_percent: r.arpu_uplift_percent,
+      churn_reduction: r.churn_reduction,
+      acquisition_uplift: r.acquisition_uplift,
       created_at: r.created_at,
       updated_at: r.updated_at,
       vertical_name: r.vertical_name || undefined
@@ -102,8 +120,10 @@ export const cohortsRepository = {
     db.prepare(`
       INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, 
                                  acquisition_growth_rate, monthly_churn_rate, retention_floor, 
-                                 monthly_expansion_rate, ai_adoption_rate, base_arpu, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 monthly_expansion_rate, ai_adoption_rate, base_arpu,
+                                 arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+                                 created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.name,
@@ -116,6 +136,10 @@ export const cohortsRepository = {
       data.monthly_expansion_rate,
       data.ai_adoption_rate,
       data.base_arpu,
+      data.arpu_uplift ?? 0,
+      data.arpu_uplift_percent ?? 0,
+      data.churn_reduction ?? 0,
+      data.acquisition_uplift ?? 0,
       now,
       now
     );
@@ -137,13 +161,19 @@ export const cohortsRepository = {
     const monthly_expansion_rate = data.monthly_expansion_rate !== undefined ? data.monthly_expansion_rate : current.monthly_expansion_rate;
     const ai_adoption_rate = data.ai_adoption_rate !== undefined ? data.ai_adoption_rate : current.ai_adoption_rate;
     const base_arpu = data.base_arpu !== undefined ? data.base_arpu : current.base_arpu;
+    const arpu_uplift = data.arpu_uplift !== undefined ? data.arpu_uplift : current.arpu_uplift;
+    const arpu_uplift_percent = data.arpu_uplift_percent !== undefined ? data.arpu_uplift_percent : current.arpu_uplift_percent;
+    const churn_reduction = data.churn_reduction !== undefined ? data.churn_reduction : current.churn_reduction;
+    const acquisition_uplift = data.acquisition_uplift !== undefined ? data.acquisition_uplift : current.acquisition_uplift;
     const now = new Date().toISOString();
     
     db.prepare(`
       UPDATE cohort_configs
       SET name = ?, vertical_id = ?, current_users = ?, monthly_acquisition = ?, 
           acquisition_growth_rate = ?, monthly_churn_rate = ?, retention_floor = ?, 
-          monthly_expansion_rate = ?, ai_adoption_rate = ?, base_arpu = ?, updated_at = ?
+          monthly_expansion_rate = ?, ai_adoption_rate = ?, base_arpu = ?,
+          arpu_uplift = ?, arpu_uplift_percent = ?, churn_reduction = ?, acquisition_uplift = ?,
+          updated_at = ?
       WHERE id = ?
     `).run(
       name,
@@ -156,6 +186,10 @@ export const cohortsRepository = {
       monthly_expansion_rate,
       ai_adoption_rate,
       base_arpu,
+      arpu_uplift,
+      arpu_uplift_percent,
+      churn_reduction,
+      acquisition_uplift,
       now,
       id
     );
