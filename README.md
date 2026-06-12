@@ -8,11 +8,20 @@
 
 Built for product leaders (CPO/RevOps) at SaaS companies, it also ships as an **MCP server**, so you can model scenarios conversationally from Claude Desktop: *"create a scenario with 5,000 users, 4% churn and a $150 ARPU chatbot rollout"*.
 
+### Why Sherpa
+By this name I wanted to convey two things:
+1. This is a journey that is hard and complicated. We have many tools nowaydays to make it easier, but we still go into the uknown (be it everest or todays markets) and only our prepardness makes it successful.
+2. This is a private exeperience. Here are you, your data and your decisions in this specific moment in time. It is your soliloquy.
+
 **Work your way**
 Work as a Claude Desktop App user connecting to a permanent data source that **lives only on your computer, locally, private**
-<img width="1090" height="837" alt="image" src="https://github.com/user-attachments/assets/b8ad0e5c-9fae-42e5-a18e-7def845818c0" />
+
+<img width="902" height="765" alt="image" src="https://github.com/user-attachments/assets/c0414aa0-2104-4acb-980e-45f878d95f4a" />
+
 or as a separate App with its own UI
-<img width="1397" height="779" alt="image" src="https://github.com/user-attachments/assets/c9519369-fc08-4352-b7aa-6cd28d2d4625" />
+
+<img width="1430" height="790" alt="image" src="https://github.com/user-attachments/assets/f8e8b706-5064-400c-8d8f-b13dd19944ec" />
+
 data:
 * **is stored on your computer**
 * **stays in sync between the two modes**
@@ -48,7 +57,7 @@ First launch opens a 3-step setup wizard and seeds a demo workspace ("Acme Analy
 
 The dev registration pins the database to the repo's `data/sherpa.db` (via `SHERPA_DB_PATH`), so whatever you model in conversation shows up in the web dashboard and vice versa. For tool development without Claude Desktop, `npm run mcp:inspect` opens the MCP Inspector against the built server.
 
-### Manual installation (workaround for Claude Desktop 1.12603.x)
+### Alternative installation (workaround for Claude Desktop 1.12603.x)
 
 > **Note:** Claude Desktop **1.12603.1** (June 2026) has a regression where installing *any* local `.mcpb` file fails with `Failed to handle file: … reply was never sent` — on both macOS and Windows, regardless of the extension being installed. Until a fixed Claude Desktop ships, you can register Sherpa as a regular local MCP server instead. You get the same tools, the same dashboard and the same local database — only the install mechanism differs.
 
@@ -56,54 +65,15 @@ The dev registration pins the database to the repo's `data/sherpa.db` (via `SHER
 
 1. **Download** `sherpa.mcpb` from the [latest release](https://github.com/piotrlangowski/Sherpa/releases).
 
-2. **Extract it** — a `.mcpb` file is just a ZIP archive. Put it in a permanent location (Claude will launch the server from there on every start):
-
-   *macOS:*
-   ```bash
-   mkdir -p ~/sherpa-extension && unzip sherpa.mcpb -d ~/sherpa-extension
-   ```
-
-   *Windows (PowerShell):*
-   ```powershell
-   Rename-Item sherpa.mcpb sherpa.zip
-   Expand-Archive sherpa.zip -DestinationPath C:\sherpa-extension
-   ```
-
-   After extraction the folder should contain `build/`, `app/`, `node_modules/`, `manifest.json` and `package.json`.
-
-3. **Open the Claude Desktop config file** — in Claude Desktop go to **Settings → Developer → Edit Config**, or open it directly:
-   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-4. **Register the server** — add Sherpa under `mcpServers` (if the key already exists, merge the entry into it):
-
-   *macOS:*
-   ```json
-   {
-     "mcpServers": {
-       "sherpa": {
-         "command": "node",
-         "args": ["/Users/YOUR_USERNAME/sherpa-extension/build/index.js"]
-       }
-     }
-   }
-   ```
-
-   *Windows* (note the doubled backslashes — required in JSON):
-   ```json
-   {
-     "mcpServers": {
-       "sherpa": {
-         "command": "node",
-         "args": ["C:\\sherpa-extension\\build\\index.js"]
-       }
-     }
-   }
-   ```
+2. **Extract it** — a `.mcpb` file is just a ZIP archive. Put it where you want
+3. **Install** - go into Claude > Settings > Extensions > Advanced Settings and this time choose **Install Unpacked Version** - second option from the left <img width="849" height="641" alt="image" src="https://github.com/user-attachments/assets/12ebd70e-bf2a-4122-8a64-a3c670fcbe93" />
+4. **Choose folder with unpacked Sherpa** Proceed with installation after which you will see Sherpa installed:<img width="957" height="700" alt="image" src="https://github.com/user-attachments/assets/8c546904-3213-427c-81c8-fabcc9bac659" />
 
 5. **Fully restart Claude Desktop** — quit the app entirely (macOS: Cmd+Q; Windows: File → Exit, not just closing the window) and start it again.
 
-6. **Verify** — the `sherpa` server should appear under Settings → Developer as running. In a chat, ask Claude to *"open the Sherpa dashboard"* — the web UI should open in your browser, seeded with the demo workspace on first run.
+6. **Verify** — the `sherpa` server should appear under Settings → Developer as running. <img width="948" height="626" alt="image" src="https://github.com/user-attachments/assets/60f9cd2b-6f02-4a41-b712-331d7ca4a5bf" />
+
+7. In a chat, ask Claude to *"open the Sherpa dashboard"* — the web UI should open in your browser, seeded with the demo workspace on first run.
 
 **Good to know:**
 
@@ -209,20 +179,6 @@ Design decisions worth a look:
 - Windows: `%APPDATA%\Sherpa\sherpa.db` (usually `C:\Users\<User>\AppData\Roaming\Sherpa\sherpa.db`)
 
 Any scenarios you create conversationally are immediately visible in the UI.
-
-### One-click extension (.mcpb)
-
-For non-technical users, you can install the pre-built extension directly:
-
-1. **Download**: Click [Download latest sherpa.mcpb](https://github.com/piotrlangowski/Sherpa/releases/latest/download/sherpa.mcpb).
-2. **Install**: In Claude Desktop, go to **Settings → Extensions** and **drag & drop `sherpa.mcpb`**.
-3. **Upgrade**: When upgrading from a previous version:
-   - Uninstall the old Sherpa extension from settings.
-   - Close Claude Desktop completely (quit from the menu bar / system tray).
-   - Re-open Claude Desktop and drag & drop the new `sherpa.mcpb` file.
-   - *Your local database and scenario data will be preserved.*
-
-On first run the extension creates its own database (with the demo workspace) in the OS user data directory. (Note: To run the SvelteKit web dashboard in your browser, a system-wide Node.js installation is required so the launcher can bind the HTTP server. Conversation-only MCP tools in Claude Desktop do *not* require Node.js).
 
 ### Dev vs. packaged — separate environments
 
