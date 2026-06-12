@@ -48,6 +48,70 @@ First launch opens a 3-step setup wizard and seeds a demo workspace ("Acme Analy
 
 The dev registration pins the database to the repo's `data/sherpa.db` (via `SHERPA_DB_PATH`), so whatever you model in conversation shows up in the web dashboard and vice versa. For tool development without Claude Desktop, `npm run mcp:inspect` opens the MCP Inspector against the built server.
 
+### Manual installation (workaround for Claude Desktop 1.12603.x)
+
+> **Note:** Claude Desktop **1.12603.1** (June 2026) has a regression where installing *any* local `.mcpb` file fails with `Failed to handle file: … reply was never sent` — on both macOS and Windows, regardless of the extension being installed. Until a fixed Claude Desktop ships, you can register Sherpa as a regular local MCP server instead. You get the same tools, the same dashboard and the same local database — only the install mechanism differs.
+
+**Prerequisite:** Node.js ≥ 22.5 installed and on your `PATH` (check with `node --version`). Unlike the one-click extension, manual mode runs on your system Node, not the runtime bundled with Claude Desktop. Download from [nodejs.org](https://nodejs.org) if needed.
+
+1. **Download** `sherpa.mcpb` from the [latest release](https://github.com/piotrlangowski/Sherpa/releases).
+
+2. **Extract it** — a `.mcpb` file is just a ZIP archive. Put it in a permanent location (Claude will launch the server from there on every start):
+
+   *macOS:*
+   ```bash
+   mkdir -p ~/sherpa-extension && unzip sherpa.mcpb -d ~/sherpa-extension
+   ```
+
+   *Windows (PowerShell):*
+   ```powershell
+   Rename-Item sherpa.mcpb sherpa.zip
+   Expand-Archive sherpa.zip -DestinationPath C:\sherpa-extension
+   ```
+
+   After extraction the folder should contain `build/`, `app/`, `node_modules/`, `manifest.json` and `package.json`.
+
+3. **Open the Claude Desktop config file** — in Claude Desktop go to **Settings → Developer → Edit Config**, or open it directly:
+   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+4. **Register the server** — add Sherpa under `mcpServers` (if the key already exists, merge the entry into it):
+
+   *macOS:*
+   ```json
+   {
+     "mcpServers": {
+       "sherpa": {
+         "command": "node",
+         "args": ["/Users/YOUR_USERNAME/sherpa-extension/build/index.js"]
+       }
+     }
+   }
+   ```
+
+   *Windows* (note the doubled backslashes — required in JSON):
+   ```json
+   {
+     "mcpServers": {
+       "sherpa": {
+         "command": "node",
+         "args": ["C:\\sherpa-extension\\build\\index.js"]
+       }
+     }
+   }
+   ```
+
+5. **Fully restart Claude Desktop** — quit the app entirely (macOS: Cmd+Q; Windows: File → Exit, not just closing the window) and start it again.
+
+6. **Verify** — the `sherpa` server should appear under Settings → Developer as running. In a chat, ask Claude to *"open the Sherpa dashboard"* — the web UI should open in your browser, seeded with the demo workspace on first run.
+
+**Good to know:**
+
+- **Your data is in the same place as with the extension.** The database defaults to `~/Library/Application Support/Sherpa/sherpa.db` (macOS) / `%APPDATA%\Sherpa\sherpa.db` (Windows) — exactly where the one-click extension keeps it. If you used the extension before, all your scenarios are already there; nothing to migrate.
+- **Custom database location:** add an `env` block to the entry: `"env": { "SHERPA_DB_PATH": "/path/to/sherpa.db" }`.
+- **Switching back when the bug is fixed:** remove the `sherpa` entry from `claude_desktop_config.json`, restart Claude Desktop, and install `sherpa.mcpb` the normal way. Your data carries over automatically. Don't run both at once — you'd get duplicate tools.
+- **Updating:** manual installs don't auto-update. To update, download the new release and extract it over the same folder.
+
 ### Launching the Dashboard from Claude Desktop
 
 You can open and close the web dashboard directly from your chat with Claude using the new MCP tools:
