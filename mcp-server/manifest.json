@@ -51,7 +51,7 @@
       "linux"
     ],
     "runtimes": {
-      "node": ">=16.0.0"
+      "node": ">=22.5.0"
     }
   },
   "tools": [
