@@ -93,3 +93,13 @@ A `Scenario` targets a **scope** (`scope_type`: `all_clients` | `verticals` | `c
 - **Database lock & busy_timeout**: SvelteKit and MCP write to the same SQLite WAL file. Both connection initialization paths must set `db.pragma('busy_timeout = 5000')` to handle lock contention.
 - **Health check contract**: SvelteKit exposes `/api/health` returning `{ ok: true, name: 'sherpa', version, dbPath }`. The `name` proving identity and `version` mapping to `package.json` are critical for launcher validation; `dbPath` must match the launcher's resolved DB or the dashboard is treated as belonging to a different Sherpa install (not reused, not killed).
 - `.npmrc` sets `engine-strict=true`.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
