@@ -135,7 +135,7 @@
   <!-- Back navigation & Header -->
   <div class="flex items-center justify-between">
     <div class="flex items-center space-x-3">
-      <Button href="/market/verticals" variant="ghost" size="icon" class="h-8 w-8 hover:bg-white/5">
+      <Button href="/market/verticals" variant="ghost" size="icon" class="h-8 w-8 hover:bg-foreground/5">
         <ArrowLeft class="h-4 w-4" />
       </Button>
       <div>
@@ -146,7 +146,7 @@
   </div>
 
   {#if errorMsg}
-    <Alert variant="destructive" class="border-rose-500/20 bg-rose-500/5 text-rose-400">
+    <Alert variant="destructive" class="border-rose-500/20 bg-rose-500/5 text-rose-600 dark:text-rose-400">
       <AlertTriangle class="h-4 w-4" />
       <AlertTitle>Import Error</AlertTitle>
       <AlertDescription>{errorMsg}</AlertDescription>
@@ -154,7 +154,7 @@
   {/if}
 
   {#if successMsg}
-    <Alert variant="default" class="border-emerald-500/20 bg-emerald-500/5 text-emerald-400">
+    <Alert variant="default" class="border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400">
       <CheckCircle class="h-4 w-4" />
       <AlertTitle>Success</AlertTitle>
       <AlertDescription>{successMsg}</AlertDescription>
@@ -173,7 +173,7 @@
       <!-- Drag and drop zone -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="border-2 border-dashed rounded-lg p-8 text-center transition-all duration-150 {isDragging ? 'border-primary bg-primary/5' : 'border-border hover:bg-white/5'}"
+        class="border-2 border-dashed rounded-lg p-8 text-center transition-all duration-150 {isDragging ? 'border-primary bg-primary/5' : 'border-border hover:bg-foreground/5'}"
         ondragover={(e) => { e.preventDefault(); isDragging = true; }}
         ondragleave={() => isDragging = false}
         ondrop={handleFileDrop}
@@ -200,11 +200,11 @@
           bind:value={csvText}
           rows="6"
           placeholder="Company,Vertical,JoinDate,Status,Revenue&#10;Acme Corp,Software,2026-01-15,Active,150&#10;Beta Inc,Finance,2026-02-10,Active,300&#10;Gamma LLC,Healthcare,2026-01-05,Churned,80"
-          class="w-full bg-black/10 border border-input rounded-md p-3 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
+          class="w-full glass-inset border border-input rounded-md p-3 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
         ></textarea>
       </div>
     </CardContent>
-    <CardFooter class="border-t border-border bg-black/10 py-4 flex justify-end">
+    <CardFooter class="border-t border-border glass-inset py-4 flex justify-end">
       <Button onclick={generatePreview} disabled={isLoading} size="sm">
         {#if isLoading}
           <RefreshCw class="h-4 w-4 mr-2 animate-spin" /> Parsing & Calculating...
@@ -219,7 +219,7 @@
   {#if previewVerticals}
     <div class="pt-2 transition-all duration-200">
       <Card class="border-border shadow-sm">
-        <CardHeader class="border-b border-border bg-black/10 flex flex-row items-center justify-between">
+        <CardHeader class="border-b border-border glass-inset flex flex-row items-center justify-between">
           <div>
             <CardTitle>Calculated Import Preview</CardTitle>
             <CardDescription>Review the computed segments and cohort averages before committing them to the database.</CardDescription>
@@ -244,7 +244,7 @@
               <tbody class="divide-y divide-border/60">
                 {#each previewVerticals as vertical}
                   {#each vertical.cohorts as cohort, idx}
-                    <tr class="hover:bg-white/5 transition-all duration-150">
+                    <tr class="hover:bg-foreground/5 transition-all duration-150">
                       {#if idx === 0}
                         <td class="p-4 font-bold align-middle border-r border-border/40 text-foreground bg-primary/5" rowspan={vertical.cohorts.length}>
                           {vertical.name}
@@ -254,8 +254,8 @@
                       <td class="p-4 font-semibold text-primary/90">{cohort.name}</td>
                       <td class="p-4 text-right font-mono font-medium">{formatNumber(cohort.currentUsers)}</td>
                       <td class="p-4 text-right font-mono font-bold text-foreground">{formatCurrency(cohort.baseArpu, appState.currency)}</td>
-                      <td class="p-4 text-right font-mono text-rose-400">{formatPercent(cohort.monthlyChurnRate)}</td>
-                      <td class="p-4 text-right font-mono text-emerald-400">+{formatNumber(cohort.monthlyAcquisition)} /mo</td>
+                      <td class="p-4 text-right font-mono text-rose-600 dark:text-rose-400">{formatPercent(cohort.monthlyChurnRate)}</td>
+                      <td class="p-4 text-right font-mono text-emerald-600 dark:text-emerald-400">+{formatNumber(cohort.monthlyAcquisition)} /mo</td>
                     </tr>
                   {/each}
                 {/each}

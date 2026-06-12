@@ -21,6 +21,10 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Info from '@lucide/svelte/icons/info';
   import Search from '@lucide/svelte/icons/search';
+  import ArrowDown from '@lucide/svelte/icons/arrow-down';
+
+  import * as Select from '$lib/components/ui/select/index.js';
+  import { FormDialog, FormField } from '$lib/components/forms';
 
   let { data, form } = $props();
 
@@ -70,6 +74,19 @@
   let sourceId = $state('');
   let targetId = $state('');
   let dependencyType = $state<'requires' | 'enhanced_by' | 'replaces'>('requires');
+
+  const sourceLabel = $derived(
+    data.services.find((s: any) => s.id === sourceId)?.name ?? 'Select Source'
+  );
+  const targetLabel = $derived(
+    data.services.find((s: any) => s.id === targetId)?.name ?? 'Select Target'
+  );
+
+  const relationshipOptions = [
+    { value: 'requires', title: 'Requires', description: 'Hard dependency — source cannot ship without target' },
+    { value: 'enhanced_by', title: 'Enhanced by', description: 'Soft link — target boosts quality of the source' },
+    { value: 'replaces', title: 'Replaces', description: 'Substitutes an older model or service' }
+  ] as const;
 
   // Prepare graph data for ECharts
   let graphNodes = $derived(
@@ -213,8 +230,8 @@
 
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <!-- Visual Graph Card -->
-    <Card class="border-border lg:col-span-2 bg-card/30 backdrop-blur-sm flex flex-col justify-between shadow-sm select-none">
-      <CardHeader class="pb-2 border-b border-border bg-black/5">
+    <Card class="border-border lg:col-span-2 glass border flex flex-col justify-between shadow-sm select-none">
+      <CardHeader class="pb-2 border-b border-border glass-inset">
         <div class="flex justify-between items-center">
           <div class="flex items-center space-x-2 text-primary">
             <GitFork class="h-5 w-5" />
@@ -241,8 +258,8 @@
     </Card>
 
     <!-- Right side list list -->
-    <Card class="border-border bg-card/30 backdrop-blur-sm shadow-sm flex flex-col justify-between">
-      <CardHeader class="pb-3 border-b border-border bg-black/5 select-none">
+    <Card class="border-border glass border flex flex-col justify-between">
+      <CardHeader class="pb-3 border-b border-border glass-inset select-none">
         <CardTitle class="text-base font-bold text-foreground">Configured Links</CardTitle>
         <CardDescription>A tabular breakdown of active graph edges.</CardDescription>
       </CardHeader>
@@ -256,7 +273,7 @@
               <Input
                 type="text"
                 placeholder="Find links..."
-                class="pl-8 h-8 text-xs bg-background/50 border-border"
+                class="pl-8 h-8 text-xs bg-(--glass-inset-bg) border-border"
                 bind:value={searchQuery}
               />
             </div>
@@ -264,7 +281,7 @@
               <!-- Sort -->
               <select
                 bind:value={sortBy}
-                class="w-full bg-background/50 border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                class="w-full bg-(--glass-inset-bg) border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 <option value="source_asc">Source (A-Z)</option>
                 <option value="source_desc">Source (Z-A)</option>
@@ -274,7 +291,7 @@
               <!-- Type Filter -->
               <select
                 bind:value={typeFilter}
-                class="w-full bg-background/50 border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                class="w-full bg-(--glass-inset-bg) border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 <option value="all">All Types</option>
                 <option value="requires">Requires</option>
@@ -322,7 +339,7 @@
       </CardContent>
       
       <!-- Graph help note -->
-      <CardFooter class="border-t border-border bg-black/5 py-3 select-none flex items-start space-x-2 text-xs text-muted-foreground">
+      <CardFooter class="border-t border-border glass-inset py-3 select-none flex items-start space-x-2 text-xs text-muted-foreground">
         <Info class="h-4 w-4 shrink-0 text-primary mt-0.5" />
         <p>Use the drag/zoom controls on the graph. Solid lines indicate strict requirements; dashed links indicate enhancements.</p>
       </CardFooter>
@@ -331,83 +348,67 @@
 </div>
 
 <!-- Add Dependency Dialog -->
-{#if showAddDialog}
-  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <Card class="w-full max-w-md border-border shadow-2xl bg-card">
-      <form method="POST" action="?/addDependency" use:enhance={() => {
-        isSaving = true;
-        return async ({ update }) => {
-          await update();
-          isSaving = false;
-          showAddDialog = false;
-        };
-      }}>
-        <CardHeader class="border-b border-border bg-black/10">
-          <CardTitle class="text-lg font-bold">Add Dependency Edge</CardTitle>
-          <CardDescription>Link two services together to define requirements.</CardDescription>
-        </CardHeader>
-        
-        <CardContent class="py-4 space-y-4">
-          <!-- Source -->
-          <div class="space-y-1.5">
-            <Label for="sourceId">Source Service (Depends on...)</Label>
-            <select
-              id="sourceId"
-              name="sourceId"
-              bind:value={sourceId}
-              required
-              class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="" disabled selected>Select Source</option>
-              {#each data.services as service}
-                <option value={service.id}>{service.name} ({service.status})</option>
-              {/each}
-            </select>
-          </div>
+<FormDialog
+  bind:open={showAddDialog}
+  bind:busy={isSaving}
+  size="sm"
+  icon={GitFork}
+  title="Add Dependency Edge"
+  description="Link two services together to define requirements."
+  action="?/addDependency"
+  submitLabel="Add Link"
+>
+  <FormField label="Source Service (Depends on...)" required>
+    <Select.Root type="single" name="sourceId" bind:value={sourceId} required>
+      <Select.Trigger class="w-full bg-(--glass-inset-bg)">
+        {sourceLabel}
+      </Select.Trigger>
+      <Select.Content>
+        {#each data.services as service}
+          <Select.Item value={service.id} label="{service.name} ({service.status})" />
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </FormField>
 
-          <!-- Type -->
-          <div class="space-y-1.5">
-            <Label for="dependencyType">Relationship Type</Label>
-            <select
-              id="dependencyType"
-              name="dependencyType"
-              bind:value={dependencyType}
-              required
-              class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="requires">Requires (Hard Dependency)</option>
-              <option value="enhanced_by">Enhanced By (Soft / Quality Boost)</option>
-              <option value="replaces">Replaces (Substitutes Older Model)</option>
-            </select>
+  <FormField label="Relationship Type" required>
+    <div class="grid gap-2" role="radiogroup" aria-label="Relationship type">
+      {#each relationshipOptions as option}
+        <label class="cursor-pointer">
+          <input
+            type="radio"
+            name="dependencyType"
+            value={option.value}
+            bind:group={dependencyType}
+            class="peer sr-only"
+          />
+          <div
+            class="rounded-xl border border-border bg-(--glass-inset-bg) px-3 py-2.5 transition-colors peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary/30 peer-focus-visible:ring-2 peer-focus-visible:ring-ring"
+          >
+            <div class="text-sm font-bold">{option.title}</div>
+            <div class="text-xs text-muted-foreground">{option.description}</div>
           </div>
+        </label>
+      {/each}
+    </div>
+  </FormField>
 
-          <!-- Target -->
-          <div class="space-y-1.5">
-            <Label for="targetId">Target Service (The dependency)</Label>
-            <select
-              id="targetId"
-              name="targetId"
-              bind:value={targetId}
-              required
-              class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="" disabled selected>Select Target</option>
-              {#each data.services as service}
-                {#if service.id !== sourceId}
-                  <option value={service.id}>{service.name} ({service.status})</option>
-                {/if}
-              {/each}
-            </select>
-          </div>
-        </CardContent>
-        
-        <CardFooter class="border-t border-border bg-black/10 py-3 flex justify-end space-x-2">
-          <Button variant="outline" onclick={() => showAddDialog = false} disabled={isSaving}>Cancel</Button>
-          <Button type="submit" disabled={isSaving}>
-            {#if isSaving}Adding...{:else}Add Link{/if}
-          </Button>
-        </CardFooter>
-      </form>
-    </Card>
+  <div class="flex justify-center text-muted-foreground" aria-hidden="true">
+    <ArrowDown class="h-4 w-4" />
   </div>
-{/if}
+
+  <FormField label="Target Service (The dependency)" required>
+    <Select.Root type="single" name="targetId" bind:value={targetId} required>
+      <Select.Trigger class="w-full bg-(--glass-inset-bg)">
+        {targetLabel}
+      </Select.Trigger>
+      <Select.Content>
+        {#each data.services as service}
+          {#if service.id !== sourceId}
+            <Select.Item value={service.id} label="{service.name} ({service.status})" />
+          {/if}
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </FormField>
+</FormDialog>

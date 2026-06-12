@@ -1,7 +1,8 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { onMount } from 'svelte';
-  import { formatCurrency } from '$lib/utils/format';
+  import { formatCurrency, getCurrencySymbol } from '$lib/utils/format';
+  import { FormDialog, FormSection, FormField, NumberField } from '$lib/components/forms';
   import { PROVIDER_PRICES_AS_OF } from '$lib/utils/constants';
   import type { Currency } from '$lib/shared/types';
   import Button from '$lib/components/ui/button/button.svelte';
@@ -153,7 +154,7 @@
   </div>
 
   <!-- Controls Row -->
-  <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-card/20 border border-border/80 p-3 rounded-xl backdrop-blur-xs select-none">
+  <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between glass border p-3 rounded-xl select-none">
     <div class="flex flex-1 flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
       <!-- Quick Find Search -->
       <div class="relative flex-1 max-w-md">
@@ -161,7 +162,7 @@
         <Input
           type="text"
           placeholder="Quick find providers or models..."
-          class="pl-9 bg-background/50 border-border"
+          class="pl-9 bg-(--glass-inset-bg) border-border"
           bind:value={searchQuery}
         />
       </div>
@@ -169,7 +170,7 @@
       <!-- Sort Select -->
       <select
         bind:value={sortBy}
-        class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
       >
         <option value="provider_asc">Provider (A - Z)</option>
         <option value="provider_desc">Provider (Z - A)</option>
@@ -185,7 +186,7 @@
       <!-- Type Filter -->
       <select
         bind:value={typeFilter}
-        class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
       >
         <option value="all">All Types</option>
         <option value="standard">Standard</option>
@@ -223,15 +224,15 @@
     <!-- Card Grid View -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-200">
       {#each filteredProviders as provider (provider.id)}
-        <Card class="border-border bg-card/45 backdrop-blur-sm shadow-sm flex flex-col justify-between hover:border-primary/20 transition-all duration-300 group">
-          <CardHeader class="pb-3 border-b border-border bg-black/5">
+        <Card class="glass border flex flex-col justify-between hover:border-primary/20 transition-all duration-300 group">
+          <CardHeader class="pb-3 border-b border-border glass-inset">
             <div class="flex justify-between items-start">
               <div class="flex items-center space-x-2.5 text-primary">
                 <Server class="h-5 w-5 group-hover:scale-105 transition-transform" />
                 <CardTitle class="text-base font-bold text-foreground line-clamp-1">{provider.name}</CardTitle>
               </div>
               {#if provider.is_predefined}
-                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider select-none">
+                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wider select-none">
                   Standard
                 </span>
               {:else}
@@ -264,7 +265,7 @@
             </div>
           </CardContent>
 
-          <CardFooter class="border-t border-border bg-black/5 py-3 flex justify-end space-x-2">
+          <CardFooter class="border-t border-border glass-inset py-3 flex justify-end space-x-2">
             <Button variant="outline" size="sm" onclick={() => openEdit(provider)}>
               <Edit2 class="h-3.5 w-3.5 mr-1.5" /> Edit
             </Button>
@@ -291,7 +292,7 @@
       <CardContent class="p-0">
         <div class="overflow-x-auto">
           <table class="w-full text-sm text-left border-collapse">
-            <thead class="bg-muted/40 border-y border-border text-xs text-muted-foreground font-semibold uppercase tracking-wider">
+            <thead class="glass-inset border-y border-border text-xs text-muted-foreground font-semibold uppercase tracking-wider">
               <tr>
                 <th class="px-6 py-4">Provider</th>
                 <th class="px-6 py-4">Model Name</th>
@@ -314,7 +315,7 @@
                   <td class="px-6 py-4 text-right">{formatCurrency(provider.output_price, provider.currency || 'USD', 2)}</td>
                   <td class="px-6 py-4">
                     {#if provider.is_predefined}
-                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                         Standard
                       </span>
                     {:else}
@@ -350,78 +351,79 @@
 </div>
 
 <!-- Edit / Create Provider Dialog -->
-{#if showEditDialog}
-  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
-    <Card class="w-full max-w-md border-border shadow-2xl bg-card">
-      <form method="POST" action="?/saveProvider" use:enhance={() => {
-        isSaving = true;
-        return async ({ update }) => {
-          await update();
-          isSaving = false;
-          showEditDialog = false;
-        };
-      }}>
-        <CardHeader class="border-b border-border bg-black/10">
-          <CardTitle class="text-lg font-bold">
-            {id ? 'Edit Model Pricing' : 'Add Custom AI Model'}
-          </CardTitle>
-          <CardDescription>
-            Input pricing parameters below. Prices should be input in USD per million tokens.
-          </CardDescription>
-        </CardHeader>
-        
-        <CardContent class="py-4 space-y-4">
-          <input type="hidden" name="id" value={id} />
+<FormDialog
+  bind:open={showEditDialog}
+  bind:busy={isSaving}
+  size="sm"
+  icon={Server}
+  title={id ? 'Edit Model Pricing' : 'Add Custom AI Model'}
+  description="Token prices per million tokens."
+  action="?/saveProvider"
+  submitLabel="Save Model"
+>
+  <input type="hidden" name="id" value={id} />
 
-          <div class="space-y-1.5">
-            <Label for="name">Provider Name</Label>
-            <Input id="name" name="name" placeholder="e.g. OpenAI, Anthropic, Custom" bind:value={name} required class="bg-background/50" />
-          </div>
+  <FormSection title="Identity" hero columns={1}>
+    <FormField label="Provider Name" forId="name" required>
+      <Input
+        id="name"
+        name="name"
+        placeholder="e.g. OpenAI, Anthropic, Custom"
+        bind:value={name}
+        required
+        class="h-11 bg-(--glass-inset-bg) text-base"
+      />
+    </FormField>
+    <FormField label="Model Name" forId="modelName" required help="Exact API model id">
+      <Input
+        id="modelName"
+        name="modelName"
+        placeholder="e.g. gpt-4o-custom"
+        bind:value={modelName}
+        required
+        class="bg-(--glass-inset-bg) font-mono"
+      />
+    </FormField>
+  </FormSection>
 
-          <div class="space-y-1.5">
-            <Label for="modelName">Model Name</Label>
-            <Input id="modelName" name="modelName" placeholder="e.g. gpt-4o-custom" bind:value={modelName} required class="bg-background/50" />
-          </div>
-
-          <div class="space-y-1.5">
-            <Label for="currency">Currency</Label>
-            <select
-              id="currency"
-              name="currency"
-              bind:value={currency}
-              disabled={isPredefined}
-              class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <option value="USD">USD ($)</option>
-              <option value="EUR">EUR (€)</option>
-              <option value="PLN">PLN (zł)</option>
-              <option value="GBP">GBP (£)</option>
-            </select>
-            {#if isPredefined}
-              <p class="text-[10px] text-muted-foreground">Predefined models are always priced in USD.</p>
-            {/if}
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <div class="space-y-1.5">
-              <Label for="inputPrice">Input Price (per 1M)</Label>
-              <Input id="inputPrice" name="inputPrice" type="number" step="0.0001" min="0" bind:value={inputPrice} required class="bg-background/50 text-right font-mono" />
-            </div>
-            <div class="space-y-1.5">
-              <Label for="outputPrice">Output Price (per 1M)</Label>
-              <Input id="outputPrice" name="outputPrice" type="number" step="0.0001" min="0" bind:value={outputPrice} required class="bg-background/50 text-right font-mono" />
-            </div>
-          </div>
-        </CardContent>
-        
-        <CardFooter class="border-t border-border bg-black/10 py-3 flex justify-end space-x-2">
-          <Button variant="outline" onclick={() => showEditDialog = false} disabled={isSaving}>Cancel</Button>
-          <Button type="submit" disabled={isSaving}>
-            {#if isSaving}Saving...{:else}Save Model{/if}
-          </Button>
-        </CardFooter>
-      </form>
-    </Card>
-  </div>
-{/if}
+  <FormSection title="Token pricing" description="Prices per 1,000,000 (1M) tokens.">
+    <FormField label="Currency" forId="currency" span={2}>
+      <select
+        id="currency"
+        name="currency"
+        bind:value={currency}
+        disabled={isPredefined}
+        class="h-9 w-full rounded-md border border-input bg-(--glass-inset-bg) px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <option value="USD">USD ($)</option>
+        <option value="EUR">EUR (€)</option>
+        <option value="PLN">PLN (zł)</option>
+        <option value="GBP">GBP (£)</option>
+      </select>
+      {#if isPredefined}
+        <p class="text-[10px] text-muted-foreground">Predefined models are always priced in USD.</p>
+      {/if}
+    </FormField>
+    <NumberField
+      id="inputPrice"
+      name="inputPrice"
+      bind:value={inputPrice}
+      label="Input Price"
+      prefix={getCurrencySymbol(currency)}
+      suffix="/1M"
+      step={0.0001}
+      min={0}
+    />
+    <NumberField
+      id="outputPrice"
+      name="outputPrice"
+      bind:value={outputPrice}
+      label="Output Price"
+      prefix={getCurrencySymbol(currency)}
+      suffix="/1M"
+      step={0.0001}
+      min={0}
+    />
+  </FormSection>
+</FormDialog>
 

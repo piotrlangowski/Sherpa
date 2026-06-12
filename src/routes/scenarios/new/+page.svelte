@@ -166,8 +166,8 @@
     </div>
   </div>
 
-  <Card class="border-border bg-card/45 backdrop-blur-sm shadow-md">
-    <CardHeader class="border-b border-border bg-black/5">
+  <Card class="glass border">
+    <CardHeader class="border-b border-border glass-inset">
       <div class="flex items-center space-x-2.5 text-primary">
         <Compass class="h-6 w-6" />
         <CardTitle class="text-xl font-bold">Create Scenario</CardTitle>
@@ -195,11 +195,11 @@
           <div class="space-y-4">
             <div class="space-y-2">
               <Label for="name" class="font-semibold">Scenario Name</Label>
-              <Input id="name" name="name" bind:value={name} placeholder="e.g. Enterprise LegalTech Rollout" required class="bg-black/10 border-border" />
+              <Input id="name" name="name" bind:value={name} placeholder="e.g. Enterprise LegalTech Rollout" required class="bg-(--glass-inset-bg) border-border" />
             </div>
             <div class="space-y-2">
               <Label for="description" class="font-semibold">Description</Label>
-              <Textarea id="description" name="description" bind:value={description} placeholder="Goal, hypotheses, or general context..." rows={2} class="bg-black/10 border-border" />
+              <Textarea id="description" name="description" bind:value={description} placeholder="Goal, hypotheses, or general context..." rows={2} class="bg-(--glass-inset-bg) border-border" />
             </div>
           </div>
 
@@ -209,7 +209,7 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="space-y-2">
               <Label for="projectionMonths" class="font-semibold">Projection Horizon</Label>
-              <select id="projectionMonths" name="projectionMonths" bind:value={projectionMonths} class="w-full bg-black/10 border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono">
+              <select id="projectionMonths" name="projectionMonths" bind:value={projectionMonths} class="w-full glass-inset border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-mono">
                 <option value={12}>12 Months (1 Year)</option>
                 <option value={24}>24 Months (2 Years)</option>
                 <option value={36}>36 Months (3 Years)</option>
@@ -235,15 +235,15 @@
             <p class="text-xs text-muted-foreground -mt-1">Choose which segment of your audience this scenario targets.</p>
             
             <div class="flex items-center space-x-4 mb-4">
-              <label class="flex items-center space-x-2 cursor-pointer p-2 border rounded-md hover:bg-black/5 {scopeType === 'all_clients' ? 'border-primary bg-primary/5' : 'border-border'}">
+              <label class="flex items-center space-x-2 cursor-pointer p-2 border rounded-md hover:glass-inset {scopeType === 'all_clients' ? 'border-primary bg-primary/5' : 'border-border'}">
                 <input type="radio" name="scopeType" value="all_clients" bind:group={scopeType} class="accent-primary" />
                 <span class="text-sm font-medium">Entire Client Base</span>
               </label>
-              <label class="flex items-center space-x-2 cursor-pointer p-2 border rounded-md hover:bg-black/5 {scopeType === 'verticals' ? 'border-primary bg-primary/5' : 'border-border'}">
+              <label class="flex items-center space-x-2 cursor-pointer p-2 border rounded-md hover:glass-inset {scopeType === 'verticals' ? 'border-primary bg-primary/5' : 'border-border'}">
                 <input type="radio" name="scopeType" value="verticals" bind:group={scopeType} class="accent-primary" />
                 <span class="text-sm font-medium">Specific Verticals</span>
               </label>
-              <label class="flex items-center space-x-2 cursor-pointer p-2 border rounded-md hover:bg-black/5 {scopeType === 'cohorts' ? 'border-primary bg-primary/5' : 'border-border'}">
+              <label class="flex items-center space-x-2 cursor-pointer p-2 border rounded-md hover:glass-inset {scopeType === 'cohorts' ? 'border-primary bg-primary/5' : 'border-border'}">
                 <input type="radio" name="scopeType" value="cohorts" bind:group={scopeType} class="accent-primary" />
                 <span class="text-sm font-medium">Specific Cohorts</span>
               </label>
@@ -251,11 +251,11 @@
 
             <!-- Verticals Multi-select -->
             {#if scopeType === 'verticals'}
-              <div class="bg-black/10 border border-border p-4 rounded-lg">
+              <div class="glass-inset border border-border p-4 rounded-lg">
                 <h4 class="text-xs font-semibold mb-3 uppercase tracking-wider text-muted-foreground">Select Verticals</h4>
                 <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {#each data.verticals as v}
-                    <label class="flex items-center space-x-2 text-sm cursor-pointer hover:bg-white/5 p-1 rounded">
+                    <label class="flex items-center space-x-2 text-sm cursor-pointer hover:bg-foreground/5 p-1 rounded">
                       <input type="checkbox" name="verticalIds" value={v.id} bind:checked={selectedVerticals[v.id]} class="accent-primary" />
                       <span>{v.name}</span>
                     </label>
@@ -266,11 +266,11 @@
 
             <!-- Cohorts Multi-select -->
             {#if scopeType === 'cohorts'}
-              <div class="bg-black/10 border border-border p-4 rounded-lg">
+              <div class="glass-inset border border-border p-4 rounded-lg">
                 <h4 class="text-xs font-semibold mb-3 uppercase tracking-wider text-muted-foreground">Select Cohorts</h4>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {#each data.cohorts as c}
-                    <label class="flex items-center space-x-3 text-sm cursor-pointer hover:bg-white/5 p-2 border border-border/40 rounded-md">
+                    <label class="flex items-center space-x-3 text-sm cursor-pointer hover:bg-foreground/5 p-2 border border-border/40 rounded-md">
                       <input type="checkbox" name="cohortConfigIds" value={c.id} bind:checked={selectedCohorts[c.id]} class="accent-primary" />
                       <div>
                         <span class="block font-medium">{c.name}</span>
@@ -284,7 +284,7 @@
           </div>
         </CardContent>
 
-        <CardFooter class="border-t border-border bg-black/5 py-4 flex justify-end">
+        <CardFooter class="border-t border-border glass-inset py-4 flex justify-end">
           <Button type="button" onclick={nextStep}>
             Next: Parameter Overrides <ArrowRight class="h-4 w-4 ml-2" />
           </Button>
@@ -316,7 +316,7 @@
                 </thead>
                 <tbody class="divide-y divide-border/20">
                   {#each overrides as ov}
-                    <tr class="hover:bg-white/5 transition-colors">
+                    <tr class="hover:bg-foreground/5 transition-colors">
                       <td class="px-3 py-2 font-medium">{ov.name}</td>
                       <td class="px-3 py-2">
                         <Input type="number" step="0.01" min="0" placeholder="Inherit" bind:value={ov.arpu_override} class="h-8 w-24 text-xs font-mono" />
@@ -337,7 +337,7 @@
             </div>
           {/if}
         </CardContent>
-        <CardFooter class="border-t border-border bg-black/5 py-4 flex justify-between">
+        <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">
           <Button type="button" variant="outline" onclick={prevStep}>
             <ArrowLeft class="h-4 w-4 mr-2" /> Back
           </Button>
@@ -360,7 +360,7 @@
             {:else}
               <div class="space-y-3 pl-6">
                 {#each data.plans as plan}
-                  <div class="bg-black/10 border border-border/40 p-3 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div class="glass-inset border border-border/40 p-3 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <label class="flex items-center space-x-3 cursor-pointer select-none">
                       <input type="checkbox" name="planIds" value={plan.id} bind:checked={selectedPlans[plan.id]} class="h-4 w-4 accent-primary rounded border-border" />
                       <div>
@@ -395,7 +395,7 @@
             {:else}
               <div class="space-y-3 pl-6">
                 {#each data.packs as pack}
-                  <div class="bg-black/10 border border-border/40 p-3 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div class="glass-inset border border-border/40 p-3 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <label class="flex items-center space-x-3 cursor-pointer select-none">
                       <input type="checkbox" name="packIds" value={pack.id} bind:checked={selectedPacks[pack.id]} class="h-4 w-4 accent-primary rounded border-border" />
                       <div>
@@ -427,7 +427,7 @@
             {:else}
               <div class="space-y-3 pl-6">
                 {#each data.services as service}
-                  <div class="bg-black/10 border border-border/40 p-3 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div class="glass-inset border border-border/40 p-3 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <label class="flex items-center space-x-3 cursor-pointer select-none">
                       <input type="checkbox" name="serviceIds" value={service.id} bind:checked={selectedServices[service.id]} class="h-4 w-4 accent-primary rounded border-border" />
                       <div>
@@ -448,7 +448,7 @@
           </div>
         </CardContent>
 
-        <CardFooter class="border-t border-border bg-black/5 py-4 flex justify-between">
+        <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">
           <Button type="button" variant="outline" onclick={prevStep}>
             <ArrowLeft class="h-4 w-4 mr-2" /> Back
           </Button>
@@ -469,12 +469,12 @@
           {:else}
             <div class="space-y-3 pl-6">
               {#each data.costs as cost}
-                <label class="flex items-start space-x-3 cursor-pointer p-3 bg-black/10 border border-border/40 rounded-lg hover:bg-white/5 transition duration-150">
+                <label class="flex items-start space-x-3 cursor-pointer p-3 glass-inset border border-border/40 rounded-lg hover:bg-foreground/5 transition duration-150">
                   <input type="checkbox" name="costIds" value={cost.id} bind:checked={selectedCosts[cost.id]} class="mt-1 h-4 w-4 accent-primary rounded border-border" />
                   <div class="flex-1 grid gap-0.5 leading-none">
                     <div class="flex justify-between items-center">
                       <span class="text-sm font-bold text-foreground">{cost.name}</span>
-                      <span class="text-xs font-mono font-bold text-rose-400">
+                      <span class="text-xs font-mono font-bold text-rose-600 dark:text-rose-400">
                         ${cost.amount.toLocaleString()} ({cost.frequency})
                       </span>
                     </div>
@@ -485,7 +485,7 @@
           {/if}
         </CardContent>
 
-        <CardFooter class="border-t border-border bg-black/5 py-4 flex justify-between">
+        <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">
           <Button type="button" variant="outline" onclick={prevStep}>
             <ArrowLeft class="h-4 w-4 mr-2" /> Back
           </Button>

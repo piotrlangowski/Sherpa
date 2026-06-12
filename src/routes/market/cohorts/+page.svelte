@@ -1,17 +1,17 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { onMount } from 'svelte';
-  import { formatNumber, formatCurrency, formatPercent } from '$lib/utils/format';
+  import { formatNumber, formatCurrency, formatPercent, getCurrencySymbol } from '$lib/utils/format';
   import { appState } from '$lib/stores/app.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
-  import Label from '$lib/components/ui/label/label.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
   import CardTitle from '$lib/components/ui/card/card-title.svelte';
-  import CardDescription from '$lib/components/ui/card/card-description.svelte';
   import CardContent from '$lib/components/ui/card/card-content.svelte';
   import CardFooter from '$lib/components/ui/card/card-footer.svelte';
+  import { FormDialog, FormSection, FormField, NumberField } from '$lib/components/forms';
+  import { buildCohortModel } from '$lib/shared/financial-math';
 
   // Table components
   import Table from '$lib/components/ui/table/table.svelte';
@@ -26,13 +26,34 @@
   import Edit2 from '@lucide/svelte/icons/edit-2';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Users2 from '@lucide/svelte/icons/users-2';
-  import BarChart4 from '@lucide/svelte/icons/bar-chart-4';
-  import Info from '@lucide/svelte/icons/info';
   import LayoutGrid from '@lucide/svelte/icons/layout-grid';
   import List from '@lucide/svelte/icons/list';
   import Search from '@lucide/svelte/icons/search';
 
   let { data } = $props();
+
+  const currencySymbol = $derived(getCurrencySymbol(appState.currency));
+
+  // 12-month live projection of the values currently in the form.
+  // The /100 on percentage fields mirrors the server actions exactly.
+  let preview = $derived.by(() =>
+    buildCohortModel(
+      {
+        id: 'preview',
+        name,
+        vertical_id: null,
+        current_users: +currentUsers || 0,
+        monthly_acquisition: +monthlyAcquisition || 0,
+        acquisition_growth_rate: (+acquisitionGrowthRate || 0) / 100,
+        monthly_churn_rate: (+monthlyChurnRate || 0) / 100,
+        retention_floor: (+retentionFloor || 0) / 100,
+        monthly_expansion_rate: (+monthlyExpansionRate || 0) / 100,
+        ai_adoption_rate: (+aiAdoptionRate || 0) / 100,
+        base_arpu: +baseArpu || 0
+      },
+      12
+    )
+  );
 
   // Dialog State
   let showDialog = $state(false);
@@ -157,7 +178,7 @@
     </Card>
   {:else}
     <!-- Controls Row -->
-    <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-card/20 border border-border/80 p-3 rounded-xl backdrop-blur-xs select-none">
+    <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between glass border p-3 rounded-xl select-none">
       <div class="flex flex-1 flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
         <!-- Quick Find Search -->
         <div class="relative flex-1 max-w-md">
@@ -165,7 +186,7 @@
           <Input
             type="text"
             placeholder="Quick find cohorts..."
-            class="pl-9 bg-background/50 border-border"
+            class="pl-9 bg-(--glass-inset-bg) border-border"
             bind:value={searchQuery}
           />
         </div>
@@ -173,7 +194,7 @@
         <!-- Sort Select -->
         <select
           bind:value={sortBy}
-          class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="name_asc">Name (A - Z)</option>
           <option value="name_desc">Name (Z - A)</option>
@@ -190,7 +211,7 @@
         <!-- Vertical Filter -->
         <select
           bind:value={verticalFilter}
-          class="bg-background/50 border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          class="bg-(--glass-inset-bg) border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="all">All Verticals</option>
           <option value="global">Global (No Vertical)</option>
@@ -230,8 +251,8 @@
       <!-- Card Grid View -->
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-200">
         {#each filteredCohorts as cohort (cohort.id)}
-          <Card class="border-border bg-card/45 backdrop-blur-sm shadow-sm flex flex-col justify-between hover:border-primary/20 transition-all duration-300 group">
-            <CardHeader class="pb-3 border-b border-border bg-black/5">
+          <Card class="glass border flex flex-col justify-between hover:border-primary/20 transition-all duration-300 group">
+            <CardHeader class="pb-3 border-b border-border glass-inset">
               <div class="flex items-center space-x-2.5 text-primary">
                 <Users2 class="h-5 w-5 group-hover:scale-105 transition-transform" />
                 <div class="truncate flex-1">
@@ -255,20 +276,20 @@
                 <span class="font-mono text-xs text-foreground">
                   {formatNumber(cohort.monthly_acquisition)} /mo
                   {#if cohort.acquisition_growth_rate > 0}
-                    <span class="text-[10px] text-emerald-400 font-semibold">(+{formatPercent(cohort.acquisition_growth_rate)})</span>
+                    <span class="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">(+{formatPercent(cohort.acquisition_growth_rate)})</span>
                   {/if}
                 </span>
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-xs text-muted-foreground">Churn Rate (Floor)</span>
-                <span class="font-mono text-xs text-rose-400 font-semibold">
+                <span class="font-mono text-xs text-rose-600 dark:text-rose-400 font-semibold">
                   {formatPercent(cohort.monthly_churn_rate)}
                   <span class="text-[10px] text-muted-foreground font-normal">({formatPercent(cohort.retention_floor)})</span>
                 </span>
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-xs text-muted-foreground">ARPU Expansion</span>
-                <span class="font-mono text-xs text-emerald-400 font-semibold">+{formatPercent(cohort.monthly_expansion_rate)}/mo</span>
+                <span class="font-mono text-xs text-emerald-600 dark:text-emerald-400 font-semibold">+{formatPercent(cohort.monthly_expansion_rate)}/mo</span>
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-xs text-muted-foreground">AI Adoption Rate</span>
@@ -280,7 +301,7 @@
               </div>
             </CardContent>
 
-            <CardFooter class="border-t border-border bg-black/5 py-3 flex justify-end space-x-2">
+            <CardFooter class="border-t border-border glass-inset py-3 flex justify-end space-x-2">
               <Button variant="outline" size="sm" onclick={() => openEditDialog(cohort)}>
                 <Edit2 class="h-3.5 w-3.5 mr-1.5" /> Edit
               </Button>
@@ -296,9 +317,9 @@
       </div>
     {:else}
       <!-- Dense List (Table) View -->
-      <div class="overflow-x-auto rounded-lg border border-border bg-card/25 backdrop-blur-sm shadow-sm select-none animate-in fade-in duration-200">
+      <div class="overflow-x-auto rounded-lg border border-border glass border select-none animate-in fade-in duration-200">
         <Table>
-          <TableHeader class="bg-black/15">
+          <TableHeader class="glass-inset">
             <TableRow>
               <TableHead class="text-foreground font-bold">Cohort Name & Vertical</TableHead>
               <TableHead class="text-foreground font-bold text-right">Starting Users</TableHead>
@@ -312,7 +333,7 @@
           </TableHeader>
           <TableBody>
             {#each filteredCohorts as cohort (cohort.id)}
-              <TableRow class="hover:bg-white/5 transition-all">
+              <TableRow class="hover:bg-foreground/5 transition-all">
                 <TableCell>
                   <div class="font-bold text-foreground">{cohort.name}</div>
                   {#if cohort.vertical_name}
@@ -325,19 +346,19 @@
                 <TableCell class="text-right font-mono">
                   {formatNumber(cohort.monthly_acquisition)} /mo
                   {#if cohort.acquisition_growth_rate > 0}
-                    <span class="text-xs text-emerald-400 font-semibold">(+{formatPercent(cohort.acquisition_growth_rate)})</span>
+                    <span class="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">(+{formatPercent(cohort.acquisition_growth_rate)})</span>
                   {/if}
                 </TableCell>
                 <TableCell class="text-right font-mono">
-                  <span class="text-rose-400 font-medium">{formatPercent(cohort.monthly_churn_rate)}</span>
+                  <span class="text-rose-600 dark:text-rose-400 font-medium">{formatPercent(cohort.monthly_churn_rate)}</span>
                   <span class="text-xs text-muted-foreground">({formatPercent(cohort.retention_floor)})</span>
                 </TableCell>
-                <TableCell class="text-right font-mono text-emerald-400 font-medium">+{formatPercent(cohort.monthly_expansion_rate)}/mo</TableCell>
+                <TableCell class="text-right font-mono text-emerald-600 dark:text-emerald-400 font-medium">+{formatPercent(cohort.monthly_expansion_rate)}/mo</TableCell>
                 <TableCell class="text-right font-mono font-semibold text-primary">{formatPercent(cohort.ai_adoption_rate)}</TableCell>
                 <TableCell class="text-right font-mono font-bold">{formatCurrency(cohort.base_arpu, appState.currency)}</TableCell>
                 <TableCell class="text-center">
                   <div class="flex items-center justify-center gap-1">
-                    <Button variant="ghost" size="icon" onclick={() => openEditDialog(cohort)} class="h-8 w-8 hover:bg-white/5">
+                    <Button variant="ghost" size="icon" onclick={() => openEditDialog(cohort)} class="h-8 w-8 hover:bg-foreground/5">
                       <Edit2 class="h-3.5 w-3.5" />
                     </Button>
                     <form method="POST" action="?/deleteCohort" use:enhance class="inline-block">
@@ -357,127 +378,148 @@
   {/if}
 </div>
 
-<!-- Modal Dialog Overlay for Add/Edit Cohort -->
-{#if showDialog}
-  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
-    <Card class="w-full max-w-2xl border-border shadow-2xl bg-card">
-      <CardHeader class="border-b border-border bg-black/10">
-        <div class="flex items-center space-x-2 text-primary">
-          <Users2 class="h-5 w-5" />
-          <CardTitle>{dialogMode === 'create' ? 'Configure New Cohort' : 'Edit Cohort Configuration'}</CardTitle>
-        </div>
-        <CardDescription>Setup numerical params to simulate user compound monthly growth and ARPU decay/expansion curves.</CardDescription>
-      </CardHeader>
-      
-      <form method="POST" action={dialogMode === 'create' ? '?/createCohort' : '?/updateCohort'} use:enhance={() => {
-        return async ({ update }) => {
-          await update();
-          showDialog = false;
-        };
-      }}>
-        <input type="hidden" name="id" value={currentCohortId} />
-        
-        <CardContent class="py-5 grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[70vh] overflow-y-auto">
-          <!-- Cohort Name -->
-          <div class="space-y-1.5 md:col-span-2">
-            <Label for="cohortName" class="font-semibold">Cohort Name</Label>
-            <Input id="cohortName" name="name" bind:value={name} placeholder="e.g. SMB Legal Customers, Mid-Market Retail" required class="bg-black/10 border-border" />
-          </div>
+<!-- Add/Edit Cohort Dialog -->
+<FormDialog
+  bind:open={showDialog}
+  size="lg"
+  icon={Users2}
+  title={dialogMode === 'create' ? 'New Cohort' : 'Edit Cohort'}
+  description="Model customer growth, churn and ARPU for projections."
+  action={dialogMode === 'create' ? '?/createCohort' : '?/updateCohort'}
+  submitLabel={dialogMode === 'create' ? 'Save Cohort' : 'Save Changes'}
+>
+  {#snippet footerStart()}
+    <p class="font-mono text-xs text-muted-foreground">
+      ≈ <span class="font-semibold text-emerald-600 dark:text-emerald-400"
+        >{formatNumber(Math.round(preview.endingCustomers))}</span
+      >
+      customers ·
+      <span class="font-semibold text-emerald-600 dark:text-emerald-400"
+        >{formatCurrency(preview.endingMrr, appState.currency)}</span
+      > MRR after 12 mo
+    </p>
+  {/snippet}
 
-          <!-- Market Vertical -->
-          <div class="space-y-1.5">
-            <Label for="cohortVertical" class="font-semibold">Linked Vertical</Label>
-            <select
-              id="cohortVertical"
-              name="verticalId"
-              bind:value={verticalId}
-              class="w-full bg-black/10 border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
-            >
-              <option value="">-- No Vertical (Global) --</option>
-              {#each data.verticals as vertical}
-                <option value={vertical.id}>{vertical.name}</option>
-              {/each}
-            </select>
-          </div>
+  <input type="hidden" name="id" value={currentCohortId} />
 
-          <!-- Base ARPU -->
-          <div class="space-y-1.5">
-            <Label for="baseArpu" class="font-semibold">Starting ARPU ({appState.currency}/mo)</Label>
-            <Input id="baseArpu" name="baseArpu" type="number" step="0.01" min="0" bind:value={baseArpu} required class="bg-black/10 border-border font-mono" />
-          </div>
+  <FormSection title="Identity" hero>
+    <FormField label="Cohort Name" forId="cohortName" required span={2}>
+      <Input
+        id="cohortName"
+        name="name"
+        bind:value={name}
+        placeholder="e.g. SMB Legal Customers, Mid-Market Retail"
+        required
+        class="h-11 bg-(--glass-inset-bg) text-base"
+      />
+    </FormField>
 
-          <hr class="md:col-span-2 border-border/40 my-1" />
+    <FormField label="Linked Vertical" forId="cohortVertical">
+      <select
+        id="cohortVertical"
+        name="verticalId"
+        bind:value={verticalId}
+        class="h-9 w-full rounded-md border border-input bg-(--glass-inset-bg) px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+      >
+        <option value="">-- No Vertical (Global) --</option>
+        {#each data.verticals as vertical}
+          <option value={vertical.id}>{vertical.name}</option>
+        {/each}
+      </select>
+    </FormField>
 
-          <!-- Current Active Users -->
-          <div class="space-y-1.5">
-            <Label for="currentUsers" class="font-semibold">Starting Active Customers</Label>
-            <Input id="currentUsers" name="currentUsers" type="number" min="0" bind:value={currentUsers} required class="bg-black/10 border-border font-mono" />
-          </div>
+    <NumberField
+      id="aiAdoptionRate"
+      name="aiAdoptionRate"
+      bind:value={aiAdoptionRate}
+      label="AI Adoption Rate"
+      suffix="%"
+      min={0}
+      max={100}
+      step={0.1}
+      badge={{ text: `${aiAdoptionRate}%`, tone: 'neutral' }}
+      help="Share of customers using AI features — drives revenue attribution"
+    />
+  </FormSection>
 
-          <!-- AI Adoption Rate -->
-          <div class="space-y-1.5">
-            <Label for="aiAdoptionRate" class="font-semibold flex justify-between">
-              <span>AI Adoption Rate</span>
-              <span class="text-xs text-primary font-semibold">{aiAdoptionRate}%</span>
-            </Label>
-            <Input id="aiAdoptionRate" name="aiAdoptionRate" type="number" min="0" max="100" step="0.1" bind:value={aiAdoptionRate} required class="bg-black/10 border-border font-mono" />
-          </div>
+  <FormSection title="Starting point">
+    <NumberField
+      id="currentUsers"
+      name="currentUsers"
+      bind:value={currentUsers}
+      label="Starting Active Customers"
+      min={0}
+    />
+    <NumberField
+      id="baseArpu"
+      name="baseArpu"
+      bind:value={baseArpu}
+      label="Starting ARPU"
+      prefix={currencySymbol}
+      suffix="/mo"
+      min={0}
+      step={0.01}
+    />
+  </FormSection>
 
-          <hr class="md:col-span-2 border-border/40 my-1" />
+  <FormSection title="Growth engine">
+    <NumberField
+      id="monthlyAcquisition"
+      name="monthlyAcquisition"
+      bind:value={monthlyAcquisition}
+      label="Monthly Acquisition"
+      min={0}
+      help="New customers per month"
+    />
+    <NumberField
+      id="acquisitionGrowthRate"
+      name="acquisitionGrowthRate"
+      bind:value={acquisitionGrowthRate}
+      label="Acquisition Growth Rate"
+      suffix="% /mo"
+      min={-50}
+      max={200}
+      step={0.1}
+      badge={{ text: `+${acquisitionGrowthRate}% /mo`, tone: 'positive' }}
+    />
+  </FormSection>
 
-          <!-- Monthly Acquisition -->
-          <div class="space-y-1.5">
-            <Label for="monthlyAcquisition" class="font-semibold">Monthly Acquisition (New Users)</Label>
-            <Input id="monthlyAcquisition" name="monthlyAcquisition" type="number" min="0" bind:value={monthlyAcquisition} required class="bg-black/10 border-border font-mono" />
-          </div>
-
-          <!-- Acquisition Growth Rate -->
-          <div class="space-y-1.5">
-            <Label for="acquisitionGrowthRate" class="font-semibold flex justify-between">
-              <span>Acquisition Growth Rate</span>
-              <span class="text-xs text-emerald-400 font-semibold">+{acquisitionGrowthRate}% /mo</span>
-            </Label>
-            <Input id="acquisitionGrowthRate" name="acquisitionGrowthRate" type="number" min="-50" max="200" step="0.1" bind:value={acquisitionGrowthRate} required class="bg-black/10 border-border font-mono" />
-          </div>
-
-          <hr class="md:col-span-2 border-border/40 my-1" />
-
-          <!-- Churn Rate -->
-          <div class="space-y-1.5">
-            <Label for="monthlyChurnRate" class="font-semibold flex justify-between">
-              <span>Monthly Churn Rate</span>
-              <span class="text-xs text-rose-400 font-semibold">{monthlyChurnRate}% /mo</span>
-            </Label>
-            <Input id="monthlyChurnRate" name="monthlyChurnRate" type="number" min="0" max="100" step="0.1" bind:value={monthlyChurnRate} required class="bg-black/10 border-border font-mono" />
-          </div>
-
-          <!-- Churn Floor (Retention Floor) -->
-          <div class="space-y-1.5">
-            <Label for="retentionFloor" class="font-semibold flex justify-between">
-              <span>Retention Floor</span>
-              <span class="text-xs text-muted-foreground font-semibold">{retentionFloor}% floor</span>
-            </Label>
-            <Input id="retentionFloor" name="retentionFloor" type="number" min="0" max="100" step="0.1" bind:value={retentionFloor} required class="bg-black/10 border-border font-mono" />
-          </div>
-
-          <!-- Monthly Expansion Rate -->
-          <div class="space-y-1.5 md:col-span-2">
-            <Label for="monthlyExpansionRate" class="font-semibold flex justify-between">
-              <span>Monthly ARPU Expansion Rate (Upsell / Cross-sell)</span>
-              <span class="text-xs text-emerald-400 font-semibold">+{monthlyExpansionRate}% /mo</span>
-            </Label>
-            <Input id="monthlyExpansionRate" name="monthlyExpansionRate" type="number" min="-50" max="200" step="0.1" bind:value={monthlyExpansionRate} required class="bg-black/10 border-border font-mono" />
-          </div>
-        </CardContent>
-        
-        <CardFooter class="border-t border-border bg-black/10 py-3 flex justify-end space-x-2">
-          <Button variant="outline" onclick={() => showDialog = false}>Cancel</Button>
-          <Button type="submit">
-            <BarChart4 class="h-4 w-4 mr-2" />
-            {dialogMode === 'create' ? 'Save Cohort' : 'Save Changes'}
-          </Button>
-        </CardFooter>
-      </form>
-    </Card>
-  </div>
-{/if}
+  <FormSection title="Retention & expansion">
+    <NumberField
+      id="monthlyChurnRate"
+      name="monthlyChurnRate"
+      bind:value={monthlyChurnRate}
+      label="Monthly Churn Rate"
+      suffix="% /mo"
+      min={0}
+      max={100}
+      step={0.1}
+      badge={{ text: `${monthlyChurnRate}% /mo`, tone: 'negative' }}
+    />
+    <NumberField
+      id="retentionFloor"
+      name="retentionFloor"
+      bind:value={retentionFloor}
+      label="Retention Floor"
+      suffix="%"
+      min={0}
+      max={100}
+      step={0.1}
+      badge={{ text: `${retentionFloor}%`, tone: 'muted' }}
+      help="Retention never decays below this share"
+    />
+    <NumberField
+      id="monthlyExpansionRate"
+      name="monthlyExpansionRate"
+      bind:value={monthlyExpansionRate}
+      label="ARPU Expansion Rate"
+      suffix="% /mo"
+      span={2}
+      min={-50}
+      max={200}
+      step={0.1}
+      badge={{ text: `+${monthlyExpansionRate}% /mo`, tone: 'positive' }}
+      help="Upsell / cross-sell"
+    />
+  </FormSection>
+</FormDialog>

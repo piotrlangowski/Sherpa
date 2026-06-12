@@ -1,8 +1,9 @@
 <script lang="ts">
   import { page, navigating } from '$app/stores';
   import { untrack } from 'svelte';
+  import type { Component } from 'svelte';
   import { appState } from '../../stores/app.svelte';
-  
+
   // Lucide Icons
   import Server from '@lucide/svelte/icons/server';
   import Layers from '@lucide/svelte/icons/layers';
@@ -55,9 +56,27 @@
   });
 </script>
 
-<aside class="w-64 h-screen border-r border-border bg-sidebar text-sidebar-foreground flex flex-col justify-between shrink-0 select-none">
+{#snippet navLink(href: string, label: string, Icon: Component<any>, active: boolean)}
+  <a
+    {href}
+    class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
+      {active
+        ? 'bg-primary/10 text-primary font-semibold'
+        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
+  >
+    <div class="flex items-center space-x-3">
+      <Icon class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
+      <span>{label}</span>
+    </div>
+    <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
+  </a>
+{/snippet}
+
+<aside
+  class="w-64 h-screen border-r border-border bg-sidebar/70 backdrop-blur-xl backdrop-saturate-150 text-sidebar-foreground flex flex-col justify-between shrink-0 select-none"
+>
   <!-- Top Branding Area -->
-  <div class="p-5 flex flex-col border-b border-border bg-black/10">
+  <div class="glass-inset p-5 flex flex-col border-b border-border">
     <div class="flex items-center space-x-2.5">
       <div class="h-9 w-9 rounded-lg bg-primary flex items-center justify-center text-primary-foreground shadow-[0_0_12px_rgba(var(--color-primary),0.3)]">
         <Compass class="h-5 w-5" />
@@ -79,33 +98,13 @@
         Planning
       </h3>
       <div class="mt-1 space-y-0.5">
-        <a
-          href="/scenarios"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/scenarios') && !isActive('/scenarios/compare', true) && !isActive('/scenarios/', false)
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <Compass class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>Scenarios</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
-
-        <a
-          href="/scenarios/compare"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/scenarios/compare')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <ArrowLeftRight class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>Compare</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
+        {@render navLink(
+          '/scenarios',
+          'Scenarios',
+          Compass,
+          isActive('/scenarios') && !isActive('/scenarios/compare', true) && !isActive('/scenarios/', false)
+        )}
+        {@render navLink('/scenarios/compare', 'Compare', ArrowLeftRight, isActive('/scenarios/compare'))}
       </div>
     </div>
 
@@ -115,61 +114,10 @@
         Catalog
       </h3>
       <div class="mt-1 space-y-0.5">
-        <a
-          href="/catalog/services"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/catalog/services')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <BrainCircuit class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>AI Services</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
-
-        <a
-          href="/catalog/packs"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/catalog/packs')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <Layers class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>Feature Packs</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
-
-        <a
-          href="/catalog/plans"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/catalog/plans')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <CreditCard class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>Pricing Plans</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
-
-        <a
-          href="/catalog/dependencies"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/catalog/dependencies')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <GitFork class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>Dependencies</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
+        {@render navLink('/catalog/services', 'AI Services', BrainCircuit, isActive('/catalog/services'))}
+        {@render navLink('/catalog/packs', 'Feature Packs', Layers, isActive('/catalog/packs'))}
+        {@render navLink('/catalog/plans', 'Pricing Plans', CreditCard, isActive('/catalog/plans'))}
+        {@render navLink('/catalog/dependencies', 'Dependencies', GitFork, isActive('/catalog/dependencies'))}
       </div>
     </div>
 
@@ -179,47 +127,9 @@
         Market
       </h3>
       <div class="mt-1 space-y-0.5">
-        <a
-          href="/market/client-base"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/market/client-base')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <Database class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>Client Base</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
-
-        <a
-          href="/market/verticals"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/market/verticals')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <Globe class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>Verticals</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
-
-        <a
-          href="/market/cohorts"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/market/cohorts')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <Users class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>Cohorts</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
+        {@render navLink('/market/client-base', 'Client Base', Database, isActive('/market/client-base'))}
+        {@render navLink('/market/verticals', 'Verticals', Globe, isActive('/market/verticals'))}
+        {@render navLink('/market/cohorts', 'Cohorts', Users, isActive('/market/cohorts'))}
       </div>
     </div>
 
@@ -229,48 +139,21 @@
         Costs
       </h3>
       <div class="mt-1 space-y-0.5">
-        <a
-          href="/costs/providers"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/costs/providers')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <Server class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>AI Providers</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
-
-        <a
-          href="/costs/items"
-          class="flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
-            {isActive('/costs/items')
-              ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
-        >
-          <div class="flex items-center space-x-3">
-            <DollarSign class="h-4.5 w-4.5 group-hover:scale-105 transition-transform" />
-            <span>Cost Items</span>
-          </div>
-          <ChevronRight class="h-3.5 w-3.5 opacity-40 group-hover:opacity-100 transition-opacity" />
-        </a>
+        {@render navLink('/costs/providers', 'AI Providers', Server, isActive('/costs/providers'))}
+        {@render navLink('/costs/items', 'Cost Items', DollarSign, isActive('/costs/items'))}
       </div>
     </div>
-
-
   </div>
 
   <!-- Bottom Panel: Settings & Active Scenario Widget -->
-  <div class="p-3 border-t border-border bg-black/10 space-y-2">
+  <div class="glass-inset p-3 border-t border-border space-y-2">
     <!-- Active Scenario Widget -->
     {#if appState.activeScenarioName}
       <a
         href="/scenarios/{appState.activeScenarioId}"
         class="group p-2.5 rounded-lg border flex flex-col space-y-1 transition-all duration-300 ease-in-out hover:scale-[1.02] hover:bg-primary/15 hover:border-primary/35 hover:shadow-md hover:shadow-primary/5 cursor-pointer relative overflow-hidden
-          {showCompletedGlow 
-            ? 'border-emerald-500/40 bg-emerald-500/5 shadow-[0_0_12px_rgba(16,185,129,0.25)]' 
+          {showCompletedGlow
+            ? 'border-emerald-500/40 bg-emerald-500/5 shadow-[0_0_12px_rgba(16,185,129,0.25)]'
             : 'border-primary/20 bg-primary/10'}"
       >
         <div class="flex items-center justify-between">
@@ -296,7 +179,7 @@
       href="/settings"
       class="flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-all group duration-200
         {isActive('/settings')
-          ? 'bg-secondary text-foreground font-semibold border-l-2 border-primary'
+          ? 'bg-primary/10 text-primary font-semibold'
           : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground hover:translate-x-0.5'}"
     >
       <Settings class="h-4.5 w-4.5 group-hover:rotate-45 transition-transform duration-300" />

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { CURRENCIES } from '$lib/utils/constants';
+  import { FormDialog } from '$lib/components/forms';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -70,7 +71,7 @@
   </div>
 
   {#if form?.success}
-    <Alert variant="default" class="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+    <Alert variant="default" class="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
       <AlertTitle>Settings Saved</AlertTitle>
       <AlertDescription>Your organization changes have been successfully saved.</AlertDescription>
     </Alert>
@@ -102,7 +103,7 @@
         <!-- Company Name -->
         <div class="space-y-2">
           <Label for="companyName">Organization / Company Name</Label>
-          <Input id="companyName" name="companyName" bind:value={companyName} class="max-w-md bg-background/50" />
+          <Input id="companyName" name="companyName" bind:value={companyName} class="max-w-md bg-(--glass-inset-bg)" />
           <p class="text-xs text-muted-foreground">Used as the client branding on screenshots and reports.</p>
         </div>
 
@@ -171,15 +172,15 @@
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-md">
             <div class="space-y-2">
               <Label for="rate_EUR">1 USD = EUR</Label>
-              <Input type="number" step="any" id="rate_EUR" name="rate_EUR" bind:value={exchangeRates.EUR} class="bg-background/50" />
+              <Input type="number" step="any" id="rate_EUR" name="rate_EUR" bind:value={exchangeRates.EUR} class="bg-(--glass-inset-bg)" />
             </div>
             <div class="space-y-2">
               <Label for="rate_PLN">1 USD = PLN</Label>
-              <Input type="number" step="any" id="rate_PLN" name="rate_PLN" bind:value={exchangeRates.PLN} class="bg-background/50" />
+              <Input type="number" step="any" id="rate_PLN" name="rate_PLN" bind:value={exchangeRates.PLN} class="bg-(--glass-inset-bg)" />
             </div>
             <div class="space-y-2">
               <Label for="rate_GBP">1 USD = GBP</Label>
-              <Input type="number" step="any" id="rate_GBP" name="rate_GBP" bind:value={exchangeRates.GBP} class="bg-background/50" />
+              <Input type="number" step="any" id="rate_GBP" name="rate_GBP" bind:value={exchangeRates.GBP} class="bg-(--glass-inset-bg)" />
             </div>
             <input type="hidden" name="rate_USD" value="1.0" />
             <input type="hidden" name="exchangeRatesAsOf" value={ratesAsOf} />
@@ -188,7 +189,7 @@
 
       </CardContent>
 
-      <CardFooter class="border-t border-border bg-black/10 flex justify-end py-4">
+      <CardFooter class="border-t border-border glass-inset flex justify-end py-4">
         <Button type="submit" disabled={isSaving}>
           <Save class="h-4 w-4 mr-2" />
           {#if isSaving}Saving...{:else}Save Changes{/if}
@@ -225,44 +226,43 @@
   </Card>
 </div>
 
-<!-- Confirm Reset Dialog Overlay -->
-{#if showResetConfirm}
-  <div class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <Card class="w-full max-w-md border-destructive/20 shadow-2xl bg-card">
-      <CardHeader class="border-b border-border bg-destructive/10 text-destructive">
-        <div class="flex items-center space-x-2">
-          <AlertTriangle class="h-5 w-5" />
-          <CardTitle>Are you absolutely sure?</CardTitle>
-        </div>
-        <CardDescription class="text-destructive/80 mt-1">This operation is permanent and irreversible.</CardDescription>
-      </CardHeader>
-      
-      <CardContent class="py-4 text-sm space-y-2">
-        <p>You are about to reset the entire database. This will:</p>
-        <ul class="list-disc list-inside space-y-1 text-muted-foreground pl-1">
-          <li>Delete all your custom AI Services & Feature Packs</li>
-          <li>Remove all Pricing Plans & Market Verticals</li>
-          <li>Wipe all Cohort configurations</li>
-          <li>Wipe all Scenarios & Projections</li>
-          <li>Re-seed with "Acme Analytics" sample database</li>
-        </ul>
-      </CardContent>
-      
-      <CardFooter class="border-t border-border bg-black/10 py-3 flex justify-end space-x-2">
-        <Button variant="outline" onclick={() => showResetConfirm = false} disabled={isResetting}>Cancel</Button>
-        <form method="POST" action="?/resetWorkspace" use:enhance={() => {
-          isResetting = true;
-          return async ({ update }) => {
-            await update();
-            isResetting = false;
-            showResetConfirm = false;
-          };
-        }}>
-          <Button type="submit" variant="destructive" disabled={isResetting}>
-            {#if isResetting}Resetting...{:else}Yes, Reset Workspace{/if}
-          </Button>
-        </form>
-      </CardFooter>
-    </Card>
-  </div>
-{/if}
+<!-- Confirm Reset Dialog -->
+<FormDialog
+  bind:open={showResetConfirm}
+  size="sm"
+  destructive
+  icon={AlertTriangle}
+  title="Are you absolutely sure?"
+  description="This operation is permanent and irreversible."
+>
+  <p class="text-sm">You are about to reset the entire database. This will:</p>
+  <ul class="list-disc list-inside space-y-1 text-sm text-muted-foreground pl-1">
+    <li>Delete all your custom AI Services & Feature Packs</li>
+    <li>Remove all Pricing Plans & Market Verticals</li>
+    <li>Wipe all Cohort configurations</li>
+    <li>Wipe all Scenarios & Projections</li>
+    <li>Re-seed with "Acme Analytics" sample database</li>
+  </ul>
+
+  {#snippet footer()}
+    <Button variant="outline" onclick={() => (showResetConfirm = false)} disabled={isResetting}>
+      Cancel
+    </Button>
+    <form
+      method="POST"
+      action="?/resetWorkspace"
+      use:enhance={() => {
+        isResetting = true;
+        return async ({ update }) => {
+          await update();
+          isResetting = false;
+          showResetConfirm = false;
+        };
+      }}
+    >
+      <Button type="submit" variant="destructive" disabled={isResetting}>
+        {#if isResetting}Resetting...{:else}Yes, Reset Workspace{/if}
+      </Button>
+    </form>
+  {/snippet}
+</FormDialog>

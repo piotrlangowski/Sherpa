@@ -340,10 +340,10 @@
       <!-- KPI widgets grid -->
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
       <!-- NPV -->
-      <Card class="border-border bg-card/30 backdrop-blur-sm select-none p-4 flex flex-col justify-between shadow-sm">
+      <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between">
         <div>
           <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Net Present Value</span>
-          <CardTitle class="text-xl font-black mt-2 block {results.npv >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+          <CardTitle class="text-xl font-black mt-2 block {results.npv >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
             {formatCurrency(results.npv, appState.currency, 0)}
           </CardTitle>
         </div>
@@ -351,10 +351,10 @@
       </Card>
 
       <!-- IRR -->
-      <Card class="border-border bg-card/30 backdrop-blur-sm select-none p-4 flex flex-col justify-between shadow-sm">
+      <Card class="glass border glass-glow [--glow-color:var(--primary)] select-none p-4 flex flex-col justify-between">
         <div>
           <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">IRR (Annualized)</span>
-          <span class="text-xl font-black mt-2 block {results.irr_annual !== null && results.irr_annual >= scenario.discount_rate ? 'text-emerald-400' : results.irr_annual !== null ? 'text-amber-400' : 'text-muted-foreground'}">
+          <span class="text-xl font-black mt-2 block {results.irr_annual !== null && results.irr_annual >= scenario.discount_rate ? 'text-emerald-600 dark:text-emerald-400' : results.irr_annual !== null ? 'text-amber-400' : 'text-muted-foreground'}">
             {results.irr_annual !== null ? formatPercent(results.irr_annual) : 'N/A'}
           </span>
         </div>
@@ -364,10 +364,10 @@
       </Card>
 
       <!-- Payback Period -->
-      <Card class="border-border bg-card/30 backdrop-blur-sm select-none p-4 flex flex-col justify-between shadow-sm">
+      <Card class="glass border glass-glow [--glow-color:var(--color-cyan-500)] select-none p-4 flex flex-col justify-between">
         <div>
           <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Payback Period</span>
-          <span class="text-xl font-black text-cyan-400 mt-2 block">
+          <span class="text-xl font-black text-cyan-600 dark:text-cyan-400 mt-2 block">
             {formatMonths(results.payback_months)}
           </span>
         </div>
@@ -375,7 +375,7 @@
       </Card>
 
       <!-- TCO -->
-      <Card class="border-border bg-card/30 backdrop-blur-sm select-none p-4 flex flex-col justify-between shadow-sm">
+      <Card class="glass border glass-glow [--glow-color:var(--primary)] select-none p-4 flex flex-col justify-between">
         <div>
           <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">TCO (T-Horizon)</span>
           <CardTitle class="text-xl font-black text-foreground mt-2 block">
@@ -386,10 +386,10 @@
       </Card>
 
       <!-- ROI% -->
-      <Card class="border-border bg-card/30 backdrop-blur-sm select-none p-4 flex flex-col justify-between shadow-sm col-span-2 lg:col-span-1">
+      <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between col-span-2 lg:col-span-1">
         <div>
           <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Return on Investment</span>
-          <span class="text-xl font-black mt-2 block {results.roi_percent >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+          <span class="text-xl font-black mt-2 block {results.roi_percent >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
             {formatPercent(results.roi_percent)}
           </span>
         </div>
@@ -400,8 +400,8 @@
     <!-- Charts & Offering breakdown -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <!-- Main Visual Projections -->
-      <Card class="border-border lg:col-span-2 bg-card/35 backdrop-blur-sm shadow-sm flex flex-col justify-between">
-        <CardHeader class="pb-2 border-b border-border bg-black/5 flex flex-row items-center justify-between">
+      <Card class="border-border lg:col-span-2 glass border flex flex-col justify-between">
+        <CardHeader class="pb-2 border-b border-border glass-inset flex flex-row items-center justify-between">
           <div>
             <CardTitle class="text-base font-bold text-foreground">Forecast Timeline Visualization</CardTitle>
             <CardDescription class="text-xs">Interactive cashflow and customer graphs.</CardDescription>
@@ -442,8 +442,8 @@
       </Card>
 
       <!-- Sideline configuration breakdown -->
-      <Card class="border-border bg-card/35 backdrop-blur-sm shadow-sm flex flex-col justify-between">
-        <CardHeader class="pb-3 border-b border-border bg-black/5 select-none">
+      <Card class="border-border glass border flex flex-col justify-between">
+        <CardHeader class="pb-3 border-b border-border glass-inset select-none">
           <CardTitle class="text-base font-bold text-foreground">Scenario Configuration</CardTitle>
           <CardDescription>Setup details, rollout dates, and expenses.</CardDescription>
         </CardHeader>
@@ -483,7 +483,7 @@
                   <div class="mb-1 text-muted-foreground">Targeted Verticals:</div>
                   <div class="flex flex-wrap gap-1">
                     {#each scenario.scope_verticals as v}
-                      <Badge variant="outline" class="bg-black/10 py-0 text-[10px]">{v.name}</Badge>
+                      <Badge variant="outline" class="glass-inset py-0 text-[10px]">{v.name}</Badge>
                     {/each}
                   </div>
                 </div>
@@ -494,7 +494,7 @@
                   <div class="mb-1 text-muted-foreground">Targeted Cohorts:</div>
                   <div class="flex flex-wrap gap-1">
                     {#each scenario.scope_cohorts as c}
-                      <Badge variant="outline" class="bg-black/10 py-0 text-[10px]">{c.name}</Badge>
+                      <Badge variant="outline" class="glass-inset py-0 text-[10px]">{c.name}</Badge>
                     {/each}
                   </div>
                 </div>
@@ -533,19 +533,19 @@
                 {#each scenario.plans || [] as plan}
                   <div class="flex justify-between items-center">
                     <span>Plan: <strong>{plan.name}</strong></span>
-                    <Badge variant="outline" class="font-mono bg-black/10 py-0 px-1.5 text-[10px]">M{plan.rollout_month}</Badge>
+                    <Badge variant="outline" class="font-mono glass-inset py-0 px-1.5 text-[10px]">M{plan.rollout_month}</Badge>
                   </div>
                 {/each}
                 {#each scenario.packs || [] as pack}
                   <div class="flex justify-between items-center">
                     <span>Pack: <strong>{pack.name}</strong></span>
-                    <Badge variant="outline" class="font-mono bg-black/10 py-0 px-1.5 text-[10px]">M{pack.rollout_month}</Badge>
+                    <Badge variant="outline" class="font-mono glass-inset py-0 px-1.5 text-[10px]">M{pack.rollout_month}</Badge>
                   </div>
                 {/each}
                 {#each scenario.services || [] as service}
                   <div class="flex justify-between items-center">
                     <span>Service: <strong>{service.name}</strong></span>
-                    <Badge variant="outline" class="font-mono bg-black/10 py-0 px-1.5 text-[10px]">M{service.rollout_month}</Badge>
+                    <Badge variant="outline" class="font-mono glass-inset py-0 px-1.5 text-[10px]">M{service.rollout_month}</Badge>
                   </div>
                 {/each}
               {/if}
@@ -564,7 +564,7 @@
                 {#each scenario.costs as cost}
                   <div class="flex justify-between items-center">
                     <span class="truncate pr-2">{cost.name} ({cost.category})</span>
-                    <span class="font-mono text-rose-400 font-bold shrink-0">{formatCurrency(cost.amount, cost.currency || 'USD', 0)}</span>
+                    <span class="font-mono text-rose-600 dark:text-rose-400 font-bold shrink-0">{formatCurrency(cost.amount, cost.currency || 'USD', 0)}</span>
                   </div>
                 {/each}
               {/if}
@@ -573,7 +573,7 @@
         </CardContent>
 
         <!-- Help Info -->
-        <CardFooter class="border-t border-border bg-black/5 py-3 select-none flex items-start space-x-2 text-[10px] text-muted-foreground">
+        <CardFooter class="border-t border-border glass-inset py-3 select-none flex items-start space-x-2 text-[10px] text-muted-foreground">
           <Info class="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
           <p>Discounting is calculated on a monthly compounding basis. Projections assume linear rollout starting points matching the specified month offsets.</p>
         </CardFooter>
