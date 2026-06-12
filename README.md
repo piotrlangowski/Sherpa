@@ -75,12 +75,6 @@ The dev registration pins the database to the repo's `data/sherpa.db` (via `SHER
 
 7. In a chat, ask Claude to *"open the Sherpa dashboard"* — the web UI should open in your browser, seeded with the demo workspace on first run.
 
-**Good to know:**
-
-- **Your data is in the same place as with the extension.** The database defaults to `~/Library/Application Support/Sherpa/sherpa.db` (macOS) / `%APPDATA%\Sherpa\sherpa.db` (Windows) — exactly where the one-click extension keeps it. If you used the extension before, all your scenarios are already there; nothing to migrate.
-- **Custom database location:** add an `env` block to the entry: `"env": { "SHERPA_DB_PATH": "/path/to/sherpa.db" }`.
-- **Switching back when the bug is fixed:** remove the `sherpa` entry from `claude_desktop_config.json`, restart Claude Desktop, and install `sherpa.mcpb` the normal way. Your data carries over automatically. Don't run both at once — you'd get duplicate tools.
-- **Updating:** manual installs don't auto-update. To update, download the new release and extract it over the same folder.
 
 ### Launching the Dashboard from Claude Desktop
 
