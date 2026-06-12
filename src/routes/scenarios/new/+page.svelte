@@ -805,7 +805,7 @@
                 <div>
                   <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Provisional Payback</span>
                   <span class="text-lg font-mono font-black text-cyan-600 dark:text-cyan-400 mt-1 block">
-                    {previewResult.paybackMonths === 0 ? 'Immediate' : previewResult.paybackMonths === null ? 'Never' : formatMonths(previewResult.paybackMonths)}
+                    {previewResult.paybackMonths === 0 ? 'Immediate' : previewResult.paybackMonths === null ? 'Not within horizon' : formatMonths(previewResult.paybackMonths)}
                   </span>
                 </div>
                 <p class="text-[9px] text-muted-foreground/80 mt-1">Months to recover investment</p>
