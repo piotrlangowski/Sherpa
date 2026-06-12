@@ -87,6 +87,7 @@ A `Scenario` targets a **scope** (`scope_type`: `all_clients` | `verticals` | `c
 
 ### Client state, UI, styling
 
+- consult DESIGN.md for detailed styling and component guidelines
 - **Svelte 5 runes mode is forced** project-wide (see `svelte.config.js`). Global client state is a class singleton `appState` in `src/lib/stores/app.svelte.ts` using `$state`, hydrated via `appState.init(...)` from the layout load. Reactive helpers use the `.svelte.ts` extension.
 - UI components in `src/lib/components/ui/` are **shadcn-svelte** (Bits UI) generated from the registry (style `vega`, `lucide` icons) — prefer regenerating/adding via the shadcn CLI over hand-editing. App-specific components live alongside under `catalog/`, `dashboard/`, `layout/`, `wizard/`.
 - **Tailwind CSS v4 is configured entirely in CSS** at `src/routes/layout.css` (OKLCH theme, `@import 'tailwindcss'`) via `@tailwindcss/vite`. There is **no `tailwind.config.js`** (the README's reference to one is outdated).
