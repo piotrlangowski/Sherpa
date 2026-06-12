@@ -45,11 +45,14 @@ npm run mcp:pack                                  # (from root) build + pack the
 ## Architecture
 
 ### Two projects, one shared engine
+
 This repo contains **two independent TypeScript projects**, each with its own `package.json`, `tsconfig.json`, and `node_modules`:
+
 - the **SvelteKit app** at the root (`src/`)
 - the **MCP server** at `mcp-server/`
 
 They share code through a **symlink**: `mcp-server/src/shared → ../../src/lib/shared`. So `src/lib/shared/` is the single source of truth — financial math, types, the DB path resolver (`db-path.ts`), the DB schema (`db-schema.ts`), the demo seed (`seed.ts`), and the provider price catalog (`provider-catalog.ts`).
+
 - Relative imports **inside** `src/lib/shared/` must use the `.js` extension (NodeNext resolution in the MCP build).
 - **After changing anything in `src/lib/shared/`, rebuild the MCP server** (`cd mcp-server && npm run build`) or it will serve stale logic.
 - `src/lib/shared/db-path.ts` resolves the SQLite filepath.
@@ -57,36 +60,44 @@ They share code through a **symlink**: `mcp-server/src/shared → ../../src/lib/
 - `npm run mcp:pack` copies SvelteKit's built app (`build/`) to `mcp-server/app/` (with a generated `version.json`) before creating the `.mcpb` bundle.
 
 ### Pure vs. impure split (the central design decision)
+
 - **`src/lib/shared/financial-math.ts`** — ALL computation: `buildCohortModel`, `calculateNPV`/`calculateIRR` (Newton-Raphson + bisection fallback) / `calculatePaybackPeriod` / `calculateTCO`, `calculateScenario`, `runSensitivityAnalysis`. These are **pure** functions with zero DB access; providers are passed in as arguments. This is what the MCP server consumes.
 - **`src/lib/server/services/financial-engine.ts`** — thin **DB-aware wrappers**: resolve the scenario's cohorts + provider list from the DB, then delegate to the pure functions. `runAndSaveScenario` recomputes and caches results.
 - Put new financial math in the **shared** module, not in the server wrapper, so the app and MCP stay consistent.
 
 ### Data layer
+
 - SQLite via built-in `node:sqlite` (`DatabaseSync`). The connection is a **singleton** created on first import of `src/lib/server/db.ts` (WAL mode, `foreign_keys = ON`). Importing it runs `runMigrations` (`src/lib/shared/db-schema.ts`) then `seedDatabase` (`src/lib/shared/seed.ts`) automatically. The app's DB file is `data/sherpa.db` resolved relative to `process.cwd()`; the MCP server has its own resolution order (see Gotchas).
 - `src/lib/server/repositories/*.ts` — one plain object per entity (e.g. `scenariosRepository`) holding prepared statements. **Server-only** (they import `db`); never import them into client components.
 - Schema lives entirely in `src/lib/shared/db-schema.ts` as idempotent `CREATE TABLE IF NOT EXISTS` calls inside one transaction, plus a `runDataMigrations` step for additive `ALTER TABLE`/backfill (SQLite can't drop columns, so legacy columns like `scenarios.cohort_config_id` are left in place and simply no longer written). Schema + seed sit in `shared/` (not `server/`) so the MCP server can self-initialize a fresh database.
 
 ### SvelteKit conventions
+
 - Route directories use `+page.server.ts` (a `load` function for reads + `actions` for mutations via `FormData`) calling repositories, with `+page.svelte` for UI. Global settings are loaded in `src/routes/+layout.server.ts`.
 - Server-only code (`$lib/server/**`) must never reach the client bundle.
 - A few JSON endpoints live under `src/routes/api/**` (import/export, provider price updates, settings init).
 
 ### Domain model: scope + override cascade
+
 A `Scenario` targets a **scope** (`scope_type`: `all_clients` | `verticals` | `cohorts`). `resolveScenarioCohorts` (in `financial-engine.ts`) expands that scope into concrete `CohortConfig`s and then applies a **three-level override cascade in order: global (`all_clients`) → vertical → cohort** (`scenario_scope_overrides` table). This resolution is the trickiest domain logic — changes to cohort/override handling belong here.
 
 ### Results caching & invalidation
+
 `scenario_results` caches computed KPIs and the monthly arrays (cashflows/MRR/customers stored as JSON strings). Any mutation that changes a scenario's inputs must **delete the cached row** — `scenariosRepository.update` already does this, and `invalidateResults` + the `findScenarioIdsBy*` helpers exist to cascade-invalidate when upstream entities (services, providers, cohorts, verticals, cost items) change. When adding a new way to edit inputs, wire in invalidation or KPIs will go stale.
 
 ### Client state, UI, styling
+
 - **Svelte 5 runes mode is forced** project-wide (see `svelte.config.js`). Global client state is a class singleton `appState` in `src/lib/stores/app.svelte.ts` using `$state`, hydrated via `appState.init(...)` from the layout load. Reactive helpers use the `.svelte.ts` extension.
 - UI components in `src/lib/components/ui/` are **shadcn-svelte** (Bits UI) generated from the registry (style `vega`, `lucide` icons) — prefer regenerating/adding via the shadcn CLI over hand-editing. App-specific components live alongside under `catalog/`, `dashboard/`, `layout/`, `wizard/`.
 - **Tailwind CSS v4 is configured entirely in CSS** at `src/routes/layout.css` (OKLCH theme, `@import 'tailwindcss'`) via `@tailwindcss/vite`. There is **no `tailwind.config.js`** (the README's reference to one is outdated).
 - Charts use Apache ECharts; dashboard PNG export uses `html2canvas-pro`.
 
 ### Path aliases
+
 `$lib` → `src/lib`. Per `components.json`: `$lib/components`, `$lib/components/ui`, `$lib/utils`, `$lib/hooks`.
 
 ## Gotchas
+
 - **MCP DB path resolution**: Handled by `src/lib/shared/db-path.ts`. `SHERPA_DB_PATH` always wins if valid (ignoring unsubstituted placeholders containing `${`), then `repoDbPath` (dev), then the OS user data dir (`~/Library/Application Support/Sherpa/` on macOS, `%APPDATA%\Sherpa\` on Windows). The MCP server self-initializes (migrations + seed) on first run.
 - **In-process Dashboard & ESM Caching**: The SvelteKit dashboard is served in-process by the MCP server using Node's native HTTP module. Environment variables (`ORIGIN`, `SHERPA_DB_PATH`, `HOST`) must be written to `process.env` *before* dynamically importing `shims.js` and `handler.js` via `pathToFileURL`. Because SvelteKit caches these variables upon import, the dashboard port and origin are baked for the entire process lifetime.
 - **MCP Stderr Logging & Guard**: MCP servers must log only to `stderr` (stdout carries JSON-RPC). To prevent third-party dashboard or SvelteKit logs from leaking to stdout, `mcp-server/src/stderr-guard.ts` is imported as the very first line of `index.ts` to globally bind `console.log/info/debug/warn` to `console.error`.
@@ -99,6 +110,7 @@ A `Scenario` targets a **scope** (`scope_type`: `all_clients` | `verticals` | `c
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
 
 Rules:
+
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
