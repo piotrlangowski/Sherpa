@@ -196,24 +196,10 @@ export function seedDatabase(db: DatabaseConnection): void {
     insertScenarioService.run(scGlobal, sChatbot, 0);
     insertScenarioCost.run(scGlobal, cInfra);
 
-    // 11. Scenarios Results (Pre-populate with dummy calculation results to look full on load)
-    const insertResult = db.prepare(`
-      INSERT INTO scenario_results (id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    // Dummy data for visual appearance
-    const payback = 14.5;
-    const npv = 158420.00;
-    const irr = 0.456;
-    const tco = 328000.00;
-    const roi = 1.48;
-    const cashflows = JSON.stringify(new Array(36).fill(0).map((_, i) => -40000 + i * 8000));
-    const mrr = JSON.stringify(new Array(36).fill(0).map((_, i) => 74500 + i * 2500));
-    const customers = JSON.stringify(new Array(36).fill(0).map((_, i) => 500 + i * 15));
-
-    insertResult.run(uuidv4(), scScenario, payback, npv, irr, tco, roi, cashflows, mrr, customers, now);
-    insertResult.run(uuidv4(), scGlobal, payback, npv, irr, tco, roi, cashflows, mrr, customers, now);
+    // 11. Scenario Results: intentionally NOT pre-populated.
+    // The incremental engine computes real results lazily — the scenario detail page
+    // runs and caches KPIs on first view, and the list shows a "Pending Simulation"
+    // state until then. Seeding fixed numbers here would contradict that recomputation.
   })();
 
   console.error('Database seed completed successfully!');
