@@ -5,12 +5,14 @@ description: Provides context and tools for calculating and analyzing ROI, NPV, 
 
 ## Core Concepts
 
+**Methodology — incremental value model**: All KPIs are computed on *incremental* cash flows, i.e. the delta between a "With AI" projection and a "Without AI" counterfactual baseline (`ΔRevenue = MRR_withAI − MRR_baseline`, minus AI costs). The numbers measure value created by the AI investment, **not** the whole business. AI benefits are modeled via cohort uplift assumptions (`churn_reduction`, `arpu_uplift`, `arpu_uplift_percent`, `acquisition_uplift`); with no uplifts a scenario is pure cost and NPV is negative by design.
+
 **Financial Engine Metrics**:
-- **NPV (Net Present Value)**: The total present value of discounted net cash flows.
-- **IRR (Internal Rate of Return)**: The annualized return rate of the project.
-- **Payback Period**: The number of months it takes for cumulative net cash flow to turn positive.
-- **TCO (Total Cost of Ownership)**: Includes Capex/Opex infrastructure, development costs, and LLM model usage (input and output token fees).
-- **ROI%**: Percentage return on investment, estimated as `(Total Revenue - TCO) / TCO`.
+- **NPV (Net Present Value)**: Present value of the discounted *incremental* net cash flows.
+- **IRR (Internal Rate of Return)**: Annualized return of the incremental flows. Returns `null` when the flows never change sign (a pure-cost scenario, or one that is positive from month 0) — this is expected, not an error.
+- **Payback Period**: Months for cumulative *incremental* net cash flow to turn positive. `Immediate` when there is no upfront investment phase; `Not within horizon` when it never recovers inside the projection window.
+- **TCO (Total Cost of Ownership)**: Capex/Opex infrastructure, development costs, and LLM token usage (input/output fees). Already AI-only — unaffected by the incremental change.
+- **ROI%**: `(Incremental Revenue − TCO) / TCO`.
 
 ## Workflow Patterns
 

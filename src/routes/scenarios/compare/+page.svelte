@@ -322,7 +322,7 @@
               {/if}
               {#if s.results}
                 <span class="text-[10px] text-muted-foreground block mt-0.5">
-                  Incremental NPV: <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">{formatCurrency(s.results.npv, appState.currency, 0)}</strong> • Payback: <strong class="text-cyan-600 dark:text-cyan-400 font-mono font-bold">{s.results.payback_months === 0 ? 'Immediate' : s.results.payback_months !== null ? s.results.payback_months + 'm' : 'N/A'}</strong>
+                  Incremental NPV: <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">{formatCurrency(s.results.npv, appState.currency, 0)}</strong> • Payback: <strong class="text-cyan-600 dark:text-cyan-400 font-mono font-bold">{s.results.payback_months === 0 ? 'Immediate' : s.results.payback_months !== null ? s.results.payback_months + 'm' : 'Not within horizon'}</strong>
                 </span>
               {:else}
                 <span class="text-[10px] text-rose-600 dark:text-rose-400 font-medium italic block mt-0.5">No results (run calculations)</span>
