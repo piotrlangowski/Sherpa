@@ -69,6 +69,10 @@ Gamma LLC,Software,2026-01-05,Churned,80.50`;
       
       // Churn rate for SaaS overall: D is churned, total 4 = 1/4 = 0.25 (25%)
       expect(janSacCohort!.monthlyChurnRate).toBe(0.25);
+      expect(janSacCohort!.arpuUplift).toBe(0);
+      expect(janSacCohort!.arpuUpliftPercent).toBe(0);
+      expect(janSacCohort!.churnReduction).toBe(0);
+      expect(janSacCohort!.acquisitionUplift).toBe(0);
     });
   });
 

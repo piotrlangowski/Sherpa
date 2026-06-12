@@ -7,6 +7,8 @@ import { packsRepository } from '$lib/server/repositories/packs';
 import { plansRepository } from '$lib/server/repositories/plans';
 import { costsRepository } from '$lib/server/repositories/costs';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
+import { providersRepository } from '$lib/server/repositories/providers';
+import { settingsRepository } from '$lib/server/repositories/settings';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
 import { fail, redirect } from '@sveltejs/kit';
 
@@ -18,6 +20,8 @@ export const load: PageServerLoad = async () => {
   const packs = packsRepository.getAll();
   const plans = plansRepository.getAll();
   const costs = costsRepository.getAll();
+  const providers = providersRepository.getAll();
+  const settings = settingsRepository.get();
 
   return {
     clientBase,
@@ -26,7 +30,9 @@ export const load: PageServerLoad = async () => {
     services,
     packs,
     plans,
-    costs
+    costs,
+    providers,
+    settings
   };
 };
 

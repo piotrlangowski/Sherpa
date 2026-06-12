@@ -15,15 +15,38 @@
   import Database from '@lucide/svelte/icons/database';
 
   let { data } = $props();
+  const clientBase = $derived(data.clientBase);
 
-  let total_users = $state(data.clientBase.total_users || 0);
-  let default_arpu = $state(data.clientBase.default_arpu || 0);
-  let default_monthly_churn_rate = $state((data.clientBase.default_monthly_churn_rate || 0) * 100);
-  let default_monthly_acquisition = $state(data.clientBase.default_monthly_acquisition || 0);
-  let default_acquisition_growth_rate = $state((data.clientBase.default_acquisition_growth_rate || 0) * 100);
-  let default_ai_adoption_rate = $state((data.clientBase.default_ai_adoption_rate || 0) * 100);
-  let default_retention_floor = $state((data.clientBase.default_retention_floor || 0) * 100);
-  let default_expansion_rate = $state((data.clientBase.default_expansion_rate || 0) * 100);
+  let total_users = $state(0);
+  let default_arpu = $state(0);
+  let default_monthly_churn_rate = $state(0);
+  let default_monthly_acquisition = $state(0);
+  let default_acquisition_growth_rate = $state(0);
+  let default_ai_adoption_rate = $state(0);
+  let default_retention_floor = $state(0);
+  let default_expansion_rate = $state(0);
+  let default_arpu_uplift = $state(0);
+  let default_arpu_uplift_percent = $state(0);
+  let default_churn_reduction = $state(0);
+  let default_acquisition_uplift = $state(0);
+
+  // Synchronize state when clientBase changes
+  $effect(() => {
+    const cb = clientBase;
+    if (!cb) return;
+    total_users = cb.total_users || 0;
+    default_arpu = cb.default_arpu || 0;
+    default_monthly_churn_rate = (cb.default_monthly_churn_rate || 0) * 100;
+    default_monthly_acquisition = cb.default_monthly_acquisition || 0;
+    default_acquisition_growth_rate = (cb.default_acquisition_growth_rate || 0) * 100;
+    default_ai_adoption_rate = (cb.default_ai_adoption_rate || 0) * 100;
+    default_retention_floor = (cb.default_retention_floor || 0) * 100;
+    default_expansion_rate = (cb.default_expansion_rate || 0) * 100;
+    default_arpu_uplift = cb.default_arpu_uplift || 0;
+    default_arpu_uplift_percent = (cb.default_arpu_uplift_percent || 0) * 100;
+    default_churn_reduction = (cb.default_churn_reduction || 0) * 100;
+    default_acquisition_uplift = (cb.default_acquisition_uplift || 0) * 100;
+  });
 
   let isSaving = $state(false);
 
@@ -112,6 +135,34 @@
           </div>
         </div>
 
+        <hr class="border-border/60" />
+
+        <!-- AI impact assumptions -->
+        <div class="space-y-4">
+          <h3 class="text-sm font-bold text-foreground uppercase tracking-wider text-primary">AI Impact Assumptions (vs. Baseline)</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <Label for="default_arpu_uplift" class="font-semibold">Default AI ARPU Uplift ($ Flat)</Label>
+              <Input id="default_arpu_uplift" name="default_arpu_uplift" type="number" step="0.01" min="0" bind:value={default_arpu_uplift} required class="bg-(--glass-inset-bg) border-border font-mono" />
+              <p class="text-[10px] text-muted-foreground mt-1">Flat monthly ARPU increase for users adopting AI.</p>
+            </div>
+            <div class="space-y-2">
+              <Label for="default_arpu_uplift_percent" class="font-semibold">Default AI ARPU Uplift (%)</Label>
+              <Input id="default_arpu_uplift_percent" name="default_arpu_uplift_percent" type="number" step="0.1" min="0" max="200" bind:value={default_arpu_uplift_percent} required class="bg-(--glass-inset-bg) border-border font-mono" />
+              <p class="text-[10px] text-muted-foreground mt-1">Percentage increase in ARPU for users adopting AI.</p>
+            </div>
+            <div class="space-y-2">
+              <Label for="default_churn_reduction" class="font-semibold">Default AI Churn Reduction (%)</Label>
+              <Input id="default_churn_reduction" name="default_churn_reduction" type="number" step="0.1" min="0" max="100" bind:value={default_churn_reduction} required class="bg-(--glass-inset-bg) border-border font-mono" />
+              <p class="text-[10px] text-muted-foreground mt-1">Percentage reduction of monthly churn for users adopting AI.</p>
+            </div>
+            <div class="space-y-2">
+              <Label for="default_acquisition_uplift" class="font-semibold">Default AI Acquisition Uplift (%)</Label>
+              <Input id="default_acquisition_uplift" name="default_acquisition_uplift" type="number" step="0.1" min="0" max="200" bind:value={default_acquisition_uplift} required class="bg-(--glass-inset-bg) border-border font-mono" />
+              <p class="text-[10px] text-muted-foreground mt-1">Percentage increase in new-customer acquisition.</p>
+            </div>
+          </div>
+        </div>
       </CardContent>
 
       <CardFooter class="border-t border-border glass-inset py-4 flex justify-end">

@@ -18,11 +18,22 @@
   import Globe from '@lucide/svelte/icons/globe';
 
   let { data } = $props();
-  const vertical = data.vertical;
+  const vertical = $derived(data.vertical);
 
-  let tam = $state(vertical.tam_users ?? 0);
-  let sam = $state(vertical.sam_users ?? 0);
-  let som = $state(vertical.som_users ?? 0);
+  let tam = $state(0);
+  let sam = $state(0);
+  let som = $state(0);
+
+  // Synchronize state when vertical changes
+  $effect(() => {
+    const v = vertical;
+    if (!v) return;
+    untrack(() => {
+      tam = v.tam_users ?? 0;
+      sam = v.sam_users ?? 0;
+      som = v.som_users ?? 0;
+    });
+  });
 
   // Validate SAM/SOM logic client-side
   $effect(() => {

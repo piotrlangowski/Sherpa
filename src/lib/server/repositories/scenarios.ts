@@ -124,7 +124,9 @@ export const scenariosRepository = {
     const cohortRows = db.prepare(`
       SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition, 
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
-             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu, c.created_at, c.updated_at,
+             c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
+             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.created_at, c.updated_at,
              v.name as vertical_name
       FROM cohort_configs c
       JOIN scenario_cohorts sc ON c.id = sc.cohort_config_id
@@ -135,7 +137,8 @@ export const scenariosRepository = {
     // Load scope overrides
     const overrideRows = db.prepare(`
       SELECT id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
-             acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override
+             acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
+             arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
       FROM scenario_scope_overrides
       WHERE scenario_id = ?
     `).all(id) as any[];
@@ -228,15 +231,18 @@ export const scenariosRepository = {
         const insertOverride = db.prepare(`
           INSERT INTO scenario_scope_overrides (
             id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
-            acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
+            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const ov of data.scope_overrides) {
           insertOverride.run(
             uuidv4(), id, ov.target_type, ov.target_id || null, 
             ov.monthly_churn_rate ?? null, ov.monthly_acquisition ?? null,
             ov.acquisition_growth_rate ?? null, ov.ai_adoption_rate ?? null,
-            ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null
+            ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null,
+            ov.arpu_uplift ?? null, ov.arpu_uplift_percent ?? null,
+            ov.churn_reduction ?? null, ov.acquisition_uplift ?? null
           );
         }
       }
@@ -309,15 +315,18 @@ export const scenariosRepository = {
         const insertOverride = db.prepare(`
           INSERT INTO scenario_scope_overrides (
             id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
-            acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
+            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const ov of data.scope_overrides) {
           insertOverride.run(
             uuidv4(), id, ov.target_type, ov.target_id || null, 
             ov.monthly_churn_rate ?? null, ov.monthly_acquisition ?? null,
             ov.acquisition_growth_rate ?? null, ov.ai_adoption_rate ?? null,
-            ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null
+            ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null,
+            ov.arpu_uplift ?? null, ov.arpu_uplift_percent ?? null,
+            ov.churn_reduction ?? null, ov.acquisition_uplift ?? null
           );
         }
       }

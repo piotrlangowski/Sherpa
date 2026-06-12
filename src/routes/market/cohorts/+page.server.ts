@@ -25,6 +25,10 @@ export const actions: Actions = {
     const monthlyExpansionRate = parseFloat(formData.get('monthlyExpansionRate') as string || '0') / 100;
     const aiAdoptionRate = parseFloat(formData.get('aiAdoptionRate') as string || '0') / 100;
     const baseArpu = parseFloat(formData.get('baseArpu') as string || '0');
+    const arpuUplift = parseFloat(formData.get('arpuUplift') as string || '0');
+    const arpuUpliftPercent = parseFloat(formData.get('arpuUpliftPercent') as string || '0') / 100;
+    const churnReduction = parseFloat(formData.get('churnReduction') as string || '0') / 100;
+    const acquisitionUplift = parseFloat(formData.get('acquisitionUplift') as string || '0') / 100;
 
     if (!name) {
       return fail(400, { error: 'Cohort name is required' });
@@ -41,7 +45,11 @@ export const actions: Actions = {
         retention_floor: retentionFloor,
         monthly_expansion_rate: monthlyExpansionRate,
         ai_adoption_rate: aiAdoptionRate,
-        base_arpu: baseArpu
+        base_arpu: baseArpu,
+        arpu_uplift: arpuUplift,
+        arpu_uplift_percent: arpuUpliftPercent,
+        churn_reduction: churnReduction,
+        acquisition_uplift: acquisitionUplift
       });
       return { success: true };
     } catch (err: any) {
@@ -62,6 +70,10 @@ export const actions: Actions = {
     const monthlyExpansionRate = parseFloat(formData.get('monthlyExpansionRate') as string || '0') / 100;
     const aiAdoptionRate = parseFloat(formData.get('aiAdoptionRate') as string || '0') / 100;
     const baseArpu = parseFloat(formData.get('baseArpu') as string || '0');
+    const arpuUplift = parseFloat(formData.get('arpuUplift') as string || '0');
+    const arpuUpliftPercent = parseFloat(formData.get('arpuUpliftPercent') as string || '0') / 100;
+    const churnReduction = parseFloat(formData.get('churnReduction') as string || '0') / 100;
+    const acquisitionUplift = parseFloat(formData.get('acquisitionUplift') as string || '0') / 100;
 
     if (!id || !name) {
       return fail(400, { error: 'ID and Cohort name are required' });
@@ -78,7 +90,11 @@ export const actions: Actions = {
         retention_floor: retentionFloor,
         monthly_expansion_rate: monthlyExpansionRate,
         ai_adoption_rate: aiAdoptionRate,
-        base_arpu: baseArpu
+        base_arpu: baseArpu,
+        arpu_uplift: arpuUplift,
+        arpu_uplift_percent: arpuUpliftPercent,
+        churn_reduction: churnReduction,
+        acquisition_uplift: acquisitionUplift
       });
       return { success: true };
     } catch (err: any) {

@@ -77,6 +77,29 @@ Typical ROI calculators don't understand LLM economics; token cost calculators d
 - **Current model prices** — bundled price list for OpenAI, Anthropic and Google models with a visible "prices as of" date and one-click sync.
 - **MCP server** — 11 consolidated tools and 2 resources exposing the same engine to LLM hosts; includes full database CRUD capabilities with action parameters and Human-in-the-Loop safety confirmation for deletions, natural-language scenario generation, and 4 bundled agent skills.
 
+## Methodology & ROI Calculations
+
+Sherpa operates on an **incremental value** model: all KPIs (NPV, IRR, Payback, ROI%) are computed on the delta between a "With AI" projection and a "Without AI" counterfactual baseline.
+
+### Uplift Parameters
+Four AI impact parameters can be configured at cohort, vertical, or scenario override levels:
+- `arpu_uplift` — flat currency ARPU increase for users adopting AI (per month).
+- `arpu_uplift_percent` — percentage ARPU increase for users adopting AI.
+- `churn_reduction` — percentage reduction of monthly churn rate for users adopting AI.
+- `acquisition_uplift` — percentage increase in new-customer acquisition (attributable to the product having AI; unweighted by adoption).
+
+### Formulas
+The effective with-AI parameters are calculated as:
+- \(\text{churnRate} = \text{baseChurn} \times (1 - \text{churn\_reduction} \times \text{ai\_adoption\_rate})\)
+- \(\text{acquisition} = \text{baseAcquisition} \times (1 + \text{acquisition\_uplift})\)
+- \(\text{arpu} = \text{baseArpu} \times (1 + \text{arpu\_uplift\_percent} \times \text{ai\_adoption\_rate}) + \text{arpu\_uplift} \times \text{ai\_adoption\_rate}\)
+
+### Known Limitations & Approximations
+1. **Blended-rate approximation:** Weighting churn/ARPU by the adoption rate applies a blended average rate to the whole cohort instead of simulating adopter/non-adopter sub-cohorts separately. Due to the convexity of \((1-c)^{\text{age}}\) (Jensen's inequality), this slightly understates mixture retention, making results mildly conservative.
+2. **Expansion-rate uplift:** Excluded from the current scope.
+3. **Horizon truncation:** The standard 36-month horizon truncates terminal value, leading to conservative NPV calculations.
+4. **IRR non-uniqueness:** For non-conventional cash flows (e.g. multiple sign changes), IRR may have non-unique solutions. The engine uses a Newton-Raphson method with Bisection fallback to resolve one root.
+
 ## Architecture
 
 Two independent TypeScript projects share one engine through a symlink — the financial math, domain types, DB schema and demo seed live in `src/lib/shared/` and are compiled into both:

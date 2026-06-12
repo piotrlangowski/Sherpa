@@ -166,6 +166,10 @@ export function runMigrations(db: DatabaseConnection): void {
         monthly_expansion_rate  REAL DEFAULT 0.02,
         ai_adoption_rate        REAL DEFAULT 0.30,
         base_arpu              REAL DEFAULT 100,
+        arpu_uplift             REAL DEFAULT 0,
+        arpu_uplift_percent     REAL DEFAULT 0,
+        churn_reduction         REAL DEFAULT 0,
+        acquisition_uplift      REAL DEFAULT 0,
         created_at              TEXT NOT NULL,
         updated_at              TEXT NOT NULL
       )
@@ -183,6 +187,10 @@ export function runMigrations(db: DatabaseConnection): void {
         default_ai_adoption_rate    REAL DEFAULT 0.30,
         default_retention_floor     REAL DEFAULT 0.60,
         default_expansion_rate      REAL DEFAULT 0.02,
+        default_arpu_uplift         REAL DEFAULT 0,
+        default_arpu_uplift_percent REAL DEFAULT 0,
+        default_churn_reduction     REAL DEFAULT 0,
+        default_acquisition_uplift  REAL DEFAULT 0,
         updated_at                  TEXT NOT NULL
       )
     `).run();
@@ -239,7 +247,11 @@ export function runMigrations(db: DatabaseConnection): void {
         ai_adoption_rate        REAL,
         retention_floor         REAL,
         expansion_rate          REAL,
-        arpu_override           REAL
+        arpu_override           REAL,
+        arpu_uplift             REAL,
+        arpu_uplift_percent     REAL,
+        churn_reduction         REAL,
+        acquisition_uplift      REAL
       )
     `).run();
 
@@ -339,6 +351,39 @@ function runDataMigrations(db: DatabaseConnection): void {
     .map(c => c.name);
   if (!serviceColumns.includes('fixed_cost_currency')) {
     db.prepare("ALTER TABLE services ADD COLUMN fixed_cost_currency TEXT NOT NULL DEFAULT 'USD'").run();
+  }
+
+  // Migration 6: Add uplift columns & invalidate results
+  let resultsInvalidated = false;
+  const cohortColumns = (db.prepare("PRAGMA table_info(cohort_configs)").all() as any[]).map(c => c.name);
+  const newCohortCols = ['arpu_uplift', 'arpu_uplift_percent', 'churn_reduction', 'acquisition_uplift'];
+  for (const col of newCohortCols) {
+    if (!cohortColumns.includes(col)) {
+      db.prepare(`ALTER TABLE cohort_configs ADD COLUMN ${col} REAL DEFAULT 0`).run();
+      resultsInvalidated = true;
+    }
+  }
+
+  const clientBaseColumns = (db.prepare("PRAGMA table_info(client_base)").all() as any[]).map(c => c.name);
+  const newClientBaseCols = ['default_arpu_uplift', 'default_arpu_uplift_percent', 'default_churn_reduction', 'default_acquisition_uplift'];
+  for (const col of newClientBaseCols) {
+    if (!clientBaseColumns.includes(col)) {
+      db.prepare(`ALTER TABLE client_base ADD COLUMN ${col} REAL DEFAULT 0`).run();
+      resultsInvalidated = true;
+    }
+  }
+
+  const overrideColumns = (db.prepare("PRAGMA table_info(scenario_scope_overrides)").all() as any[]).map(c => c.name);
+  const newOverrideCols = ['arpu_uplift', 'arpu_uplift_percent', 'churn_reduction', 'acquisition_uplift'];
+  for (const col of newOverrideCols) {
+    if (!overrideColumns.includes(col)) {
+      db.prepare(`ALTER TABLE scenario_scope_overrides ADD COLUMN ${col} REAL`).run();
+      resultsInvalidated = true;
+    }
+  }
+
+  if (resultsInvalidated) {
+    db.prepare("DELETE FROM scenario_results").run();
   }
 
   // Migration 2: Migrate old cohort_config_id → scenario_cohorts junction

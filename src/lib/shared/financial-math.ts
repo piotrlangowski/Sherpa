@@ -40,6 +40,10 @@ export function applyScopeOverrides(cohorts: CohortConfig[], overrides: ScopeOve
     if (override.retention_floor !== null && override.retention_floor !== undefined) c.retention_floor = override.retention_floor;
     if (override.expansion_rate !== null && override.expansion_rate !== undefined) c.monthly_expansion_rate = override.expansion_rate;
     if (override.arpu_override !== null && override.arpu_override !== undefined) c.base_arpu = override.arpu_override;
+    if (override.arpu_uplift !== null && override.arpu_uplift !== undefined) c.arpu_uplift = override.arpu_uplift;
+    if (override.arpu_uplift_percent !== null && override.arpu_uplift_percent !== undefined) c.arpu_uplift_percent = override.arpu_uplift_percent;
+    if (override.churn_reduction !== null && override.churn_reduction !== undefined) c.churn_reduction = override.churn_reduction;
+    if (override.acquisition_uplift !== null && override.acquisition_uplift !== undefined) c.acquisition_uplift = override.acquisition_uplift;
     return c;
   };
 
@@ -54,6 +58,25 @@ export function applyScopeOverrides(cohorts: CohortConfig[], overrides: ScopeOve
     c = applyOverride(c, cohortOverrides.get(c.id));
     return c;
   });
+}
+
+/**
+ * Pure helper returning the effective with-AI cohort configuration.
+ * Formulates the counterfactual baseline uplifts.
+ */
+export function applyAiUplifts(config: CohortConfig): CohortConfig {
+  const aiAdoptionRate = config.ai_adoption_rate || 0;
+  const churnReduction = config.churn_reduction || 0;
+  const acquisitionUplift = config.acquisition_uplift || 0;
+  const arpuUpliftPercent = config.arpu_uplift_percent || 0;
+  const arpuUplift = config.arpu_uplift || 0;
+
+  return {
+    ...config,
+    monthly_churn_rate: config.monthly_churn_rate * (1 - churnReduction * aiAdoptionRate),
+    monthly_acquisition: config.monthly_acquisition * (1 + acquisitionUplift),
+    base_arpu: config.base_arpu * (1 + arpuUpliftPercent * aiAdoptionRate) + arpuUplift * aiAdoptionRate
+  };
 }
 
 // ============================================================
@@ -166,19 +189,36 @@ export function calculateNPV(cashFlows: number[], annualDiscountRate: number): n
  * Supports fractional months by interpolating between the last negative month and first positive month.
  */
 export function calculatePaybackPeriod(cashFlows: number[], annualDiscountRate: number = 0): number | null {
+  if (cashFlows.length === 0) return null;
   const rMonthly = annualDiscountRate > 0 ? Math.pow(1 + annualDiscountRate, 1 / 12) - 1 : 0;
-  let cumulative = 0;
-  let prevCumulative = 0;
-
+  
+  // Calculate cumulative cashflows
+  const cumulativeCf: number[] = [];
+  let currentSum = 0;
+  let hasNegative = false;
   for (let t = 0; t < cashFlows.length; t++) {
     const discountedCf = cashFlows[t] / Math.pow(1 + rMonthly, t);
-    prevCumulative = cumulative;
-    cumulative += discountedCf;
+    currentSum += discountedCf;
+    cumulativeCf.push(currentSum);
+    if (currentSum < 0) {
+      hasNegative = true;
+    }
+  }
 
-    if (cumulative >= 0 && prevCumulative < 0) {
-      // Interpolate fractional month:
-      // Payback = (t - 1) + |prevCumulative| / discountedCf
-      const fraction = -prevCumulative / discountedCf;
+  // If there are no negative cumulative cashflows at all (starts and stays positive/zero)
+  if (!hasNegative) {
+    return 0;
+  }
+
+  // Find where it crosses from negative to positive
+  for (let t = 0; t < cashFlows.length; t++) {
+    const cf = cashFlows[t];
+    const discountedCf = cf / Math.pow(1 + rMonthly, t);
+    const cum = cumulativeCf[t];
+    const prevCum = t > 0 ? cumulativeCf[t - 1] : 0;
+
+    if (cum >= 0 && prevCum < 0) {
+      const fraction = -prevCum / discountedCf;
       return parseFloat((t - 1 + fraction).toFixed(1));
     }
   }
@@ -299,9 +339,12 @@ export function calculateScenario(scenario: Scenario, allProviders: Provider[]):
     throw new Error(`Scenario '${scenario.name}' has no cohort configurations.`);
   }
 
-  // 1. Generate cohort revenue timelines (one per cohort)
-  const cohortResults = scenario.scope_cohorts.map(cc =>
+  // 1. Generate baseline (without AI) and with-AI cohort timelines
+  const baselineResults = scenario.scope_cohorts.map(cc =>
     buildCohortModel(cc, projectionMonths)
+  );
+  const withAiResults = scenario.scope_cohorts.map(cc =>
+    buildCohortModel(applyAiUplifts(cc), projectionMonths)
   );
 
   // 2. Build provider lookup map
@@ -317,17 +360,30 @@ export function calculateScenario(scenario: Scenario, allProviders: Provider[]):
   for (let t = 0; t < projectionMonths; t++) {
     let activeCustomers = 0;
     let activeAiUsers = 0;
-    let revenue = 0;
+    let grossRevenue = 0;
+    let baselineRevenue = 0;
+    let baselineCustomers = 0;
 
     // Aggregate over all cohort models for month t
-    for (const res of cohortResults) {
-      const monthData = res.timeline[t];
-      if (monthData) {
-        activeCustomers += monthData.activeCustomers;
-        activeAiUsers += monthData.activeAiUsers;
-        revenue += monthData.mrr;
+    for (let i = 0; i < scenario.scope_cohorts.length; i++) {
+      const baseRes = baselineResults[i];
+      const withAiRes = withAiResults[i];
+
+      const baseMonth = baseRes.timeline[t];
+      const withAiMonth = withAiRes.timeline[t];
+
+      if (withAiMonth) {
+        activeCustomers += withAiMonth.activeCustomers;
+        activeAiUsers += withAiMonth.activeAiUsers;
+        grossRevenue += withAiMonth.mrr;
+      }
+      if (baseMonth) {
+        baselineCustomers += baseMonth.activeCustomers;
+        baselineRevenue += baseMonth.mrr;
       }
     }
+
+    const revenue = grossRevenue - baselineRevenue; // Incremental ΔRevenue
 
     let opex = 0;
     let capex = 0;
@@ -387,7 +443,7 @@ export function calculateScenario(scenario: Scenario, allProviders: Provider[]):
 
     timeline.push({
       month: t,
-      revenue,
+      revenue: parseFloat(revenue.toFixed(2)),
       customers: activeCustomers,
       aiUsers: activeAiUsers,
       opex: parseFloat(opex.toFixed(2)),
@@ -395,7 +451,10 @@ export function calculateScenario(scenario: Scenario, allProviders: Provider[]):
       tokenCosts: parseFloat(tokenCosts.toFixed(2)),
       totalCosts: parseFloat(totalCosts.toFixed(2)),
       netCashFlow: parseFloat(netCashFlow.toFixed(2)),
-      cumulativeCashFlow: parseFloat(cumulativeCashFlow.toFixed(2))
+      cumulativeCashFlow: parseFloat(cumulativeCashFlow.toFixed(2)),
+      grossRevenue: parseFloat(grossRevenue.toFixed(2)),
+      baselineRevenue: parseFloat(baselineRevenue.toFixed(2)),
+      baselineCustomers: Math.round(baselineCustomers)
     });
   }
 
@@ -460,52 +519,23 @@ export function runSensitivityAnalysis(
   const varLabelLow = `-${(variationPercent * 100).toFixed(0)}%`;
   const varLabelHigh = `+${(variationPercent * 100).toFixed(0)}%`;
 
-  // 1. Churn Rate (Negative Impact: Higher churn => Lower NPV)
+  // 1. Churn Reduction Uplift (Positive Impact: Higher reduction => Higher NPV)
   {
     const cloneLow = cloneScenario(scenario);
     for (const cc of cloneLow.scope_cohorts!) {
-      cc.monthly_churn_rate = cc.monthly_churn_rate * (1 - variationPercent);
+      cc.churn_reduction = (cc.churn_reduction ?? 0) * (1 - variationPercent);
     }
     const resLow = calculateScenario(cloneLow, allProviders);
 
     const cloneHigh = cloneScenario(scenario);
     for (const cc of cloneHigh.scope_cohorts!) {
-      cc.monthly_churn_rate = cc.monthly_churn_rate * (1 + variationPercent);
+      cc.churn_reduction = (cc.churn_reduction ?? 0) * (1 + variationPercent);
     }
     const resHigh = calculateScenario(cloneHigh, allProviders);
 
     results.push({
-      parameter: 'Monthly Churn Rate',
-      key: 'churn_rate',
-      lowValueText: varLabelLow,
-      highValueText: varLabelHigh,
-      lowNpv: resLow.npv,
-      highNpv: resHigh.npv,
-      lowIrr: resLow.irrAnnual,
-      highIrr: resHigh.irrAnnual,
-      lowPayback: resLow.paybackMonths,
-      highPayback: resHigh.paybackMonths,
-      impactRange: Math.abs(resLow.npv - resHigh.npv)
-    });
-  }
-
-  // 2. Monthly Acquisition (Positive Impact: Higher acq => Higher NPV)
-  {
-    const cloneLow = cloneScenario(scenario);
-    for (const cc of cloneLow.scope_cohorts!) {
-      cc.monthly_acquisition = cc.monthly_acquisition * (1 - variationPercent);
-    }
-    const resLow = calculateScenario(cloneLow, allProviders);
-
-    const cloneHigh = cloneScenario(scenario);
-    for (const cc of cloneHigh.scope_cohorts!) {
-      cc.monthly_acquisition = cc.monthly_acquisition * (1 + variationPercent);
-    }
-    const resHigh = calculateScenario(cloneHigh, allProviders);
-
-    results.push({
-      parameter: 'New Monthly Customers',
-      key: 'acquisition',
+      parameter: 'Churn Reduction Uplift',
+      key: 'churn_reduction',
       lowValueText: varLabelLow,
       highValueText: varLabelHigh,
       lowNpv: resLow.npv,
@@ -518,23 +548,54 @@ export function runSensitivityAnalysis(
     });
   }
 
-  // 3. Base ARPU (Positive Impact: Higher ARPU => Higher NPV)
+  // 2. Acquisition Uplift (Positive Impact: Higher uplift => Higher NPV)
   {
     const cloneLow = cloneScenario(scenario);
     for (const cc of cloneLow.scope_cohorts!) {
-      cc.base_arpu = cc.base_arpu * (1 - variationPercent);
+      cc.acquisition_uplift = (cc.acquisition_uplift ?? 0) * (1 - variationPercent);
     }
     const resLow = calculateScenario(cloneLow, allProviders);
 
     const cloneHigh = cloneScenario(scenario);
     for (const cc of cloneHigh.scope_cohorts!) {
-      cc.base_arpu = cc.base_arpu * (1 + variationPercent);
+      cc.acquisition_uplift = (cc.acquisition_uplift ?? 0) * (1 + variationPercent);
     }
     const resHigh = calculateScenario(cloneHigh, allProviders);
 
     results.push({
-      parameter: 'Base ARPU',
-      key: 'arpu',
+      parameter: 'Acquisition Uplift',
+      key: 'acquisition_uplift',
+      lowValueText: varLabelLow,
+      highValueText: varLabelHigh,
+      lowNpv: resLow.npv,
+      highNpv: resHigh.npv,
+      lowIrr: resLow.irrAnnual,
+      highIrr: resHigh.irrAnnual,
+      lowPayback: resLow.paybackMonths,
+      highPayback: resHigh.paybackMonths,
+      impactRange: Math.abs(resHigh.npv - resLow.npv)
+    });
+  }
+
+  // 3. ARPU Uplift (Positive Impact: Higher ARPU uplift => Higher NPV)
+  {
+    const cloneLow = cloneScenario(scenario);
+    for (const cc of cloneLow.scope_cohorts!) {
+      cc.arpu_uplift = (cc.arpu_uplift ?? 0) * (1 - variationPercent);
+      cc.arpu_uplift_percent = (cc.arpu_uplift_percent ?? 0) * (1 - variationPercent);
+    }
+    const resLow = calculateScenario(cloneLow, allProviders);
+
+    const cloneHigh = cloneScenario(scenario);
+    for (const cc of cloneHigh.scope_cohorts!) {
+      cc.arpu_uplift = (cc.arpu_uplift ?? 0) * (1 + variationPercent);
+      cc.arpu_uplift_percent = (cc.arpu_uplift_percent ?? 0) * (1 + variationPercent);
+    }
+    const resHigh = calculateScenario(cloneHigh, allProviders);
+
+    results.push({
+      parameter: 'ARPU Uplift',
+      key: 'arpu_uplift',
       lowValueText: varLabelLow,
       highValueText: varLabelHigh,
       lowNpv: resLow.npv,

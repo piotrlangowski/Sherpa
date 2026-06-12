@@ -21,6 +21,10 @@ export const actions: Actions = {
     const default_ai_adoption_rate = Number(data.get('default_ai_adoption_rate')) / 100;
     const default_retention_floor = Number(data.get('default_retention_floor')) / 100;
     const default_expansion_rate = Number(data.get('default_expansion_rate')) / 100;
+    const default_arpu_uplift = Number(data.get('default_arpu_uplift'));
+    const default_arpu_uplift_percent = Number(data.get('default_arpu_uplift_percent')) / 100;
+    const default_churn_reduction = Number(data.get('default_churn_reduction')) / 100;
+    const default_acquisition_uplift = Number(data.get('default_acquisition_uplift')) / 100;
 
     if (isNaN(total_users) || total_users < 0) return fail(400, { error: 'Invalid total users' });
 
@@ -33,7 +37,11 @@ export const actions: Actions = {
         default_acquisition_growth_rate,
         default_ai_adoption_rate,
         default_retention_floor,
-        default_expansion_rate
+        default_expansion_rate,
+        default_arpu_uplift,
+        default_arpu_uplift_percent,
+        default_churn_reduction,
+        default_acquisition_uplift
       });
     } catch (err: any) {
       return fail(500, { error: err.message });

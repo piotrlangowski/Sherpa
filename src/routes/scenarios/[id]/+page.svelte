@@ -29,9 +29,14 @@
   import { mode } from 'mode-watcher';
 
   let { data } = $props();
-  const scenario = data.scenario;
-  const results = data.results;
-  const timeline = data.timeline;
+  const scenario = $derived(data.scenario);
+  const results = $derived(data.results);
+  const timeline = $derived(data.timeline);
+  const scopeSummary = $derived(data.scopeSummary);
+
+  const hasNoAiBenefit = $derived(
+    timeline && timeline.length > 0 ? timeline.every((t: any) => Math.abs(t.revenue) < 0.01) : true
+  );
 
   $effect(() => {
     if (scenario) {
@@ -82,7 +87,7 @@
         textStyle: { color: tooltipText }
       },
       legend: {
-        data: ['MRR Revenue', 'OPEX Costs', 'CAPEX Costs', 'AI Token Costs', 'Net Cashflow'],
+        data: ['Gross MRR', 'Baseline MRR', 'OPEX Costs', 'CAPEX Costs', 'AI Token Costs', 'Net Cashflow'],
         textStyle: { color: textColor, fontSize: 11 },
         bottom: 0
       },
@@ -105,10 +110,40 @@
       },
       series: [
         {
-          name: 'MRR Revenue',
-          type: 'bar',
+          name: 'Baseline MRR',
+          type: 'line',
+          data: timeline.map((t: any) => t.baselineRevenue),
+          itemStyle: { color: '#94a3b8' },
+          lineStyle: { width: 2, type: 'dashed' },
+          symbolSize: 4
+        },
+        {
+          name: 'Gross MRR',
+          type: 'line',
+          data: timeline.map((t: any) => t.grossRevenue),
+          itemStyle: { color: '#10b981' },
+          lineStyle: { width: 3 },
+          symbolSize: 4
+        },
+        {
+          name: 'Baseline MRR Area Helper',
+          type: 'line',
+          stack: 'mrr_shading',
+          data: timeline.map((t: any) => t.baselineRevenue),
+          lineStyle: { width: 0 },
+          showSymbol: false,
+          tooltip: { show: false },
+          areaStyle: { opacity: 0 }
+        },
+        {
+          name: 'Gross MRR Area Helper',
+          type: 'line',
+          stack: 'mrr_shading',
           data: timeline.map((t: any) => t.revenue),
-          itemStyle: { color: '#10b981', borderRadius: [4, 4, 0, 0] }
+          lineStyle: { width: 0 },
+          showSymbol: false,
+          tooltip: { show: false },
+          areaStyle: { color: 'rgba(16, 185, 129, 0.15)' }
         },
         {
           name: 'OPEX Costs',
@@ -211,7 +246,7 @@
         textStyle: { color: tooltipText }
       },
       legend: {
-        data: ['Active Customers', 'AI-Adopting Users'],
+        data: ['Active Customers', 'AI-Adopting Users', 'Baseline Customers'],
         textStyle: { color: textColor, fontSize: 11 },
         bottom: 0
       },
@@ -244,6 +279,14 @@
           data: timeline.map((t: any) => t.aiUsers),
           itemStyle: { color: '#8b5cf6' },
           lineStyle: { width: 2.5, type: 'dashed' }
+        },
+        {
+          name: 'Baseline Customers',
+          type: 'line',
+          smooth: true,
+          data: timeline.map((t: any) => t.baselineCustomers),
+          itemStyle: { color: '#94a3b8' },
+          lineStyle: { width: 2, type: 'dashed' }
         }
       ]
     };
@@ -257,28 +300,31 @@
     tick().then(() => {
       import('echarts').then((echarts) => {
         if (!isMounted || !chartElement) return;
-        cleanupChart();
-
-        chartInstance = echarts.init(chartElement);
+        
         const options = chartOptions as any;
-
-        if (activeTab === 'cashflow') {
-          chartInstance.setOption(options.cashflow);
-        } else if (activeTab === 'cumulative') {
-          chartInstance.setOption(options.cumulative);
-        } else {
-          chartInstance.setOption(options.users);
+        let selectedOption = options.cashflow;
+        if (activeTab === 'cumulative') {
+          selectedOption = options.cumulative;
+        } else if (activeTab === 'users') {
+          selectedOption = options.users;
         }
 
-        resizeListener = () => {
-          chartInstance?.resize();
-        };
-        window.addEventListener('resize', resizeListener);
+        if (chartInstance) {
+          chartInstance.setOption(selectedOption, true);
+        } else {
+          chartInstance = echarts.init(chartElement);
+          chartInstance.setOption(selectedOption, true);
+          resizeListener = () => {
+            chartInstance?.resize();
+          };
+          window.addEventListener('resize', resizeListener);
+        }
       });
     });
   }
 
   $effect(() => {
+    const _options = chartOptions; // Synchronous read registers dependency
     if (activeTab || timeline || mode.current) {
       renderChart();
     }
@@ -325,6 +371,20 @@
     </div>
   </div>
 
+  {#if scopeSummary}
+    <div class="glass border border-border px-4 py-2.5 rounded-lg flex items-center space-x-2 text-xs select-none">
+      <Users2 class="h-4 w-4 text-primary shrink-0" />
+      <span class="text-muted-foreground font-semibold">Scope Targeting:</span>
+      <Badge variant="outline" class="glass-inset py-0.5 px-2 capitalize font-semibold">
+        {scenario.scope_type.replace('_', ' ')}
+      </Badge>
+      <span class="text-muted-foreground font-medium">➔</span>
+      <span class="text-foreground font-bold">{scopeSummary.cohortsCount} {scopeSummary.cohortsCount === 1 ? 'Cohort' : 'Cohorts'}</span>
+      <span class="text-muted-foreground/60">•</span>
+      <span class="text-foreground font-bold">~{formatNumber(scopeSummary.totalUsers)} users</span>
+    </div>
+  {/if}
+
   {#if !results}
     <Card class="border-dashed border-destructive/30 bg-destructive/5 p-6 select-none">
       <CardContent class="flex items-start space-x-3 text-sm">
@@ -337,65 +397,77 @@
     </Card>
   {:else}
     <div id="scenario-dashboard-container" class="space-y-6">
+      {#if hasNoAiBenefit}
+        <Card class="border-amber-500/30 bg-amber-500/5 p-4 select-none">
+          <CardContent class="flex items-start space-x-3 text-sm p-0">
+            <Info class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <h4 class="font-bold text-amber-600 dark:text-amber-400">No AI benefit is modeled</h4>
+              <p class="text-muted-foreground mt-1 text-xs">No AI benefit is modeled — set uplift assumptions on cohorts or scenario overrides.</p>
+            </div>
+          </CardContent>
+        </Card>
+      {/if}
+
       <!-- KPI widgets grid -->
-    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
-      <!-- NPV -->
-      <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between">
-        <div>
-          <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Net Present Value</span>
-          <CardTitle class="text-xl font-black mt-2 block {results.npv >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
-            {formatCurrency(results.npv, appState.currency, 0)}
-          </CardTitle>
-        </div>
-        <div class="text-[10px] text-muted-foreground/80 mt-1">Discounted lifetime net value</div>
-      </Card>
+      <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <!-- NPV -->
+        <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between">
+          <div>
+            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Incremental NPV</span>
+            <CardTitle class="text-xl font-black mt-2 block {results.npv >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
+              {formatCurrency(results.npv, appState.currency, 0)}
+            </CardTitle>
+          </div>
+          <div class="text-[10px] text-muted-foreground/80 mt-1">Discounted lifetime net value</div>
+        </Card>
 
-      <!-- IRR -->
-      <Card class="glass border glass-glow [--glow-color:var(--primary)] select-none p-4 flex flex-col justify-between">
-        <div>
-          <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">IRR (Annualized)</span>
-          <span class="text-xl font-black mt-2 block {results.irr_annual !== null && results.irr_annual >= scenario.discount_rate ? 'text-emerald-600 dark:text-emerald-400' : results.irr_annual !== null ? 'text-amber-400' : 'text-muted-foreground'}">
-            {results.irr_annual !== null ? formatPercent(results.irr_annual) : 'N/A'}
-          </span>
-        </div>
-        <div class="text-[10px] text-muted-foreground/80 mt-1">
-          Hurdle rate: {formatPercent(scenario.discount_rate)}
-        </div>
-      </Card>
+        <!-- IRR -->
+        <Card class="glass border glass-glow [--glow-color:var(--primary)] select-none p-4 flex flex-col justify-between">
+          <div>
+            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">IRR on AI Investment</span>
+            <span class="text-xl font-black mt-2 block {results.irr_annual !== null && results.irr_annual >= scenario.discount_rate ? 'text-emerald-600 dark:text-emerald-400' : results.irr_annual !== null ? 'text-amber-400' : 'text-muted-foreground'}">
+              {results.irr_annual !== null ? formatPercent(results.irr_annual) : 'N/A'}
+            </span>
+          </div>
+          <div class="text-[10px] text-muted-foreground/80 mt-1">
+            Hurdle rate: {formatPercent(scenario.discount_rate)}
+          </div>
+        </Card>
 
-      <!-- Payback Period -->
-      <Card class="glass border glass-glow [--glow-color:var(--color-cyan-500)] select-none p-4 flex flex-col justify-between">
-        <div>
-          <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Payback Period</span>
-          <span class="text-xl font-black text-cyan-600 dark:text-cyan-400 mt-2 block">
-            {formatMonths(results.payback_months)}
-          </span>
-        </div>
-        <div class="text-[10px] text-muted-foreground/80 mt-1">Months to recover investment</div>
-      </Card>
+        <!-- Payback Period -->
+        <Card class="glass border glass-glow [--glow-color:var(--color-cyan-500)] select-none p-4 flex flex-col justify-between">
+          <div>
+            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Payback Period</span>
+            <span class="text-xl font-black text-cyan-600 dark:text-cyan-400 mt-2 block">
+              {results.payback_months === 0 ? 'Immediate' : results.payback_months === null ? 'Not within horizon' : formatMonths(results.payback_months)}
+            </span>
+          </div>
+          <div class="text-[10px] text-muted-foreground/80 mt-1">Months to recover investment</div>
+        </Card>
 
-      <!-- TCO -->
-      <Card class="glass border glass-glow [--glow-color:var(--primary)] select-none p-4 flex flex-col justify-between">
-        <div>
-          <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">TCO (T-Horizon)</span>
-          <CardTitle class="text-xl font-black text-foreground mt-2 block">
-            {formatCurrency(results.tco, appState.currency, 0)}
-          </CardTitle>
-        </div>
-        <div class="text-[10px] text-muted-foreground/80 mt-1">Capex + opex + token totals</div>
-      </Card>
+        <!-- TCO -->
+        <Card class="glass border glass-glow [--glow-color:var(--primary)] select-none p-4 flex flex-col justify-between">
+          <div>
+            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">TCO (T-Horizon)</span>
+            <CardTitle class="text-xl font-black text-foreground mt-2 block">
+              {formatCurrency(results.tco, appState.currency, 0)}
+            </CardTitle>
+          </div>
+          <div class="text-[10px] text-muted-foreground/80 mt-1">Capex + opex + token totals</div>
+        </Card>
 
-      <!-- ROI% -->
-      <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between col-span-2 lg:col-span-1">
-        <div>
-          <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Return on Investment</span>
-          <span class="text-xl font-black mt-2 block {results.roi_percent >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
-            {formatPercent(results.roi_percent)}
-          </span>
-        </div>
-        <div class="text-[10px] text-muted-foreground/80 mt-1">Net gain relative to total costs</div>
-      </Card>
-    </div>
+        <!-- ROI% -->
+        <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between col-span-2 lg:col-span-1">
+          <div>
+            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Return on Investment</span>
+            <span class="text-xl font-black mt-2 block {results.roi_percent >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
+              {formatPercent(results.roi_percent)}
+            </span>
+          </div>
+          <div class="text-[10px] text-muted-foreground/80 mt-1">Net gain relative to total costs</div>
+        </Card>
+      </div>
 
     <!-- Charts & Offering breakdown -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -512,6 +584,10 @@
                           {#if ov.monthly_churn_rate !== null}<span>Churn: {ov.monthly_churn_rate * 100}%</span>{/if}
                           {#if ov.ai_adoption_rate !== null}<span>Adoption: {ov.ai_adoption_rate * 100}%</span>{/if}
                           {#if ov.monthly_acquisition !== null}<span>Acq: {ov.monthly_acquisition}/mo</span>{/if}
+                          {#if ov.arpu_uplift !== null && ov.arpu_uplift !== undefined}<span>AI ARPU Up ($): {formatCurrency(ov.arpu_uplift, appState.currency, 0)}</span>{/if}
+                          {#if ov.arpu_uplift_percent !== null && ov.arpu_uplift_percent !== undefined}<span>AI ARPU Up (%): {ov.arpu_uplift_percent * 100}%</span>{/if}
+                          {#if ov.churn_reduction !== null && ov.churn_reduction !== undefined}<span>AI Churn Red: {ov.churn_reduction * 100}%</span>{/if}
+                          {#if ov.acquisition_uplift !== null && ov.acquisition_uplift !== undefined}<span>AI Acq Up: {ov.acquisition_uplift * 100}%</span>{/if}
                         </div>
                       </div>
                     {/each}

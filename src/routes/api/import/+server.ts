@@ -84,6 +84,10 @@ const CohortConfigSchema = z.object({
   monthly_expansion_rate: z.number(),
   ai_adoption_rate: z.number(),
   base_arpu: z.number(),
+  arpu_uplift: z.number().optional(),
+  arpu_uplift_percent: z.number().optional(),
+  churn_reduction: z.number().optional(),
+  acquisition_uplift: z.number().optional(),
   vertical: VerticalSchema.optional()
 });
 
@@ -96,7 +100,11 @@ const ScopeOverrideSchema = z.object({
   ai_adoption_rate: z.number().nullable().optional(),
   retention_floor: z.number().nullable().optional(),
   expansion_rate: z.number().nullable().optional(),
-  arpu_override: z.number().nullable().optional()
+  arpu_override: z.number().nullable().optional(),
+  arpu_uplift: z.number().nullable().optional(),
+  arpu_uplift_percent: z.number().nullable().optional(),
+  churn_reduction: z.number().nullable().optional(),
+  acquisition_uplift: z.number().nullable().optional()
 });
 
 const ScenarioSchema = z.object({
@@ -234,7 +242,11 @@ export const POST: RequestHandler = async ({ request }) => {
               retention_floor: cc.retention_floor,
               monthly_expansion_rate: cc.monthly_expansion_rate,
               ai_adoption_rate: cc.ai_adoption_rate,
-              base_arpu: cc.base_arpu
+              base_arpu: cc.base_arpu,
+              arpu_uplift: cc.arpu_uplift ?? 0,
+              arpu_uplift_percent: cc.arpu_uplift_percent ?? 0,
+              churn_reduction: cc.churn_reduction ?? 0,
+              acquisition_uplift: cc.acquisition_uplift ?? 0
             });
             cId = createdCc.id;
           }
@@ -452,7 +464,11 @@ export const POST: RequestHandler = async ({ request }) => {
             ai_adoption_rate: ov.ai_adoption_rate,
             retention_floor: ov.retention_floor,
             expansion_rate: ov.expansion_rate,
-            arpu_override: ov.arpu_override
+            arpu_override: ov.arpu_override,
+            arpu_uplift: ov.arpu_uplift,
+            arpu_uplift_percent: ov.arpu_uplift_percent,
+            churn_reduction: ov.churn_reduction,
+            acquisition_uplift: ov.acquisition_uplift
           });
         }
       }

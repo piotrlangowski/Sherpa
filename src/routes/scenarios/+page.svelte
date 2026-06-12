@@ -167,8 +167,8 @@
         >
           <option value="name_asc">Name (A - Z)</option>
           <option value="name_desc">Name (Z - A)</option>
-          <option value="npv_desc">NPV (Highest)</option>
-          <option value="npv_asc">NPV (Lowest)</option>
+          <option value="npv_desc">Incremental NPV (Highest)</option>
+          <option value="npv_asc">Incremental NPV (Lowest)</option>
           <option value="horizon_desc">Horizon (Longest)</option>
           <option value="horizon_asc">Horizon (Shortest)</option>
         </select>
@@ -244,21 +244,21 @@
               {#if scenario.results}
                 <div class="p-3 bg-muted/40 rounded-lg border border-border/60 grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-center shadow-inner font-sans">
                   <div>
-                    <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">NPV</span>
+                    <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Inc. NPV</span>
                     <span class="text-xs font-black text-emerald-600 dark:text-emerald-400 mt-0.5 block">
                       {formatCurrency(scenario.results.npv, appState.currency, 0)}
                     </span>
                   </div>
                   <div>
-                    <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">IRR (Ann.)</span>
+                    <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">IRR (AI)</span>
                     <span class="text-xs font-black text-emerald-600 dark:text-emerald-400 mt-0.5 block">
-                      {formatPercent(scenario.results.irr_annual || 0)}
+                      {scenario.results.irr_annual !== null ? formatPercent(scenario.results.irr_annual) : 'N/A'}
                     </span>
                   </div>
                   <div>
                     <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Payback</span>
                     <span class="text-xs font-black text-cyan-600 dark:text-cyan-400 mt-0.5 block">
-                      {formatMonths(scenario.results.payback_months)}
+                      {scenario.results.payback_months === 0 ? 'Immediate' : scenario.results.payback_months === null ? 'Never' : formatMonths(scenario.results.payback_months)}
                     </span>
                   </div>
                   <div>
@@ -291,8 +291,8 @@
               <TableHead class="text-foreground font-bold">Scenario Name</TableHead>
               <TableHead class="text-foreground font-bold text-right">Horizon</TableHead>
               <TableHead class="text-foreground font-bold text-right">Discount Rate</TableHead>
-              <TableHead class="text-foreground font-bold text-right">NPV</TableHead>
-              <TableHead class="text-foreground font-bold text-right">IRR (Ann.)</TableHead>
+              <TableHead class="text-foreground font-bold text-right">Incremental NPV</TableHead>
+              <TableHead class="text-foreground font-bold text-right">IRR (AI)</TableHead>
               <TableHead class="text-foreground font-bold text-right">Payback</TableHead>
               <TableHead class="text-foreground font-bold text-right">TCO</TableHead>
               <TableHead class="text-foreground font-bold text-right">Actions</TableHead>
@@ -323,7 +323,7 @@
                 </TableCell>
                 <TableCell class="text-right font-mono font-medium text-cyan-600 dark:text-cyan-400">
                   {#if scenario.results}
-                    {formatMonths(scenario.results.payback_months)}
+                    {scenario.results.payback_months === 0 ? 'Immediate' : scenario.results.payback_months === null ? 'Never' : formatMonths(scenario.results.payback_months)}
                   {:else}
                     —
                   {/if}

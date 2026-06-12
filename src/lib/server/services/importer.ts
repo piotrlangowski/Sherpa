@@ -22,6 +22,10 @@ export interface CalculatedImportCohort {
   monthlyExpansionRate: number;
   aiAdoptionRate: number;
   baseArpu: number;
+  arpuUplift: number;
+  arpuUpliftPercent: number;
+  churnReduction: number;
+  acquisitionUplift: number;
 }
 
 export interface CalculatedImportVertical {
@@ -210,7 +214,11 @@ export const importerService = {
           retentionFloor: 0.60, // default 60%
           monthlyExpansionRate: 0.02, // default 2%
           aiAdoptionRate: 0.30, // default 30%
-          baseArpu
+          baseArpu,
+          arpuUplift: 0,
+          arpuUpliftPercent: 0,
+          churnReduction: 0,
+          acquisitionUplift: 0
         });
       }
 
@@ -266,7 +274,11 @@ export const importerService = {
               retention_floor: cc.retentionFloor,
               monthly_expansion_rate: cc.monthlyExpansionRate,
               ai_adoption_rate: cc.aiAdoptionRate,
-              base_arpu: cc.baseArpu
+              base_arpu: cc.baseArpu,
+              arpu_uplift: cc.arpuUplift ?? 0,
+              arpu_uplift_percent: cc.arpuUpliftPercent ?? 0,
+              churn_reduction: cc.churnReduction ?? 0,
+              acquisition_uplift: cc.acquisitionUplift ?? 0
             });
           } else {
             // Create new
@@ -280,7 +292,11 @@ export const importerService = {
               retention_floor: cc.retentionFloor,
               monthly_expansion_rate: cc.monthlyExpansionRate,
               ai_adoption_rate: cc.aiAdoptionRate,
-              base_arpu: cc.baseArpu
+              base_arpu: cc.baseArpu,
+              arpu_uplift: cc.arpuUplift ?? 0,
+              arpu_uplift_percent: cc.arpuUpliftPercent ?? 0,
+              churn_reduction: cc.churnReduction ?? 0,
+              acquisition_uplift: cc.acquisitionUplift ?? 0
             });
           }
         }
