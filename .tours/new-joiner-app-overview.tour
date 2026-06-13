@@ -1,0 +1,95 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "Sherpa — App Architecture Tour",
+  "description": "How the SvelteKit app boots, computes AI-feature ROI, persists to local SQLite, and shares one engine with the MCP server. For a new maintainer ramping up.",
+  "ref": "main",
+  "steps": [
+    {
+      "file": "src/routes/+layout.svelte",
+      "selection": { "start": { "line": 37, "character": 1 }, "end": { "line": 45, "character": 1 } },
+      "title": "1 · Boot & the setup gate",
+      "description": "**Situation:** the root layout is the single UI entry — every page renders inside it.\n\n**Mechanism:** on mount it hydrates the global `appState` from server `data`, then branches: if `setupCompleted` it renders the full `AppShell` (sidebar + chrome), otherwise the first-run `SetupWizard`.\n\n**Implication:** there is no router config to hunt for — this `{#if}` is the top-level shape of the whole app.\n\n**Gotcha:** Svelte 5 runes mode is forced project-wide, so `appState` here is a reactive class instance, not a classic store."
+    },
+    {
+      "file": "src/routes/+layout.server.ts",
+      "line": 4,
+      "title": "2 · Where server data comes from",
+      "description": "**Situation:** the layout's `data.settings` is produced here, server-side.\n\n**Mechanism:** `load` reads the singleton `settingsRepository` (company name, currency, discount rate, FX rates) and returns a plain object. Touching the repository also lazily triggers DB migrations + seeding on the very first request.\n\n**Implication:** this is the read half of SvelteKit's contract; mutations live in `actions` on the per-route `+page.server.ts` files.\n\n**Gotcha:** anything under `$lib/server/**` (repositories, `db`) must never be imported into a `.svelte` component — it would leak server-only code into the browser bundle."
+    },
+    {
+      "file": "src/lib/stores/app.svelte.ts",
+      "line": 4,
+      "title": "3 · Global client state (runes singleton)",
+      "description": "**Situation:** the one piece of shared client state in the app.\n\n**Mechanism:** a plain class whose fields are `$state(...)`, exported as a single `appState` instance (line 52). `init(...)` hydrates it from the layout load; setters mutate fields and any UI reading them re-renders.\n\n**Implication:** prefer this over passing settings through props — currency, discount rate, and the active scenario are read directly from `appState` anywhere.\n\n**Gotcha:** the `.svelte.ts` extension is required for runes to compile outside a component — renaming to `.ts` silently breaks reactivity."
+    },
+    {
+      "directory": "src/lib/shared",
+      "title": "4 · The shared engine (single source of truth)",
+      "description": "**Situation:** the heart of the project. Everything here is pure and DB-free.\n\n**Mechanism:** financial math, domain `types.ts`, the DB schema, the demo seed, the provider price catalog, and currency conversion all live here. `mcp-server/src/shared` is a *symlink* to this folder, so the SvelteKit app and the MCP server compute identically.\n\n**Implication:** new financial logic belongs here, not in the server wrapper.\n\n**Gotcha:** relative imports inside this folder must use the `.js` extension (NodeNext), and after editing you must rebuild the MCP server or it serves stale logic."
+    },
+    {
+      "file": "src/lib/server/services/financial-engine.ts",
+      "line": 20,
+      "title": "5 · Pure vs. impure: the DB-aware wrapper",
+      "description": "**Situation:** the bridge between the database and the pure math — the project's central design decision.\n\n**Mechanism:** `resolveScenarioCohorts` expands a scenario's *scope* (`all_clients` | `verticals` | `cohorts`) into concrete cohort rows from the DB, then applies `applyScopeOverrides`. `calculateScenario` (line 35) loads providers + settings, normalizes currency, and hands everything to the *pure* engine.\n\n**Implication:** the wrapper does all DB access so the math stays testable and reusable.\n\n**Gotcha:** this scope→cohort→override resolution is the trickiest domain logic in the app — cohort/override changes belong right here."
+    },
+    {
+      "file": "src/lib/shared/financial-math.ts",
+      "selection": { "start": { "line": 54, "character": 1 }, "end": { "line": 60, "character": 1 } },
+      "title": "6 · The three-level override cascade",
+      "description": "**Situation:** how a scenario tunes individual cohorts.\n\n**Mechanism:** for each cohort, overrides are applied in strict order — global (`all_clients`) → vertical → cohort — each later level winning. Only non-null override fields replace the base value (see `applyOverride` above).\n\n**Implication:** a vertical-level churn tweak is overridden by a cohort-level one for that cohort, but inherited by its siblings.\n\n**Gotcha:** order matters; reversing these three lines would silently invert precedence with no error."
+    },
+    {
+      "file": "src/lib/shared/financial-math.ts",
+      "line": 92,
+      "title": "7 · Cohort revenue model",
+      "description": "**Situation:** the projection that turns cohort assumptions into a monthly MRR/customer timeline.\n\n**Mechanism:** `buildCohortModel` tracks each monthly acquisition cohort separately, decaying it by retention `R(age)=max(floor,(1-churn)^age)` and growing ARPU by `(1+expansion)^age`, summing across all live cohorts per month.\n\n**Implication:** this is run twice per scenario — once on the baseline config and once on the AI-uplifted config (`applyAiUplifts`) — to produce the counterfactual.\n\n**Gotcha:** `cohortSizes[0]` is the starting user base; new acquisitions start at month index 1, so month 0 reports zero `newUsersAcquired`."
+    },
+    {
+      "file": "src/lib/shared/financial-math.ts",
+      "line": 334,
+      "title": "8 · The scenario engine: ΔRevenue minus costs",
+      "description": "**Situation:** the function that produces the full cashflow timeline.\n\n**Mechanism:** for each month it computes incremental revenue (with-AI MRR minus baseline MRR), then subtracts costs: per-service LLM **token cost** (active AI users × requests × token prices, gated by `rollout_month`, lines 392-414) plus OPEX/CAPEX line items by frequency (lines 416-437). Net cashflow accumulates into the monthly breakdown.\n\n**Implication:** revenue is always *incremental* vs. the no-AI baseline — that's what makes it an ROI model, not a revenue model.\n\n**Gotcha:** token prices are stored per-million and divided down here; a provider priced in the wrong unit skews every cost."
+    },
+    {
+      "file": "src/lib/shared/financial-math.ts",
+      "selection": { "start": { "line": 461, "character": 1 }, "end": { "line": 480, "character": 1 } },
+      "title": "9 · KPIs: NPV, IRR, payback, ROI",
+      "description": "**Situation:** the headline numbers the whole UI revolves around.\n\n**Mechanism:** from the net-cashflow series it computes NPV (monthly-compounded discount, `calculateNPV` line 178), IRR (`calculateIRR` line 234 — Newton-Raphson with a bisection fallback), payback (interpolated fractional months, line 191), TCO and ROI%.\n\n**Implication:** these five fields are exactly what gets cached and rendered on every scenario card and dashboard.\n\n**Gotcha:** IRR returns `null` when the cashflows never change sign — the UI must handle the no-IRR case rather than show 0%."
+    },
+    {
+      "file": "src/lib/server/db.ts",
+      "selection": { "start": { "line": 18, "character": 1 }, "end": { "line": 32, "character": 1 } },
+      "title": "10 · The SQLite singleton",
+      "description": "**Situation:** the one database connection for the whole server process.\n\n**Mechanism:** first import constructs `SherpaDatabase` (Node's built-in `node:sqlite`), sets WAL + `busy_timeout=5000` + `foreign_keys=ON`, then runs migrations and seeds. The path is resolved by `db-path.ts` — repo `./data/sherpa.db` in dev.\n\n**Implication:** importing this module *is* the initialization; repositories just `import db`.\n\n**Gotcha:** the app and the MCP server write the same WAL file, so the `busy_timeout` pragma is load-bearing for lock contention — both connection paths must set it."
+    },
+    {
+      "file": "src/lib/shared/db-schema.ts",
+      "line": 8,
+      "title": "11 · Self-initializing schema",
+      "description": "**Situation:** the entire database definition, idempotent by design.\n\n**Mechanism:** `runMigrations` issues `CREATE TABLE IF NOT EXISTS` for every table inside one transaction, then `runDataMigrations` (line 325) handles additive `ALTER TABLE`/backfill for columns added later.\n\n**Implication:** schema + seed live in `shared/` (not `server/`) precisely so the MCP server can bootstrap a fresh DB on its own.\n\n**Gotcha:** SQLite can't drop columns, so legacy columns (e.g. `scenarios.cohort_config_id`) are left in place and simply no longer written — don't be surprised by dead columns."
+    },
+    {
+      "file": "src/lib/server/repositories/scenarios.ts",
+      "selection": { "start": { "line": 357, "character": 1 }, "end": { "line": 360, "character": 1 } },
+      "title": "12 · Cache invalidation: keeping KPIs honest",
+      "description": "**Situation:** `scenario_results` caches computed KPIs + monthly arrays as JSON; stale cache = wrong numbers.\n\n**Mechanism:** any mutation that changes a scenario's inputs deletes its cached row. `scenariosRepository.update` does it inline (here); `invalidateResults` + the `findScenarioIdsBy*` helpers (lines 422-460) cascade-invalidate when upstream entities (providers, cohorts, services, cost items) change.\n\n**Implication:** add a new way to edit inputs and you *must* wire in invalidation, or the dashboard silently shows old ROI.\n\n**Gotcha:** there's no TTL — invalidation is purely explicit, so a missed call never self-heals."
+    },
+    {
+      "file": "src/routes/scenarios/[id]/+page.server.ts",
+      "selection": { "start": { "line": 6, "character": 1 }, "end": { "line": 21, "character": 1 } },
+      "title": "13 · A route ties it together (lazy compute)",
+      "description": "**Situation:** opening a scenario detail page — the read path in action.\n\n**Mechanism:** `load` fetches the scenario, asks for cached results, and if absent calls `runAndSaveScenario` to compute-and-cache on the fly, then returns results + a detailed timeline. The `deleteScenario` action (line 46) shows the mutation half.\n\n**Implication:** this lazy compute-on-read is why a freshly-invalidated scenario repopulates its cache the next time it's viewed.\n\n**Gotcha:** every route folder follows this same `+page.server.ts` (load + actions) → `+page.svelte` (UI) convention — learn it once, it repeats across catalog/market/costs/scenarios."
+    },
+    {
+      "file": "mcp-server/src/index.ts",
+      "selection": { "start": { "line": 10, "character": 1 }, "end": { "line": 17, "character": 1 } },
+      "title": "14 · The MCP server reuses the same engine",
+      "description": "**Situation:** the second project in this repo — an MCP server exposing Sherpa to LLM hosts like Claude Desktop.\n\n**Mechanism:** it imports `calculateScenario`, `runSensitivityAnalysis`, `buildCohortModel`, `applyScopeOverrides` from `./shared/financial-math.js` — that `./shared` path is the symlink back to `src/lib/shared`. It opens its own DB connection and registers consolidated entity-action tools for full CRUD.\n\n**Implication:** the LLM and the web UI can never disagree on the math; both consume the identical pure functions.\n\n**Gotcha:** the MCP build is a *separate* `tsc` project — edits in `shared/` only reach it after `cd mcp-server && npm run build`."
+    },
+    {
+      "title": "15 · You can now trace any number end-to-end",
+      "description": "You've seen the full loop:\n\n- **Boot:** `+layout.svelte` gates on setup → `+layout.server.ts` hydrates `appState`.\n- **Compute:** routes call the DB-aware wrapper in `financial-engine.ts`, which resolves scope + the override cascade and delegates to the pure engine in `financial-math.ts` (cohort model → ΔRevenue − costs → NPV/IRR/payback).\n- **Persist:** one SQLite singleton (`db.ts`) over a self-initializing schema (`db-schema.ts`); results are cached in `scenario_results` and explicitly invalidated on every input change.\n- **Share:** the MCP server reuses the exact same pure engine through the `shared/` symlink.\n\n**Next moves:** pick any KPI on a scenario card and follow it back through `runAndSaveScenario` → `calculateScenario` → the monthly loop. To extend the model, add the math in `src/lib/shared/financial-math.ts`, then `cd mcp-server && npm run build`. Tests for the pure module live in `financial-math.test.ts` (`npm test`)."
+    }
+  ]
+}
