@@ -17,16 +17,22 @@ export function seedDatabase(db: DatabaseConnection): void {
   db.transaction(() => {
     // 1. Insert settings
     const insertSetting = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)");
-    insertSetting.run('company_name', 'Acme Analytics');
+    insertSetting.run('company_name', 'Beacon Helpdesk');
     insertSetting.run('currency', 'USD');
     insertSetting.run('default_discount_rate', '0.10');
     insertSetting.run('setup_completed', '0'); // Show wizard on first visit
     insertSetting.run('projection_horizon_months', '36');
     insertSetting.run('exchange_rates', JSON.stringify(FALLBACK_EXCHANGE_RATES));
     insertSetting.run('exchange_rates_as_of', EXCHANGE_RATES_AS_OF);
+    // Credit configuration (global defaults for AI monetization)
+    insertSetting.run('default_price_per_credit', '0.02');
+    insertSetting.run('default_input_tokens_per_credit', '1000000');
+    insertSetting.run('default_output_tokens_per_credit', '333333');
+    insertSetting.run('default_overcharge_markup', '1.5');
+    insertSetting.run('default_overcharge_user_pct', '0.2');
+    insertSetting.run('default_avg_overcharge_pct', '0.5');
 
     // 1.5 Insert Client Base (Global defaults)
-    // OR REPLACE: runMigrations already creates a placeholder singleton row
     db.prepare(`
       INSERT OR REPLACE INTO client_base (
         id, total_users, default_arpu, default_monthly_churn_rate, default_monthly_acquisition,
@@ -36,17 +42,17 @@ export function seedDatabase(db: DatabaseConnection): void {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       'singleton',
-      500000,
-      29.99,
-      0.05,
-      2000,
-      0.01,
-      0.25,
-      0.40,
-      0.02,
-      0,
-      0.10,
-      0.15,
+      10000,
+      80.00,
+      0.03,
+      40,
+      0.00,
+      0.50,
+      0.50,
+      0.00,
+      10,
+      0.00,
+      0.20,
       0.10,
       new Date().toISOString()
     );
@@ -73,81 +79,115 @@ export function seedDatabase(db: DatabaseConnection): void {
     `);
 
     const sSummarization = uuidv4();
-    const sSearch = uuidv4();
-    const sChatbot = uuidv4();
-    const sSentiment = uuidv4();
-    const sPredictive = uuidv4();
+    const sReplyDrafting = uuidv4();
+    const sSentimentTriage = uuidv4();
 
-    insertService.run(sSummarization, 'AI Document Summarization', 'Summarizes text documents uploaded by users.', 'existing', providersMap['OpenAI - GPT-5.5'], 800, 300, 200, null, now, now);
-    insertService.run(sSearch, 'Smart Search', 'Semantic search across user data indexes.', 'existing', providersMap['Google - Gemini 3.5 Flash'], 500, 100, 500, null, now, now);
-    insertService.run(sChatbot, 'AI Chatbot', 'Conversational AI customer agent helper.', 'existing', providersMap['Anthropic - Claude Haiku 4.5'], 1200, 600, 100, null, now, now);
-    insertService.run(sSentiment, 'Sentiment Analysis', 'Classifies sentiment of chat logs to flag customer satisfaction issues.', 'planned', providersMap['OpenAI - GPT-5.4 mini'], 300, 50, 300, null, now, now);
-    insertService.run(sPredictive, 'Predictive Analytics', 'Forecasts user behavior based on index searches and uploads.', 'planned', providersMap['Google - Gemini 3.1 Pro'], 2000, 500, 50, null, now, now);
+    insertService.run(
+      sSummarization, 
+      'AI Ticket Summaries', 
+      'Auto-summarizes support tickets to reduce agent handling time.', 
+      'planned', 
+      providersMap['Anthropic - Claude Haiku 4.5'], 
+      2000, 
+      400, 
+      150, 
+      null, 
+      now, 
+      now
+    );
+
+    insertService.run(
+      sReplyDrafting, 
+      'AI Reply Drafting', 
+      'Generates draft replies based on previous ticket solutions.', 
+      'planned', 
+      providersMap['OpenAI - GPT-5.4 mini'], 
+      1000, 
+      500, 
+      100, 
+      null, 
+      now, 
+      now
+    );
+
+    insertService.run(
+      sSentimentTriage, 
+      'AI Sentiment Triage', 
+      'Analyzes ticket tone to flag and escalate frustrated customers.', 
+      'planned', 
+      providersMap['OpenAI - GPT-5.4 mini'], 
+      500, 
+      100, 
+      300, 
+      null, 
+      now, 
+      now
+    );
 
     // 4. Service Dependencies
     const insertDependency = db.prepare(`
       INSERT INTO service_dependencies (id, source_id, target_id, dependency_type)
       VALUES (?, ?, ?, ?)
     `);
-    insertDependency.run(uuidv4(), sSentiment, sChatbot, 'requires');
-    insertDependency.run(uuidv4(), sPredictive, sSearch, 'enhanced_by');
+    insertDependency.run(uuidv4(), sReplyDrafting, sSummarization, 'requires');
 
     // 5. Feature Packs
     const insertPack = db.prepare(`INSERT INTO packs (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`);
     const insertPackService = db.prepare(`INSERT INTO pack_services (pack_id, service_id) VALUES (?, ?)`);
 
-    const pWritingSuite = uuidv4();
-    const pIntelligence = uuidv4();
+    const pSupportAssistant = uuidv4();
 
-    insertPack.run(pWritingSuite, 'AI Writing Suite', 'Document summaries and chat assist features.', now, now);
-    insertPackService.run(pWritingSuite, sSummarization);
-    insertPackService.run(pWritingSuite, sChatbot);
-
-    insertPack.run(pIntelligence, 'Intelligence Pack', 'Advanced search, sentiment, and predictive forecasting.', now, now);
-    insertPackService.run(pIntelligence, sSearch);
-    insertPackService.run(pIntelligence, sSentiment);
-    insertPackService.run(pIntelligence, sPredictive);
+    insertPack.run(pSupportAssistant, 'AI Support Assistant', 'Complete suite of summarization, reply drafting, and sentiment triage.', now, now);
+    insertPackService.run(pSupportAssistant, sSummarization);
+    insertPackService.run(pSupportAssistant, sReplyDrafting);
+    insertPackService.run(pSupportAssistant, sSentimentTriage);
 
     // 6. Pricing Plans
     const insertPlan = db.prepare(`INSERT INTO plans (id, name, description, base_price, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`);
     const insertPlanPack = db.prepare(`INSERT INTO plan_packs (plan_id, pack_id) VALUES (?, ?)`);
 
-    const plProfessional = uuidv4();
-    const plEnterprise = uuidv4();
+    const plPro = uuidv4();
+    const plTeam = uuidv4();
 
-    insertPlan.run(plProfessional, 'Professional Plan', 'For small to medium teams looking for content editing.', 49.00, now, now);
-    insertPlanPack.run(plProfessional, pWritingSuite);
+    insertPlan.run(plPro, 'Pro Plan', 'Ideal for standard teams adding support summaries and drafts.', 80.00, now, now);
+    insertPlanPack.run(plPro, pSupportAssistant);
 
-    insertPlan.run(plEnterprise, 'Enterprise Plan', 'Customized enterprise access with full intelligence suites.', 149.00, now, now);
-    insertPlanPack.run(plEnterprise, pWritingSuite);
-    insertPlanPack.run(plEnterprise, pIntelligence);
+    insertPlan.run(plTeam, 'Team Plan', 'Advanced support workflows with full intelligence tools.', 149.00, now, now);
+    insertPlanPack.run(plTeam, pSupportAssistant);
+
+    // 6b. Demo AI monetization configs (catalog level, scenario_id = NULL).
+    const insertMonetization = db.prepare(`
+      INSERT INTO monetization_configs (
+        id, entity_type, entity_id, scenario_id, monetization_type,
+        addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+        usage_variant, price_per_credit,
+        hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+        overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+      ) VALUES (?, 'plan', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    // Pro Plan → flat add-on $29/mo (no usage limit)
+    insertMonetization.run(uuidv4(), plPro, 'addon', 29, 0, null, null, null, null, null, null, null, 1.5, 0.2, 0.5);
+    // Team Plan → hybrid: $99/mo including a 5,000-credit pool, pay-as-you-go overage
+    insertMonetization.run(uuidv4(), plTeam, 'hybrid', null, 0, null, null, null, null, 99, 5000, 'payg', 1.5, 0.25, 0.4);
 
     // 7. Verticals
     const insertVertical = db.prepare(`INSERT INTO verticals (id, name, description, tam_users, sam_users, som_users, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertVerticalPlan = db.prepare(`INSERT INTO vertical_plans (vertical_id, plan_id) VALUES (?, ?)`);
 
-    const vLegalTech = uuidv4();
-    const vEcommerce = uuidv4();
+    const vB2BSupport = uuidv4();
 
-    insertVertical.run(vLegalTech, 'LegalTech', 'Law firms and compliance departments.', 50000, 15000, 3000, now, now);
-    insertVerticalPlan.run(vLegalTech, plEnterprise);
-
-    insertVertical.run(vEcommerce, 'E-commerce', 'Online retailers and shop operators.', 200000, 80000, 12000, now, now);
-    insertVerticalPlan.run(vEcommerce, plProfessional);
-    insertVerticalPlan.run(vEcommerce, plEnterprise);
+    insertVertical.run(vB2BSupport, 'B2B Support Teams', 'Customer helpdesks and technical support organizations.', 25000, 10000, 2500, now, now);
+    insertVerticalPlan.run(vB2BSupport, plPro);
+    insertVerticalPlan.run(vB2BSupport, plTeam);
 
     // 8. Cost Items
     const insertCost = db.prepare(`INSERT INTO cost_items (id, name, category, subcategory, amount, frequency, currency, service_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`);
 
-    const cSalary = uuidv4();
-    const cInfra = uuidv4();
-    const cSetup = uuidv4();
-    const cMarketing = uuidv4();
+    const cBuild = uuidv4();
+    const cOps = uuidv4();
 
-    insertCost.run(cSalary, 'ML Engineer Salary Allocation', 'opex', 'personnel', 8000.00, 'monthly', null, now, now);
-    insertCost.run(cInfra, 'GPU Infrastructure Overhead', 'opex', 'infrastructure', 3000.00, 'monthly', null, now, now);
-    insertCost.run(cSetup, 'Initial Data Integration Setup', 'capex', 'development', 25000.00, 'one_time', null, now, now);
-    insertCost.run(cMarketing, 'Marketing Launch Campaign', 'capex', 'marketing', 15000.00, 'one_time', null, now, now);
+    insertCost.run(cBuild, 'AI Summaries build & integration', 'capex', 'development', 20000.00, 'one_time', sSummarization, now, now);
+    insertCost.run(cOps, 'AI ops & monitoring', 'opex', 'infrastructure', 500.00, 'monthly', sSummarization, now, now);
 
     // 9. Cohorts
     const insertCohort = db.prepare(`
@@ -155,8 +195,26 @@ export function seedDatabase(db: DatabaseConnection): void {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const coLegalTech = uuidv4();
-    insertCohort.run(coLegalTech, 'LegalTech Professional Cohort', vLegalTech, 500, 50, 0.02, 0.03, 0.60, 0.015, 0.40, 149.00, 0, 0.10, 0.15, 0.10, now, now);
+    const coSMBHelpdesk = uuidv4();
+    insertCohort.run(
+      coSMBHelpdesk, 
+      'SMB Helpdesk Customers', 
+      vB2BSupport, 
+      1000, 
+      40, 
+      0, 
+      0.03, 
+      0.50, 
+      0, 
+      0.50, 
+      80.00, 
+      10.00, 
+      0, 
+      0.20, 
+      0.10, 
+      now, 
+      now
+    );
 
     // 10. Scenarios
     const insertScenario = db.prepare(`
@@ -164,42 +222,32 @@ export function seedDatabase(db: DatabaseConnection): void {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertScenarioService = db.prepare(`INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)`);
-    const insertScenarioPack = db.prepare(`INSERT INTO scenario_packs (scenario_id, pack_id, rollout_month) VALUES (?, ?, ?)`);
-    const insertScenarioPlan = db.prepare(`INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month) VALUES (?, ?, ?)`);
     const insertScenarioCost = db.prepare(`INSERT INTO scenario_costs (scenario_id, cost_item_id) VALUES (?, ?)`);
     const insertScenarioCohort = db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`);
 
-    const scScenario = uuidv4();
-    insertScenario.run(scScenario, 'Enterprise LegalTech Rollout', 'Full rollout of the Enterprise plan to our LegalTech cohort over 36 months.', 36, 0.10, 'cohorts', now, now);
+    const scHero = uuidv4();
+    insertScenario.run(
+      scHero, 
+      'Is it worth adding AI Ticket Summaries?', 
+      'Calculate ROI of adding AI Ticket Summaries at 1,000 customers', 
+      36, 
+      0.10, 
+      'cohorts', 
+      now, 
+      now
+    );
     
     // Link cohort
-    insertScenarioCohort.run(scScenario, coLegalTech);
+    insertScenarioCohort.run(scHero, coSMBHelpdesk);
 
-    insertScenarioService.run(scScenario, sSummarization, 0);
-    insertScenarioService.run(scScenario, sSearch, 0);
-    insertScenarioService.run(scScenario, sChatbot, 0);
-    insertScenarioService.run(scScenario, sSentiment, 3);
-    insertScenarioService.run(scScenario, sPredictive, 6);
+    // Link service
+    insertScenarioService.run(scHero, sSummarization, 0);
 
-    insertScenarioPack.run(scScenario, pWritingSuite, 0);
-    insertScenarioPack.run(scScenario, pIntelligence, 3);
-    insertScenarioPlan.run(scScenario, plEnterprise, 0);
+    // Link costs
+    insertScenarioCost.run(scHero, cBuild);
+    insertScenarioCost.run(scHero, cOps);
 
-    insertScenarioCost.run(scScenario, cSalary);
-    insertScenarioCost.run(scScenario, cInfra);
-    insertScenarioCost.run(scScenario, cSetup);
-    insertScenarioCost.run(scScenario, cMarketing);
-
-    // Scenario 2: Global Rollout
-    const scGlobal = uuidv4();
-    insertScenario.run(scGlobal, 'Global Chatbot Rollout', 'Deploy Chatbot to entire user base immediately.', 36, 0.12, 'all_clients', now, now);
-    insertScenarioService.run(scGlobal, sChatbot, 0);
-    insertScenarioCost.run(scGlobal, cInfra);
-
-    // 11. Scenario Results: intentionally NOT pre-populated.
-    // The incremental engine computes real results lazily — the scenario detail page
-    // runs and caches KPIs on first view, and the list shows a "Pending Simulation"
-    // state until then. Seeding fixed numbers here would contradict that recomputation.
+    // Scenario Results: intentionally NOT pre-populated.
   })();
 
   console.error('Database seed completed successfully!');

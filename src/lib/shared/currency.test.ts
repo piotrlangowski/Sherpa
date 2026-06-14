@@ -44,6 +44,8 @@ describe('Currency Module Tests', () => {
       output_price: 15.0,
       is_predefined: true,
       currency: 'USD',
+      input_tokens_per_credit: 1000000,
+      output_tokens_per_credit: 333333,
       updated_at: '',
     };
 
@@ -55,6 +57,8 @@ describe('Currency Module Tests', () => {
       output_price: 20.0,
       is_predefined: false,
       currency: 'EUR',
+      input_tokens_per_credit: 1000000,
+      output_tokens_per_credit: 333333,
       updated_at: '',
     };
 

@@ -97,6 +97,7 @@ export const packsRepository = {
       db.prepare("DELETE FROM plan_packs WHERE pack_id = ?").run(id);
       db.prepare("DELETE FROM vertical_packs WHERE pack_id = ?").run(id);
       db.prepare("DELETE FROM scenario_packs WHERE pack_id = ?").run(id);
+      db.prepare("DELETE FROM monetization_configs WHERE entity_type = 'pack' AND entity_id = ?").run(id);
       db.prepare("DELETE FROM packs WHERE id = ?").run(id);
     })();
   }

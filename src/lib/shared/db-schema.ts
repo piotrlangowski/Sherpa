@@ -26,6 +26,8 @@ export function runMigrations(db: DatabaseConnection): void {
         output_price    REAL NOT NULL,
         is_predefined   INTEGER DEFAULT 0,
         currency        TEXT NOT NULL DEFAULT 'USD',
+        input_tokens_per_credit  INTEGER NOT NULL DEFAULT 1000000,
+        output_tokens_per_credit INTEGER NOT NULL DEFAULT 333333,
         updated_at      TEXT NOT NULL
       )
     `).run();
@@ -210,6 +212,7 @@ export function runMigrations(db: DatabaseConnection): void {
         projection_months      INTEGER DEFAULT 36,
         discount_rate          REAL DEFAULT 0.10,
         scope_type             TEXT NOT NULL DEFAULT 'cohorts',
+        revenue_source         TEXT NOT NULL DEFAULT 'cohort',
         created_at             TEXT NOT NULL,
         updated_at             TEXT NOT NULL
       )
@@ -311,6 +314,39 @@ export function runMigrations(db: DatabaseConnection): void {
         calculated_at   TEXT NOT NULL
       )
     `).run();
+
+    // 13. Monetization configs (polymorphic over service/pack/plan).
+    // scenario_id NULL  → catalog config (the default attached to the entity)
+    // scenario_id NOT NULL → scenario-level override of that entity's config
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS monetization_configs (
+        id                       TEXT PRIMARY KEY,
+        entity_type              TEXT NOT NULL,
+        entity_id                TEXT NOT NULL,
+        scenario_id              TEXT REFERENCES scenarios(id) ON DELETE CASCADE,
+        monetization_type        TEXT NOT NULL DEFAULT 'none',
+        addon_monthly_fee        REAL,
+        addon_has_usage_limit    INTEGER DEFAULT 0,
+        addon_usage_limit        INTEGER,
+        addon_overcharge_policy  TEXT,
+        usage_variant            TEXT,
+        price_per_credit         REAL,
+        hybrid_monthly_fee       REAL,
+        hybrid_included_credits  INTEGER,
+        hybrid_overcharge_policy TEXT,
+        overcharge_markup        REAL,
+        overcharge_user_pct      REAL,
+        avg_overcharge_pct       REAL
+      )
+    `).run();
+
+    // SQLite cannot express COALESCE() inside a table-level UNIQUE constraint,
+    // so the "one catalog config + one override per scenario per entity" rule
+    // is enforced via a unique index (mirrors scenario_scope_overrides).
+    db.prepare(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_monetization_configs_unique
+      ON monetization_configs(entity_type, entity_id, COALESCE(scenario_id, ''))
+    `).run();
   })();
 
   // --- Data migrations (run outside main transaction to be idempotent) ---
@@ -384,6 +420,18 @@ function runDataMigrations(db: DatabaseConnection): void {
 
   if (resultsInvalidated) {
     db.prepare("DELETE FROM scenario_results").run();
+  }
+
+  // Migration 7: AI monetization — provider credit columns + scenario revenue_source.
+  // (The monetization_configs table itself is created idempotently in runMigrations.)
+  if (!providerColumns.includes('input_tokens_per_credit')) {
+    db.prepare("ALTER TABLE providers ADD COLUMN input_tokens_per_credit INTEGER NOT NULL DEFAULT 1000000").run();
+  }
+  if (!providerColumns.includes('output_tokens_per_credit')) {
+    db.prepare("ALTER TABLE providers ADD COLUMN output_tokens_per_credit INTEGER NOT NULL DEFAULT 333333").run();
+  }
+  if (!scenarioColumns.includes('revenue_source')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN revenue_source TEXT NOT NULL DEFAULT 'cohort'").run();
   }
 
   // Migration 2: Migrate old cohort_config_id → scenario_cohorts junction

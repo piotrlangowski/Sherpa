@@ -38,7 +38,8 @@ export const load: PageServerLoad = async ({ params }) => {
     scenario,
     results,
     timeline,
-    scopeSummary
+    scopeSummary,
+    resolvedConfigs
   };
 };
 

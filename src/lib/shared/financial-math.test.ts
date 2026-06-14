@@ -8,9 +8,12 @@ import {
   calculateScenario,
   runSensitivityAnalysis,
   applyScopeOverrides,
-  applyAiUplifts
+  splitCohortForAi,
+  calculateMonetizationRevenue,
+  calculateCreditsPerUserMonth,
+  DEFAULT_CREDIT_SETTINGS
 } from './financial-math.js';
-import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride } from './types.js';
+import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig } from './types.js';
 
 describe('Financial Math Module Tests', () => {
   describe('calculateNPV', () => {
@@ -130,6 +133,8 @@ describe('Financial Math Module Tests', () => {
       output_price: 15.0,
       is_predefined: true,
       currency: 'USD',
+      input_tokens_per_credit: 1000000,
+      output_tokens_per_credit: 333333,
       updated_at: ''
     };
 
@@ -237,6 +242,131 @@ describe('Financial Math Module Tests', () => {
     });
   });
 
+  describe('AI Monetization', () => {
+    // 1 credit = 1000 input tokens OR 500 output tokens for this provider.
+    const creditProvider: Provider = {
+      id: 'p1', name: 'OpenAI', model_name: 'gpt-4', input_price: 5, output_price: 15,
+      is_predefined: true, currency: 'USD',
+      input_tokens_per_credit: 1000, output_tokens_per_credit: 500, updated_at: ''
+    };
+
+    // 2000/1000 + 1000/500 = 4 credits/request × 10 requests = 40 credits/user/month.
+    const creditService: Service & { rollout_month: number } = {
+      id: 's1', name: 'Summarization', status: 'planned', provider_id: 'p1',
+      avg_input_tokens: 2000, avg_output_tokens: 1000, avg_requests_per_user_month: 10,
+      fixed_cost_per_month: 0, rollout_month: 0
+    };
+
+    describe('calculateCreditsPerUserMonth', () => {
+      it('sums input and output credits across monthly requests', () => {
+        expect(calculateCreditsPerUserMonth(creditService, creditProvider)).toBe(40);
+      });
+      it('returns 0 when no provider is supplied', () => {
+        expect(calculateCreditsPerUserMonth(creditService, undefined)).toBe(0);
+      });
+    });
+
+    describe('calculateMonetizationRevenue', () => {
+      const providersMap = new Map([[creditProvider.id, creditProvider]]);
+      const cs = DEFAULT_CREDIT_SETTINGS;
+      const withMon = (m: MonetizationConfig): Service & { monetization?: MonetizationConfig } => ({ ...creditService, monetization: m });
+
+      it('charges a flat add-on fee per AI user', () => {
+        const r = calculateMonetizationRevenue(100, [withMon({ monetization_type: 'addon', addon_monthly_fee: 10 })], cs, providersMap);
+        expect(r.addonRevenue).toBe(1000);
+        expect(r.totalRevenue).toBe(1000);
+      });
+
+      it('charges usage by consumed credits times price (payg)', () => {
+        const r = calculateMonetizationRevenue(100, [withMon({ monetization_type: 'usage', usage_variant: 'payg', price_per_credit: 0.5 })], cs, providersMap);
+        // 40 credits/user × 100 users × $0.5 = 2000
+        expect(r.usageRevenue).toBe(2000);
+        expect(r.totalRevenue).toBe(2000);
+      });
+
+      it('charges usage in prepaid blocks of 100 credits', () => {
+        const r = calculateMonetizationRevenue(100, [withMon({ monetization_type: 'usage', usage_variant: 'prepaid', price_per_credit: 0.5 })], cs, providersMap);
+        // 40 credits rounded up to 100 credits block = 100 credits/user × 100 users × $0.5 = 5000
+        expect(r.usageRevenue).toBe(5000);
+        expect(r.totalRevenue).toBe(5000);
+      });
+
+      it('adds overcharge revenue for hybrid with pay-as-you-go overage', () => {
+        const r = calculateMonetizationRevenue(100, [withMon({
+          monetization_type: 'hybrid', hybrid_monthly_fee: 20, hybrid_included_credits: 40,
+          hybrid_overcharge_policy: 'payg', price_per_credit: 0.5,
+          overcharge_user_pct: 0.5, avg_overcharge_pct: 0.5, overcharge_markup: 2
+        })], cs, providersMap);
+        expect(r.hybridBaseRevenue).toBe(2000); // 20 × 100
+        // overcharge: 50 users × (40 × 1.5 = 60 credits - 40 pool = 20 extra credits) × $0.5 × 2 = 1000
+        expect(r.overchargeRevenue).toBe(1000);
+        expect(r.totalRevenue).toBe(3000);
+      });
+
+      it('adds overcharge revenue for hybrid with credit_pack overage policy', () => {
+        const r = calculateMonetizationRevenue(100, [withMon({
+          monetization_type: 'hybrid', hybrid_monthly_fee: 20, hybrid_included_credits: 40,
+          hybrid_overcharge_policy: 'credit_pack', price_per_credit: 0.5,
+          overcharge_user_pct: 0.5, avg_overcharge_pct: 0.5, overcharge_markup: 2
+        })], cs, providersMap);
+        expect(r.hybridBaseRevenue).toBe(2000); // 20 × 100
+        // overcharge: 50 users × (40 × 1.5 = 60 credits - 40 pool = 20 extra credits)
+        // 20 extra credits rounded up to 100 credits pack = 100 extra credits/user × 50 users × $0.5 × 2 = 5000
+        expect(r.overchargeRevenue).toBe(5000);
+        expect(r.totalRevenue).toBe(7000);
+      });
+
+      it('does not add overcharge for a hard_stop hybrid', () => {
+        const r = calculateMonetizationRevenue(100, [withMon({
+          monetization_type: 'hybrid', hybrid_monthly_fee: 20, hybrid_overcharge_policy: 'hard_stop',
+          price_per_credit: 0.5, overcharge_user_pct: 0.5, avg_overcharge_pct: 0.5, overcharge_markup: 2
+        })], cs, providersMap);
+        expect(r.overchargeRevenue).toBe(0);
+        expect(r.totalRevenue).toBe(2000);
+      });
+
+      it('ignores services with no monetization', () => {
+        const r = calculateMonetizationRevenue(100, [withMon({ monetization_type: 'none' })], cs, providersMap);
+        expect(r.totalRevenue).toBe(0);
+      });
+    });
+
+    describe('calculateScenario revenue_source', () => {
+      // Static cohort (no churn/acquisition) so months are easy to reason about.
+      const cohort: CohortConfig = {
+        id: 'c1', name: 'Cohort', current_users: 1000, monthly_acquisition: 0,
+        acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 1,
+        monthly_expansion_rate: 0, ai_adoption_rate: 0.30, base_arpu: 100,
+        arpu_uplift_percent: 0.10
+      };
+      const makeScenario = (revenue_source: Scenario['revenue_source']): Scenario => ({
+        id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.10,
+        scope_type: 'cohorts', revenue_source, scope_cohorts: [cohort],
+        services: [{ ...creditService, monetization: { monetization_type: 'addon', addon_monthly_fee: 10 } }],
+        costs: []
+      });
+
+      it('keeps monetization revenue at zero for the cohort source', () => {
+        const r = calculateScenario(makeScenario('cohort'), [creditProvider]);
+        expect(r.timeline[0].monetizationRevenue).toBe(0);
+      });
+
+      it('uses only monetization revenue for the monetization source', () => {
+        const m0 = calculateScenario(makeScenario('monetization'), [creditProvider]).timeline[0];
+        expect(m0.monetizationRevenue).toBeGreaterThan(0);
+        expect(m0.addonRevenue).toBeGreaterThan(0);
+        expect(m0.revenue).toBeCloseTo(m0.monetizationRevenue, 2);
+      });
+
+      it('sums cohort delta and monetization revenue for the both source', () => {
+        const cohortOnly = calculateScenario(makeScenario('cohort'), [creditProvider]).timeline[0];
+        const both = calculateScenario(makeScenario('both'), [creditProvider]).timeline[0];
+        expect(both.monetizationRevenue).toBeGreaterThan(0);
+        expect(both.revenue).toBeCloseTo(cohortOnly.revenue + both.monetizationRevenue, 2);
+      });
+    });
+  });
+
   describe('runSensitivityAnalysis', () => {
     const provider: Provider = {
       id: 'p1',
@@ -246,6 +376,8 @@ describe('Financial Math Module Tests', () => {
       output_price: 15.0,
       is_predefined: true,
       currency: 'USD',
+      input_tokens_per_credit: 1000000,
+      output_tokens_per_credit: 333333,
       updated_at: ''
     };
 
@@ -395,9 +527,9 @@ describe('Financial Math Module Tests', () => {
     });
   });
 
-  describe('Incremental ROI and applyAiUplifts tests', () => {
+  describe('Incremental ROI and splitCohortForAi tests', () => {
     const provider: Provider = {
-      id: 'p1', name: 'OpenAI', model_name: 'gpt-4', input_price: 5.0, output_price: 15.0, is_predefined: true, currency: 'USD', updated_at: ''
+      id: 'p1', name: 'OpenAI', model_name: 'gpt-4', input_price: 5.0, output_price: 15.0, is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000000, output_tokens_per_credit: 333333, updated_at: ''
     };
 
     const cohort: CohortConfig = {
@@ -428,14 +560,32 @@ describe('Financial Math Module Tests', () => {
       costs: []
     };
 
-    it('applyAiUplifts: formula correctness', () => {
-      const uplifted = applyAiUplifts(cohort);
-      // churnRate = baseChurn * (1 - churn_reduction * ai_adoption_rate) = 0.05 * (1 - 0.2 * 0.5) = 0.05 * 0.9 = 0.045
-      expect(uplifted.monthly_churn_rate).toBeCloseTo(0.045, 4);
-      // acquisition = baseAcquisition * (1 + acquisition_uplift) = 100 * (1 + 0.3) = 130
-      expect(uplifted.monthly_acquisition).toBeCloseTo(130, 4);
-      // arpu = baseArpu * (1 + arpu_uplift_percent * ai_adoption_rate) + arpu_uplift * ai_adoption_rate = 100 * (1 + 0.1 * 0.5) + 5.0 * 0.5 = 105 + 2.5 = 107.5
-      expect(uplifted.base_arpu).toBeCloseTo(107.5, 4);
+    it('splitCohortForAi: formula correctness', () => {
+      const { adopter, nonAdopter } = splitCohortForAi(cohort);
+      
+      // Adopters:
+      // current_users = 1000 * 0.5 = 500
+      expect(adopter.current_users).toBe(500);
+      // acquisition = 100 * (1 + 0.3) * 0.5 = 65
+      expect(adopter.monthly_acquisition).toBeCloseTo(65, 4);
+      // churnRate = 0.05 * (1 - 0.2) = 0.04
+      expect(adopter.monthly_churn_rate).toBeCloseTo(0.04, 4);
+      // arpu = 100 * (1 + 0.1) + 5 = 115
+      expect(adopter.base_arpu).toBeCloseTo(115, 4);
+      // ai_adoption_rate = 1.0
+      expect(adopter.ai_adoption_rate).toBe(1.0);
+
+      // Non-Adopters:
+      // current_users = 1000 * (1 - 0.5) = 500
+      expect(nonAdopter.current_users).toBe(500);
+      // acquisition = 100 * (1 + 0.3) * (1 - 0.5) = 65
+      expect(nonAdopter.monthly_acquisition).toBeCloseTo(65, 4);
+      // churnRate = 0.05
+      expect(nonAdopter.monthly_churn_rate).toBeCloseTo(0.05, 4);
+      // arpu = 100
+      expect(nonAdopter.base_arpu).toBeCloseTo(100, 4);
+      // ai_adoption_rate = 0.0
+      expect(nonAdopter.ai_adoption_rate).toBe(0.0);
     });
 
     it('Zero uplifts → ΔRevenue = 0 every month, netCashFlow = -costs, NPV < 0, IRR null, payback null', () => {

@@ -21,13 +21,19 @@ export const settingsRepository = {
     }
     
     return {
-      company_name: settingsMap['company_name'] || 'Acme Analytics',
+      company_name: settingsMap['company_name'] || 'Beacon Helpdesk',
       currency: (settingsMap['currency'] as Currency) || 'USD',
       default_discount_rate: parseFloat(settingsMap['default_discount_rate'] || '0.10'),
       setup_completed: settingsMap['setup_completed'] === '1',
       projection_horizon_months: parseInt(settingsMap['projection_horizon_months'] || '36', 10),
       exchange_rates: exchangeRates,
-      exchange_rates_as_of: settingsMap['exchange_rates_as_of'] || EXCHANGE_RATES_AS_OF
+      exchange_rates_as_of: settingsMap['exchange_rates_as_of'] || EXCHANGE_RATES_AS_OF,
+      default_price_per_credit: parseFloat(settingsMap['default_price_per_credit'] || '0.02'),
+      default_input_tokens_per_credit: parseInt(settingsMap['default_input_tokens_per_credit'] || '1000000', 10),
+      default_output_tokens_per_credit: parseInt(settingsMap['default_output_tokens_per_credit'] || '333333', 10),
+      default_overcharge_markup: parseFloat(settingsMap['default_overcharge_markup'] || '1.5'),
+      default_overcharge_user_pct: parseFloat(settingsMap['default_overcharge_user_pct'] || '0.2'),
+      default_avg_overcharge_pct: parseFloat(settingsMap['default_avg_overcharge_pct'] || '0.5')
     };
   },
 
@@ -59,7 +65,31 @@ export const settingsRepository = {
       if (settings.exchange_rates_as_of !== undefined) {
         updateStmt.run('exchange_rates_as_of', settings.exchange_rates_as_of);
       }
-      
+      if (settings.default_price_per_credit !== undefined) {
+        updateStmt.run('default_price_per_credit', settings.default_price_per_credit.toString());
+        shouldInvalidateAllResults = true;
+      }
+      if (settings.default_input_tokens_per_credit !== undefined) {
+        updateStmt.run('default_input_tokens_per_credit', settings.default_input_tokens_per_credit.toString());
+        shouldInvalidateAllResults = true;
+      }
+      if (settings.default_output_tokens_per_credit !== undefined) {
+        updateStmt.run('default_output_tokens_per_credit', settings.default_output_tokens_per_credit.toString());
+        shouldInvalidateAllResults = true;
+      }
+      if (settings.default_overcharge_markup !== undefined) {
+        updateStmt.run('default_overcharge_markup', settings.default_overcharge_markup.toString());
+        shouldInvalidateAllResults = true;
+      }
+      if (settings.default_overcharge_user_pct !== undefined) {
+        updateStmt.run('default_overcharge_user_pct', settings.default_overcharge_user_pct.toString());
+        shouldInvalidateAllResults = true;
+      }
+      if (settings.default_avg_overcharge_pct !== undefined) {
+        updateStmt.run('default_avg_overcharge_pct', settings.default_avg_overcharge_pct.toString());
+        shouldInvalidateAllResults = true;
+      }
+
       if (shouldInvalidateAllResults) {
         scenariosRepository.invalidateAllResults();
       }

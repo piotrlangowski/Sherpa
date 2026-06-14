@@ -30,7 +30,11 @@ export const POST: RequestHandler = async () => {
           updated++;
         }
       } else {
-        providersRepository.create(catalogEntry);
+        providersRepository.create({
+          ...catalogEntry,
+          input_tokens_per_credit: 1000000,
+          output_tokens_per_credit: 333333
+        });
         added++;
       }
     }

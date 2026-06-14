@@ -13,6 +13,7 @@
   import CardFooter from '$lib/components/ui/card/card-footer.svelte';
   import Slider from '$lib/components/ui/slider/slider.svelte';
   import Badge from '$lib/components/ui/badge/badge.svelte';
+  import ScenarioMonetizationOverrides from '$lib/components/catalog/ScenarioMonetizationOverrides.svelte';
 
   // Lucide Icons
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -38,6 +39,7 @@
   const discountRate = $derived(discountRateArr[0]);
 
   let scopeType = $state<'all_clients' | 'verticals' | 'cohorts'>('all_clients');
+  let revenueSource = $state<'cohort' | 'monetization' | 'both'>('cohort');
   let selectedVerticals = $state<Record<string, boolean>>({});
   let selectedCohorts = $state<Record<string, boolean>>({});
 
@@ -93,6 +95,7 @@
       projectionMonths = s.projection_months;
       discountRateArr = [Math.round(s.discount_rate * 100)];
       scopeType = s.scope_type;
+      revenueSource = s.revenue_source ?? 'cohort';
 
       selectedVerticals = {};
       if (s.scope_verticals) {
@@ -403,6 +406,18 @@
   const prevStep = () => {
     currentStep -= 1;
   };
+
+  // Per-entity monetization override rows for the entities currently in the scenario.
+  const monetizationEntities = $derived.by(() => {
+    const rows: { type: 'plan' | 'pack' | 'service'; id: string; name: string; catalog: any; override: any }[] = [];
+    const cat: Record<string, any> = data.monetizationCatalog ?? {};
+    const ovr: Record<string, any> = data.monetizationOverrides ?? {};
+    for (const p of data.plans) if (selectedPlans[p.id]) rows.push({ type: 'plan', id: p.id, name: p.name, catalog: cat[`plan:${p.id}`] ?? null, override: ovr[`plan:${p.id}`] ?? null });
+    for (const p of data.packs) if (selectedPacks[p.id]) rows.push({ type: 'pack', id: p.id, name: p.name, catalog: cat[`pack:${p.id}`] ?? null, override: ovr[`pack:${p.id}`] ?? null });
+    for (const s of data.services) if (selectedServices[s.id]) rows.push({ type: 'service', id: s.id, name: s.name, catalog: cat[`service:${s.id}`] ?? null, override: ovr[`service:${s.id}`] ?? null });
+    return rows;
+  });
+  const monetizationKey = $derived(monetizationEntities.map((e) => `${e.type}:${e.id}`).join(','));
 </script>
 
 <div class="max-w-4xl mx-auto space-y-6">
@@ -451,7 +466,7 @@
           <div class="space-y-4">
             <div class="space-y-2">
               <Label for="name" class="font-semibold">Scenario Name</Label>
-              <Input id="name" name="name" bind:value={name} placeholder="e.g. Enterprise LegalTech Rollout" required class="bg-(--glass-inset-bg) border-border" />
+              <Input id="name" name="name" bind:value={name} placeholder="e.g. Is it worth adding AI Ticket Summaries?" required class="bg-(--glass-inset-bg) border-border" />
             </div>
             <div class="space-y-2">
               <Label for="description" class="font-semibold">Description</Label>
@@ -481,6 +496,20 @@
               <Slider id="discountRateSlider" bind:value={discountRateArr} min={0} max={30} step={1} type="multiple" />
               <input type="hidden" name="discountRate" value={discountRate} />
             </div>
+          </div>
+
+          <!-- Revenue Source -->
+          <div class="space-y-2">
+            <Label for="revenueSource" class="font-semibold">Revenue Source</Label>
+            <select id="revenueSource" name="revenueSource" bind:value={revenueSource} class="w-full glass-inset border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground">
+              <option value="cohort">Cohort ARPU uplift (incremental)</option>
+              <option value="monetization">AI monetization only</option>
+              <option value="both">Both — ARPU uplift + AI monetization</option>
+            </select>
+            <p class="text-xs text-muted-foreground">
+              How this scenario books revenue: incremental cohort ARPU, direct AI monetization
+              (add-on / usage / hybrid models on the included plans, packs and services), or both combined.
+            </p>
           </div>
 
           <hr class="border-border/60" />
@@ -873,6 +902,13 @@
               </div>
             {/if}
           </div>
+          {#if revenueSource !== 'cohort'}
+            <div class="mt-6">
+              {#key monetizationKey}
+                <ScenarioMonetizationOverrides scenarioId={scenario.id} entities={monetizationEntities} />
+              {/key}
+            </div>
+          {/if}
         </CardContent>
 
         <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">

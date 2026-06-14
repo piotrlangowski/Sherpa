@@ -5,8 +5,9 @@ import { servicesRepository } from '../repositories/services';
 import { packsRepository } from '../repositories/packs';
 import { plansRepository } from '../repositories/plans';
 import { calculateScenario } from './financial-engine';
+import { monetizationRepository } from '../repositories/monetization';
 
-import type { Vertical, CohortConfig, ScopeOverride, Service, Pack, Plan, CostItem, Provider } from '$lib/types';
+import type { Vertical, CohortConfig, ScopeOverride, Service, Pack, Plan, CostItem, Provider, MonetizationConfig } from '$lib/types';
 
 export interface ScenarioExportSnapshot {
   version: string;
@@ -25,6 +26,7 @@ export interface ScenarioExportSnapshot {
     plans: (Plan & { rollout_month?: number })[];
     costs: CostItem[];
     providers: Provider[];
+    monetization_overrides: { entity_type: 'service' | 'pack' | 'plan'; entity_name: string; config: MonetizationConfig }[];
   };
 }
 
@@ -49,7 +51,8 @@ export function exportScenarioToJSON(scenarioId: string): string {
       if (fullService) {
         services.push({
           ...fullService,
-          rollout_month: s.rollout_month
+          rollout_month: s.rollout_month,
+          monetization: monetizationRepository.getForEntity('service', s.id) ?? undefined
         });
         if (fullService.provider) {
           providersSet.set(fullService.provider.id, fullService.provider);
@@ -66,7 +69,8 @@ export function exportScenarioToJSON(scenarioId: string): string {
       if (fullPack) {
         packs.push({
           ...fullPack,
-          rollout_month: p.rollout_month
+          rollout_month: p.rollout_month,
+          monetization: monetizationRepository.getForEntity('pack', p.id) ?? undefined
         });
       }
     }
@@ -80,11 +84,24 @@ export function exportScenarioToJSON(scenarioId: string): string {
       if (fullPlan) {
         plans.push({
           ...fullPlan,
-          rollout_month: pl.rollout_month
+          rollout_month: pl.rollout_month,
+          monetization: monetizationRepository.getForEntity('plan', pl.id) ?? undefined
         });
       }
     }
   }
+
+  // Scenario-level monetization overrides, keyed by entity NAME so they survive re-import (ids change).
+  const monetization_overrides = monetizationRepository.getScenarioOverrides(scenarioId)
+    .map((r) => {
+      const { entity_type, entity_id, ...config } = r;
+      let entity_name = '';
+      if (entity_type === 'service') entity_name = servicesRepository.getById(entity_id)?.name ?? '';
+      else if (entity_type === 'pack') entity_name = packsRepository.getById(entity_id)?.name ?? '';
+      else if (entity_type === 'plan') entity_name = plansRepository.getById(entity_id)?.name ?? '';
+      return { entity_type, entity_name, config };
+    })
+    .filter((o) => o.entity_name);
 
   const snapshot: ScenarioExportSnapshot = {
     version: '1.0',
@@ -102,7 +119,8 @@ export function exportScenarioToJSON(scenarioId: string): string {
       packs,
       plans,
       costs: scenario.costs || [],
-      providers: Array.from(providersSet.values())
+      providers: Array.from(providersSet.values()),
+      monetization_overrides
     }
   };
 

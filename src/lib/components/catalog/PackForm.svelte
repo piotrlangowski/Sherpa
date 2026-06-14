@@ -9,6 +9,7 @@
   import Save from '@lucide/svelte/icons/save';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import Layers from '@lucide/svelte/icons/layers';
+  import MonetizationFields from '$lib/components/catalog/MonetizationFields.svelte';
 
   interface Props {
     pack?: any;
@@ -106,6 +107,8 @@
           {/if}
         </div>
       </div>
+
+      <MonetizationFields monetization={pack.monetization} inheritedFromLabel="from its Plan" />
 
       <!-- Action Footer -->
       <div class="flex items-center justify-end space-x-3">

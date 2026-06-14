@@ -15,6 +15,7 @@
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import BrainCircuit from '@lucide/svelte/icons/brain-circuit';
   import Calculator from '@lucide/svelte/icons/calculator';
+  import MonetizationFields from '$lib/components/catalog/MonetizationFields.svelte';
 
   interface Props {
     service?: any;
@@ -188,6 +189,8 @@
           </p>
         </div>
       </div>
+
+      <MonetizationFields monetization={service.monetization} inheritedFromLabel="from its Pack or Plan" />
 
       <!-- Action Footer -->
       <div class="flex items-center justify-end space-x-3">
