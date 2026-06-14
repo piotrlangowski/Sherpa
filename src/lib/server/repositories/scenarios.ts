@@ -1,12 +1,12 @@
 import db from '../db';
-import type { Scenario, ScenarioResult, ScopeType, ScopeOverride } from '../../types';
+import type { Scenario, ScenarioResult, ScopeType, ScopeOverride, RevenueSource } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
 
 export const scenariosRepository = {
   getAll(): Scenario[] {
     const rows = db.prepare(`
-      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.created_at, s.updated_at,
-             r.payback_months, r.npv, r.irr_annual, r.tco, r.roi_percent
+      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.created_at, s.updated_at,
+             r.payback_months, r.npv, r.irr_annual, r.tco, r.roi_percent, r.calculated_at
       FROM scenarios s
       LEFT JOIN scenario_results r ON s.id = r.scenario_id
       ORDER BY s.updated_at DESC
@@ -77,6 +77,7 @@ export const scenariosRepository = {
         projection_months: r.projection_months,
         discount_rate: r.discount_rate,
         scope_type: r.scope_type as ScopeType,
+        revenue_source: (r.revenue_source as RevenueSource) || 'cohort',
         created_at: r.created_at,
         updated_at: r.updated_at,
         scope_verticals: vrtMap[r.id] || [],
@@ -86,7 +87,9 @@ export const scenariosRepository = {
         packs: pckMap[r.id] || [],
         plans: plnMap[r.id] || [],
         costs: [],
-        results: r.payback_months !== undefined && r.payback_months !== null ? {
+        // A cached result exists iff the LEFT JOIN matched a row (calculated_at is NOT NULL).
+        // Keying off payback_months is wrong: it is legitimately null for "Never pays back".
+        results: r.calculated_at != null ? {
           id: r.id,
           scenario_id: r.id,
           payback_months: r.payback_months,
@@ -97,7 +100,7 @@ export const scenariosRepository = {
           monthly_cashflows: [],
           monthly_mrr: [],
           monthly_customers: [],
-          calculated_at: r.updated_at
+          calculated_at: r.calculated_at
         } : undefined
       } as Scenario;
     });
@@ -105,7 +108,7 @@ export const scenariosRepository = {
 
   getById(id: string): Scenario | null {
     const r = db.prepare(`
-      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.created_at, s.updated_at
+      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.created_at, s.updated_at
       FROM scenarios s
       WHERE s.id = ?
     `).get(id) as any;
@@ -186,6 +189,7 @@ export const scenariosRepository = {
       projection_months: r.projection_months,
       discount_rate: r.discount_rate,
       scope_type: r.scope_type as ScopeType,
+      revenue_source: (r.revenue_source as RevenueSource) || 'cohort',
       created_at: r.created_at,
       updated_at: r.updated_at,
       scope_verticals: verticalRows,
@@ -213,9 +217,9 @@ export const scenariosRepository = {
 
     db.transaction(() => {
       db.prepare(`
-        INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, now, now);
+        INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, data.revenue_source || 'cohort', now, now);
 
       if (data.vertical_ids && data.vertical_ids.length > 0) {
         const insertLink = db.prepare("INSERT INTO scenario_verticals (scenario_id, vertical_id) VALUES (?, ?)");
@@ -289,14 +293,15 @@ export const scenariosRepository = {
     const projection_months = data.projection_months !== undefined ? data.projection_months : current.projection_months;
     const discount_rate = data.discount_rate !== undefined ? data.discount_rate : current.discount_rate;
     const scope_type = data.scope_type !== undefined ? data.scope_type : current.scope_type;
+    const revenue_source = data.revenue_source !== undefined ? data.revenue_source : (current.revenue_source || 'cohort');
     const now = new Date().toISOString();
 
     db.transaction(() => {
       db.prepare(`
         UPDATE scenarios
-        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, updated_at = ?
+        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, description || null, projection_months, discount_rate, scope_type, now, id);
+      `).run(name, description || null, projection_months, discount_rate, scope_type, revenue_source, now, id);
 
       if (data.vertical_ids !== undefined) {
         db.prepare("DELETE FROM scenario_verticals WHERE scenario_id = ?").run(id);
@@ -369,6 +374,7 @@ export const scenariosRepository = {
       db.prepare("DELETE FROM scenario_verticals WHERE scenario_id = ?").run(id);
       db.prepare("DELETE FROM scenario_cohorts WHERE scenario_id = ?").run(id);
       db.prepare("DELETE FROM scenario_scope_overrides WHERE scenario_id = ?").run(id);
+      db.prepare("DELETE FROM monetization_configs WHERE scenario_id = ?").run(id);
       db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(id);
       db.prepare("DELETE FROM scenarios WHERE id = ?").run(id);
     })();

@@ -6,11 +6,12 @@ import { scenariosRepository } from './scenarios';
 export const providersRepository = {
   getAll(): Provider[] {
     const rows = db.prepare(`
-      SELECT id, name, model_name, input_price, output_price, is_predefined, currency, updated_at
+      SELECT id, name, model_name, input_price, output_price, is_predefined, currency,
+             input_tokens_per_credit, output_tokens_per_credit, updated_at
       FROM providers
       ORDER BY name ASC, model_name ASC
     `).all() as any[];
-    
+
     return rows.map(r => ({
       id: r.id,
       name: r.name,
@@ -19,17 +20,20 @@ export const providersRepository = {
       output_price: r.output_price,
       is_predefined: r.is_predefined === 1,
       currency: (r.currency as Currency) || 'USD',
+      input_tokens_per_credit: r.input_tokens_per_credit ?? 1000000,
+      output_tokens_per_credit: r.output_tokens_per_credit ?? 333333,
       updated_at: r.updated_at
     }));
   },
 
   getById(id: string): Provider | null {
     const r = db.prepare(`
-      SELECT id, name, model_name, input_price, output_price, is_predefined, currency, updated_at
+      SELECT id, name, model_name, input_price, output_price, is_predefined, currency,
+             input_tokens_per_credit, output_tokens_per_credit, updated_at
       FROM providers
       WHERE id = ?
     `).get(id) as any;
-    
+
     if (!r) return null;
     return {
       id: r.id,
@@ -39,6 +43,8 @@ export const providersRepository = {
       output_price: r.output_price,
       is_predefined: r.is_predefined === 1,
       currency: (r.currency as Currency) || 'USD',
+      input_tokens_per_credit: r.input_tokens_per_credit ?? 1000000,
+      output_tokens_per_credit: r.output_tokens_per_credit ?? 333333,
       updated_at: r.updated_at
     };
   },
@@ -47,16 +53,20 @@ export const providersRepository = {
     const id = uuidv4();
     const now = new Date().toISOString();
     const currency = data.currency || 'USD';
-    
+    const inputTpc = data.input_tokens_per_credit ?? 1000000;
+    const outputTpc = data.output_tokens_per_credit ?? 333333;
+
     db.prepare(`
-      INSERT INTO providers (id, name, model_name, input_price, output_price, is_predefined, currency, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, data.name, data.model_name, data.input_price, data.output_price, data.is_predefined ? 1 : 0, currency, now);
-    
+      INSERT INTO providers (id, name, model_name, input_price, output_price, is_predefined, currency, input_tokens_per_credit, output_tokens_per_credit, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, data.name, data.model_name, data.input_price, data.output_price, data.is_predefined ? 1 : 0, currency, inputTpc, outputTpc, now);
+
     return {
       id,
       ...data,
       currency,
+      input_tokens_per_credit: inputTpc,
+      output_tokens_per_credit: outputTpc,
       updated_at: now
     };
   },
@@ -72,13 +82,15 @@ export const providersRepository = {
     const is_predefined = data.is_predefined !== undefined ? (data.is_predefined ? 1 : 0) : (current.is_predefined ? 1 : 0);
     // Predefined models are always USD
     const currency = is_predefined === 1 ? 'USD' : (data.currency !== undefined ? data.currency : current.currency);
+    const input_tokens_per_credit = data.input_tokens_per_credit !== undefined ? data.input_tokens_per_credit : current.input_tokens_per_credit;
+    const output_tokens_per_credit = data.output_tokens_per_credit !== undefined ? data.output_tokens_per_credit : current.output_tokens_per_credit;
     const now = new Date().toISOString();
-    
+
     db.prepare(`
       UPDATE providers
-      SET name = ?, model_name = ?, input_price = ?, output_price = ?, is_predefined = ?, currency = ?, updated_at = ?
+      SET name = ?, model_name = ?, input_price = ?, output_price = ?, is_predefined = ?, currency = ?, input_tokens_per_credit = ?, output_tokens_per_credit = ?, updated_at = ?
       WHERE id = ?
-    `).run(name, model_name, input_price, output_price, is_predefined, currency, now, id);
+    `).run(name, model_name, input_price, output_price, is_predefined, currency, input_tokens_per_credit, output_tokens_per_credit, now, id);
 
     // Invalidate cached results for scenarios whose services use this provider
     const affectedScenarios = scenariosRepository.findScenarioIdsByProviderId(id);

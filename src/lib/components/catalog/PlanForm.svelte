@@ -11,6 +11,7 @@
   import CreditCard from '@lucide/svelte/icons/credit-card';
   import Layers from '@lucide/svelte/icons/layers';
   import BrainCircuit from '@lucide/svelte/icons/brain-circuit';
+  import MonetizationFields from '$lib/components/catalog/MonetizationFields.svelte';
 
   interface Props {
     plan?: any;
@@ -159,6 +160,8 @@
           {/if}
         </div>
       </div>
+
+      <MonetizationFields monetization={plan.monetization} />
 
       <!-- Action Footer -->
       <div class="flex items-center justify-end space-x-3">

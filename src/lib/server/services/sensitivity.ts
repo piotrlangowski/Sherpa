@@ -3,7 +3,7 @@ import { runSensitivityAnalysis as pureRunSensitivityAnalysis } from '../../shar
 import { providersRepository } from '../repositories/providers';
 import { settingsRepository } from '../repositories/settings';
 import { normalizeScenarioCurrency } from '../../shared/currency.js';
-import { resolveScenarioCohorts } from './financial-engine';
+import { resolveScenarioCohorts, attachMonetization, buildCreditSettings } from './financial-engine';
 import type { SensitivityAnalysisResult } from '../../shared/types';
 
 export type { SensitivityParamResult, SensitivityAnalysisResult } from '../../shared/types';
@@ -14,9 +14,9 @@ export function runSensitivityAnalysis(
 ): SensitivityAnalysisResult {
   const allProviders = providersRepository.getAll();
   const resolvedConfigs = resolveScenarioCohorts(scenario);
-  
+
   const runtimeScenario = {
-    ...scenario,
+    ...attachMonetization(scenario),
     scope_cohorts: resolvedConfigs
   };
 
@@ -28,5 +28,5 @@ export function runSensitivityAnalysis(
     settings.exchange_rates
   );
 
-  return pureRunSensitivityAnalysis(normalizedScenario, normalizedProviders, variationPercent);
+  return pureRunSensitivityAnalysis(normalizedScenario, normalizedProviders, variationPercent, buildCreditSettings(settings));
 }

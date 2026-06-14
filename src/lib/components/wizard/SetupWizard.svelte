@@ -20,7 +20,7 @@
   import Sparkles from '@lucide/svelte/icons/sparkles';
 
   let step = $state(1);
-  let companyName = $state(appState.companyName || 'Acme Analytics');
+  let companyName = $state(appState.companyName || 'Beacon Helpdesk');
   let currency = $state(appState.currency || 'USD');
   let discountRate = $state([10]); // slider expects array
   let keepSampleData = $state(true);
@@ -160,9 +160,9 @@
                   class="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary/50"
                 />
                 <div>
-                  <span class="text-sm font-semibold text-foreground block">Keep "Acme Analytics" Sample Data</span>
+                  <span class="text-sm font-semibold text-foreground block">Keep "Beacon Helpdesk" Sample Data</span>
                   <span class="text-xs text-muted-foreground block mt-0.5">
-                    Recommended. Pre-populates your catalog with 5 AI services, 2 packs, 2 plans, and a demo scenario to let you explore the charts immediately. You can modify or delete this data anytime.
+                    Recommended. Pre-populates your catalog with 3 AI services, 1 pack, 2 plans, and a demo scenario to let you explore the charts immediately. You can modify or delete this data anytime.
                   </span>
                 </div>
               </label>

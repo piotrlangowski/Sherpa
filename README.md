@@ -53,7 +53,7 @@ You are ready to go. **Restart your Claude app**
 
 Requires Node.js ≥ 22.5 — it uses the built-in `node:sqlite` module.
 
-First launch opens a 3-step setup wizard and seeds a demo workspace ("Acme Analytics": 5 AI services, 2 feature packs, 2 pricing plans, 2 pre-computed scenarios), so you can explore a populated dashboard immediately.
+First launch opens a 3-step setup wizard and seeds a demo workspace ("Beacon Helpdesk": 3 AI services, 1 feature pack, 2 pricing plans, 1 pre-computed scenario), so you can explore a populated dashboard immediately.
 
 The dev registration pins the database to the repo's `data/sherpa.db` (via `SHERPA_DB_PATH`), so whatever you model in conversation shows up in the web dashboard and vice versa. For tool development without Claude Desktop, `npm run mcp:inspect` opens the MCP Inspector against the built server.
 
@@ -117,16 +117,22 @@ Four AI impact parameters can be configured at cohort, vertical, or scenario ove
 - `acquisition_uplift` — percentage increase in new-customer acquisition (attributable to the product having AI; unweighted by adoption).
 
 ### Formulas
-The effective with-AI parameters are calculated as:
-- \(\text{churnRate} = \text{baseChurn} \times (1 - \text{churn\_reduction} \times \text{ai\_adoption\_rate})\)
-- \(\text{acquisition} = \text{baseAcquisition} \times (1 + \text{acquisition\_uplift})\)
-- \(\text{arpu} = \text{baseArpu} \times (1 + \text{arpu\_uplift\_percent} \times \text{ai\_adoption\_rate}) + \text{arpu\_uplift} \times \text{ai\_adoption\_rate}\)
+Sherpa partitions the target cohort into two distinct sub-cohorts to model the counterfactual with-AI projection:
+- **AI Adopters** (size = \(N \times \text{ai\_adoption\_rate}\)):
+  - \(\text{churnRate}_{\text{adopters}} = \text{baseChurn} \times (1 - \text{churn\_reduction})\)
+  - \(\text{acquisition}_{\text{adopters}} = \text{baseAcquisition} \times (1 + \text{acquisition\_uplift}) \times \text{ai\_adoption\_rate}\)
+  - \(\text{arpu}_{\text{adopters}} = \text{baseArpu} \times (1 + \text{arpu\_uplift\_percent}) + \text{arpu\_uplift}\)
+- **Non-Adopters** (size = \(N \times (1 - \text{ai\_adoption\_rate})\)):
+  - \(\text{churnRate}_{\text{non-adopters}} = \text{baseChurn}\)
+  - \(\text{acquisition}_{\text{non-adopters}} = \text{baseAcquisition} \times (1 + \text{acquisition\_uplift}) \times (1 - \text{ai\_adoption\_rate})\)
+  - \(\text{arpu}_{\text{non-adopters}} = \text{baseArpu}\)
+
+The total with-AI MRR and active customers are the sum of these two sub-cohort timelines.
 
 ### Known Limitations & Approximations
-1. **Blended-rate approximation:** Weighting churn/ARPU by the adoption rate applies a blended average rate to the whole cohort instead of simulating adopter/non-adopter sub-cohorts separately. Due to the convexity of \((1-c)^{\text{age}}\) (Jensen's inequality), this slightly understates mixture retention, making results mildly conservative.
-2. **Expansion-rate uplift:** Excluded from the current scope.
-3. **Horizon truncation:** The standard 36-month horizon truncates terminal value, leading to conservative NPV calculations.
-4. **IRR non-uniqueness:** For non-conventional cash flows (e.g. multiple sign changes), IRR may have non-unique solutions. The engine uses a Newton-Raphson method with Bisection fallback to resolve one root.
+1. **Expansion-rate uplift:** Excluded from the current scope.
+2. **Horizon truncation:** The standard 36-month horizon truncates terminal value, leading to conservative NPV calculations.
+3. **IRR non-uniqueness:** For non-conventional cash flows (e.g. multiple sign changes), IRR may have non-unique solutions. The engine uses a Newton-Raphson method with Bisection fallback to resolve one root.
 
 ## Architecture
 

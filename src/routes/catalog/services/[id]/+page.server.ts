@@ -1,15 +1,19 @@
 import type { PageServerLoad, Actions } from './$types';
 import { providersRepository } from '$lib/server/repositories/providers';
 import { servicesRepository } from '$lib/server/repositories/services';
+import { monetizationRepository } from '$lib/server/repositories/monetization';
+import { saveMonetizationFromForm } from '$lib/server/services/monetization-form';
 import { fail, redirect } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async ({ params }) => {
   const providers = providersRepository.getAll();
   const service = servicesRepository.getById(params.id);
-  
+
   if (!service) {
     throw redirect(303, '/catalog/services');
   }
+
+  service.monetization = monetizationRepository.getForEntity('service', params.id) ?? undefined;
 
   return {
     providers,
@@ -47,6 +51,7 @@ export const actions: Actions = {
         fixed_cost_per_month: fixedCost,
         fixed_cost_currency: fixedCostCurrency
       });
+      saveMonetizationFromForm('service', params.id, formData);
     } catch (err: any) {
       return fail(500, { error: err.message });
     }
