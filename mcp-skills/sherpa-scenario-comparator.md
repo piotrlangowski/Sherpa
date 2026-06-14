@@ -1,27 +1,34 @@
 ---
 name: sherpa-scenario-comparator
-description: Provides context for comparing SaaS ROI scenarios and evaluating opportunity costs.
+description: Provides context for comparing SaaS ROI scenarios, evaluating opportunity costs, and managing the local dashboard web interface.
+surface: prompt
 ---
 
-## Core Concepts
+# Sherpa Scenario Comparator
 
-**Opportunity Cost in Sherpa**: When evaluating multiple product strategies, choosing a sub-optimal scenario instead of the one with the highest NPV results in an opportunity cost.
-- **Delta NPV (ΔNPV)**: The difference in Net Present Value between the highest-NPV scenario and a given alternative.
-- **Tradeoff Analysis**: Balances higher ARPU (revenue) against higher Capex/Opex or LLM token usage (costs).
+Analyze trade-offs, compare multiple scenario cash flows, evaluate opportunity costs, and manage the local web dashboard.
 
-## Workflow Patterns
-
-### 1. High-level Dashboard Review
-- The general dashboard summary (names, discount rates, projection horizons, and cached results) is available via the resource URI: `sherpa://dashboard/summary`
-
-### 2. Multi-scenario Comparison
-- Use `scenario_action` with `action: "compare"` to perform side-by-side financial comparisons and calculate opportunity costs.
+## 1. Comparing Scenarios & Opportunity Cost
+When comparing multiple product launch strategies side-by-side, choosing a sub-optimal scenario instead of the one with the highest NPV represents a direct opportunity cost:
+- **Delta NPV (ΔNPV)**: The difference in Net Present Value between the highest-performing scenario and each alternative.
+- **Trade-off Analysis**: Balances the variable LLM token pricing against the revenue gains from higher ARPU or lower churn.
+- **Comparison Tool**: Use `scenario_action` with `action: "compare"`:
   - Arguments: `{ action: "compare", ids: ["uuid-1", "uuid-2", ...] }`
-  - Output: Markdown comparison table detailing Net Present Value differences.
+  - Output: Side-by-side comparison table showing NPV, IRR, Payback, TCO, and opportunity cost.
 
-## Strategic Comparison Guidelines
-SaaS scenario evaluations generally consider:
-- The optimal candidate, which is the scenario that maximizes NPV.
-- Hurdle rate compatibility, ensuring the annualized IRR exceeds the WACC or discount rate.
-- Cash flow and liquidity risk, comparing payback periods (e.g., short vs. long break-even).
-- Infrastructure cost volatility, noting sensitivities to high-cost LLM providers under high adoption rates.
+---
+
+## 2. Reading Data Resources
+Read-only resource URIs provide direct access to the financial projections:
+1. **`sherpa://dashboard/summary`**: Returns a high-level summary of all scenarios, their configurations, and cached KPIs.
+2. **`sherpa://scenarios/{id}/results`**: Returns monthly customer counts, MRR, cash flows, and token costs for a specific scenario.
+
+---
+
+## 3. Controlling the Web Dashboard (`dashboard_action`)
+The web dashboard displays interactive charts, monthly cash flow tables, and comparative visualizations.
+- **Launch/Open Dashboard**: Launches the SvelteKit local server (default: `http://localhost:5173`) and opens a web browser tab:
+  - `{ action: "open", path?: "/scenarios/uuid" }`
+  - Providing `path` deep-links the browser directly to the specified page (e.g. specific scenario details).
+- **Stop/Close Dashboard**: Stops the local dashboard server process:
+  - `{ action: "close" }`

@@ -1,40 +1,67 @@
 ---
 name: sherpa-scenario-manager
-description: Provides context for creating and configuring SaaS ROI scenarios from text or structured metrics.
+description: Provides context for creating, configuring, and updating SaaS ROI scenarios, including scopes, override cascades, and revenue source models.
+surface: prompt
 ---
 
-## Core Concepts
+# Sherpa Scenario Manager
 
-**SaaS Cohort Model**: Sherpa uses a cohort-based model to project revenue and calculate LLM/Infrastructure costs over time. A cohort is defined by:
-- **Starting/Current Users** (`current_users`): Initial user base.
-- **Monthly Acquisition** (`monthly_acquisition`): New users added each month.
-- **Acquisition Growth Rate** (`acquisition_growth_rate`): Growth of the acquisition channel.
-- **Monthly Churn Rate** (`monthly_churn_rate`): Customer churn.
-- **Retention Floor** (`retention_floor`): Minimum percentage of users retained in the long term.
-- **AI Adoption Rate** (`ai_adoption_rate`): The fraction of users within the cohort who adopt and trigger the active AI features.
-- **Base ARPU** (`base_arpu`): Average Revenue Per User.
+Configure and manage ROI scenarios by tying together customer cohorts, fixed costs, pricing plans, and AI services.
 
-## Workflow Patterns
+## 1. Scopes and Override Cascade
+Every scenario target has a `scope_type` that determines which cohorts are included in the simulation:
+- **`all_clients`**: Projects metrics over all cohorts in the system, applying global defaults.
+- **`verticals`**: Projects metrics over cohorts belonging to specific vertical markets.
+- **`cohorts`**: Projects metrics over a single specified cohort.
 
-### 1. Natural Language Scenario Generation
-- Use `scenario_action` with `action: "generate"` to parse natural language text and automatically create the scenario, cohort configuration, and link catalog services.
-  - Arguments: `{ action: "generate", description: "A plain text description" }`
-  - Example: "Utwórz scenariusz 'Chatbot Pro' z 5000 początkowych użytkowników, churnem 4% i ARPU 150$. Wprowadzamy usługę summarization w 3 miesiącu."
+### The Override Cascade (Crucial Logic)
+When projecting cash flows, Sherpa resolves parameter values (e.g. churn, ARPU, acquisition, adoption, uplifts) at run-time by starting with the cohort's own defined values and layering scenario-specific overrides from the `scenario_scope_overrides` table in increasing order of specificity:
+1. **Cohort Base**: The cohort's own catalog definition.
+2. **Global Scenario Override** (`all_clients` target type): Overrides the cohort base for all cohorts in the scenario.
+3. **Vertical Scenario Override** (`vertical` target type): Overrides both the cohort base and global scenario overrides for cohorts belonging to the specified vertical.
+4. **Cohort Scenario Override** (`cohort` target type): Overrides all other layers for the specific cohort (most specific, wins).
 
-### 2. Structured Scenario Lifecycle
-- Use `scenario_action` with `action: "create" | "get" | "update" | "delete" | "list"` to manage scenario records.
-  - Key Fields for `action: "create"`:
-    - `name`: Scenario name.
-    - `projection_months` (optional): Duration of analysis (typically 36 or 60).
-    - `discount_rate` (optional): Annual discount rate (default is 10%/0.10).
-    - `cohort_config`: Object defining user acquisition, churn, ARPU, and adoption.
-    - `services` (optional): Array of `{ id: string, rollout_month?: number }` to attach.
-    - `packs` (optional): Array of `{ id: string, rollout_month?: number }` to attach.
-    - `plans` (optional): Array of `{ id: string, rollout_month?: number }` to attach.
-    - `cost_ids` (optional): Array of Capex/Opex fixed cost item IDs to attach.
-  - Deletions (`action: "delete"`) require `confirm: true`.
+Note: Global defaults (`client_base` table) and vertical market defaults only serve to seed initial values when creating new cohorts or scenarios in the catalog; they are not part of the active runtime cascade.
 
-## Configuration Details
-- **Rollout Month**: Represents when a service starts. A rollout month of `0` starts immediately, while `6` defers costs until month 6.
-- **AI Adoption Rate**: Expressed as a decimal (e.g., 0.3 for 30%) to control what percentage of users incur model token costs.
-- **Discount Rate (WACC)**: Normally ranges between 0.08 and 0.15 to discount future cash flows.
+---
+
+## 2. Revenue Sources
+The `revenue_source` parameter determines which revenue streams are accumulated in the cashflow projections:
+- **`cohort`**: Only standard subscription revenue from pricing plans.
+- **`monetization`**: Only monetization revenue (addons, prepaid credits, pay-as-you-go credit overcharges) defined for services, packs, and plans.
+- **`both`**: Sum of plan subscriptions and monetization overcharges.
+
+---
+
+## 3. Scenario Lifecycle Tooling (`scenario_action`)
+
+### 1. Natural Language Generation (`action: "generate"`)
+- **Arguments**: `{ action: "generate", description: "text description" }`
+- **Behavior**: Uses LLM heuristics to parse text description and automatically creates the scenario, configuration, and attaches services.
+
+### 2. Structured Creation (`action: "create"`)
+- **Key constraint**: Setting `scope_type` during `create` is ignored; it is **always forced to `'cohorts'`**. To use `verticals` or `all_clients`, you must first run `create` and then perform an `update` to change `scope_type`.
+- **Arguments**:
+  - `name` (string, required)
+  - `description` (string)
+  - `projection_months` (number, default: 36, max 120)
+  - `discount_rate` (number, annual discount rate, default: 0.10)
+  - `revenue_source` (enum: `"cohort"`, `"monetization"`, `"both"`, default: `"cohort"`)
+  - `cohort_config` (object, required during create):
+    - `name`, `current_users`, `monthly_acquisition` (required)
+    - `acquisition_growth_rate`, `monthly_churn_rate`, `retention_floor`, `monthly_expansion_rate`, `ai_adoption_rate`, `base_arpu`, `arpu_uplift`, `arpu_uplift_percent`, `churn_reduction`, `acquisition_uplift`
+    - `vertical_id`
+  - `services` (array of objects: `[{ id: string, rollout_month?: number }]`)
+  - `packs` (array of objects: `[{ id: string, rollout_month?: number }]`)
+  - `plans` (array of objects: `[{ id: string, rollout_month?: number }]`)
+  - `cost_ids` (array of strings, Capex/Opex cost UUIDs)
+
+### 3. Scenario Update (`action: "update"`)
+- Use this to change `scope_type` to `'verticals'` or `'all_clients'`, link different plans, or modify scenario metrics.
+- **Arguments**:
+  - `id` (string, required)
+  - `name`, `description`, `projection_months`, `discount_rate`, `scope_type`, `revenue_source`
+  - `services` (array of `[{ id, rollout_month }]`)
+  - `packs` (array of `[{ id, rollout_month }]`)
+  - `plans` (array of `[{ id, rollout_month }]`)
+  - `cost_ids` (array of cost UUIDs)

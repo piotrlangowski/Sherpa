@@ -34,6 +34,7 @@ import type {
   MonetizationConfig,
   RevenueSource
 } from "./shared/types.js";
+import { SERVER_INSTRUCTIONS, GUIDANCE_PROMPTS } from "./generated/guidance.js";
 
 const manifestPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../manifest.json');
 let version = "1.1.0";
@@ -49,7 +50,8 @@ const server = new McpServer({
 }, {
   capabilities: {
     prompts: {}
-  }
+  },
+  instructions: SERVER_INSTRUCTIONS
 });
 
 interface CurrencyContext {
@@ -504,7 +506,7 @@ server.tool(
 
 server.tool(
   "client_base_action",
-  "Retrieve or modify the global customer base parameters (total users, ARPU, acquisition, churn, and AI adoption rates). These global settings serve as defaults when creating new cohorts or scenarios. Always specify the 'action' parameter ('get' or 'update'). Do not use this tool unless you need to view or modify default client base properties.",
+  "Retrieve or modify the global customer base parameters (total users, ARPU, acquisition, churn, expansion, and AI adoption rates, plus default uplifts: ARPU uplift, churn reduction, acquisition uplift). These global settings serve as defaults when creating new cohorts or scenarios. Always specify the 'action' parameter ('get' or 'update'). Do not use this tool unless you need to view or modify default client base properties.",
   {
     action: z.enum(["get", "update"]).describe("The action to perform: 'get' to retrieve the current client base default parameters, 'update' to modify them."),
     total_users: z.number().int().nonnegative().optional().describe("Initial total customer count in the default user base."),
@@ -586,7 +588,7 @@ server.tool(
 // 1.5 Providers CRUD
 server.tool(
   "provider_action",
-  "List, create, update, or delete AI model providers (e.g. OpenAI, Anthropic, Google) and their pricing per million tokens. Always specify the 'action' parameter. To prevent accidental data loss, deletions require setting 'confirm' to true. Note that predefined providers cannot be deleted.",
+  "List, create, update, or delete AI model providers (e.g. OpenAI, Anthropic, Google), their pricing per million tokens, and token-to-credit conversion (credit rates). Always specify the 'action' parameter. To prevent accidental data loss, deletions require setting 'confirm' to true. Note that predefined providers cannot be deleted.",
   {
     action: z.enum(["list", "create", "update", "delete"]).describe("The action to perform: 'list' to view providers, 'create' to add a new provider, 'update' to edit details, 'delete' to remove a provider."),
     id: z.string().optional().describe("Unique UUID of the provider. Required for 'update' and 'delete' actions."),
@@ -1423,7 +1425,7 @@ server.tool(
 
 server.tool(
   "scenario_action",
-  "List, create, retrieve, update, or delete SaaS ROI scenarios, or execute scenario projections (calculating NPV/IRR, performing sensitivity analysis, comparing scenarios, and parsing natural language descriptions). Scenarios map pricing plans, services, and Capex/Opex costs to user growth cohorts. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true.",
+  "List, create, retrieve, update, or delete SaaS ROI scenarios, or execute scenario projections (calculating NPV/IRR, performing sensitivity analysis, comparing scenarios, and parsing natural language descriptions). Scenarios target a scope_type ('all_clients', 'verticals', 'cohorts') resolving parameters via a global->vertical->cohort override cascade. The revenue_source ('cohort', 'monetization', 'both') dictates what revenue is counted. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true.",
   {
     action: z.enum(["list", "get", "create", "update", "delete", "calculate", "compare", "sensitivity", "generate"]).describe("The action to perform: 'list' to view scenarios, 'get' to inspect a scenario, 'create' to add a scenario, 'update' to edit details, 'delete' to remove a scenario, 'calculate' to compute ROI, 'compare' to analyze multiple scenarios, 'sensitivity' for tornado charts, or 'generate' to parse natural language descriptions."),
     id: z.string().optional().describe("Unique UUID of the scenario. Required for 'get', 'update', 'delete', 'calculate', and 'sensitivity' actions."),
@@ -2017,203 +2019,29 @@ server.resource(
     }
   }
 );
-
 // ============================================================
 // PROMPTS DEFINITION
 // ============================================================
 
-server.prompt(
-  "sherpa-catalog-manager",
-  "Assists with managing the AI service catalog, feature packs, pricing plans, and LLM model parameters.",
-  async () => {
-    return {
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `## Core Concepts
-
-**Sherpa Catalog Structure**:
-1. **AI Services**: Individual AI features (e.g. Chatbot, Translator, Semantic Search). Each service defines:
-    - Input tokens (\`avg_input_tokens\`) and Output tokens (\`avg_output_tokens\`) per request.
-    - Expected monthly requests per user (\`avg_requests_per_user_month\`).
-    - Fixed monthly costs (\`fixed_cost_per_month\`).
-    - A Provider (\`provider_id\`) which determines the pricing tier for LLM tokens.
-2. **Feature Packs**: Bundles of AI services (e.g., "AI Basics Pack" containing Chatbot and Translation, "AI Advanced Pack" containing Semantic Search).
-3. **Pricing Plans**: SaaS subscription plans (e.g. Starter, Growth, Enterprise). A plan has a monthly subscription base price (\`base_price\`) and maps to one or more Feature Packs or individual AI Services.
-4. **Global Settings**: Global parameters like \`company_name\`, \`currency\`, \`default_discount_rate\`, and default \`projection_horizon_months\`.
-
-## Workflow Patterns
-
-All actions are grouped into consolidated entity tools. Always provide the \`action\` parameter.
-
-### 1. Catalog Management (Services)
-- Use \`service_action\` to list, create, update, or delete services.
-  - Arguments: \`{ action: "list" | "create" | "update" | "delete", id?, name?, description?, status?, provider_id?, avg_input_tokens?, avg_output_tokens?, avg_requests_per_user_month?, fixed_cost_per_month?, fixed_cost_currency?, confirm? }\`
-  - Deletions require \`confirm: true\`.
-
-### 2. Feature Packaging (Packs)
-- Use \`pack_action\` to manage feature packs.
-  - Arguments: \`{ action: "list" | "create" | "update" | "delete", id?, name?, description?, service_ids?, confirm? }\`
-  - Deletions require \`confirm: true\`.
-
-### 3. Subscription & Pricing Setup (Plans)
-- Use \`plan_action\` to manage pricing plans.
-  - Arguments: \`{ action: "list" | "create" | "update" | "delete", id?, name?, description?, base_price?, service_ids?, pack_ids?, confirm? }\`
-  - Deletions require \`confirm: true\`.
-
-### 4. Providers & Verticals
-- Use \`provider_action\` to manage AI token pricing providers.
-  - Arguments: \`{ action: "list" | "create" | "update" | "delete", id?, name?, model_name?, input_price?, output_price?, currency?, confirm? }\`
-- Use \`vertical_action\` to manage vertical markets.
-  - Arguments: \`{ action: "list" | "create" | "update" | "delete", id?, name?, description?, tam_users?, sam_users?, som_users?, confirm? }\`
-
-### 5. Settings & Client Base Defaults
-- Use \`settings_action\` to view/edit settings.
-  - Arguments: \`{ action: "get" | "update", company_name?, currency?, default_discount_rate?, projection_horizon_months?, exchange_rates?, exchange_rates_as_of? }\`
-- Use \`client_base_action\` to view/edit default client base metrics.
-  - Arguments: \`{ action: "get" | "update", total_users?, default_arpu?, default_monthly_churn_rate?, default_monthly_acquisition?, default_acquisition_growth_rate?, default_ai_adoption_rate?, default_retention_floor?, default_expansion_rate? }\``
+for (const p of GUIDANCE_PROMPTS) {
+  server.prompt(
+    p.name,
+    p.description,
+    async () => {
+      return {
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: p.body
+            }
           }
-        }
-      ]
-    };
-  }
-);
-
-server.prompt(
-  "sherpa-financial-analyst",
-  "Provides context and tools for calculating and analyzing ROI, NPV, IRR, TCO, and sensitivity for scenarios.",
-  async () => {
-    return {
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `## Core Concepts
-
-**Financial Engine Metrics**:
-- **NPV (Net Present Value)**: The total present value of discounted net cash flows.
-- **IRR (Internal Rate of Return)**: The annualized return rate of the project.
-- **Payback Period**: The number of months it takes for cumulative net cash flow to turn positive.
-- **TCO (Total Cost of Ownership)**: Includes Capex/Opex infrastructure, development costs, and LLM model usage (input and output token fees).
-- **ROI%**: Percentage return on investment, estimated as \`(Total Revenue - TCO) / TCO\`.
-
-## Workflow Patterns
-
-### 1. Calculation & Result Retrieval
-- Use \`scenario_action\` with \`action: "calculate"\` to run cashflow projections and update cache.
-  - Arguments: \`{ action: "calculate", id: "scenario-uuid" }\`
-- Scenario results (monthly cashflows, customer growth, MRR) are available via the resource URI: \`sherpa://scenarios/{id}/results\`
-
-### 2. Sensitivity Analysis
-- Use \`scenario_action\` with \`action: "sensitivity"\` to perform tornado-chart sensitivity analysis.
-  - Arguments: \`{ action: "sensitivity", id: "scenario-uuid", variation_percent?: number }\`
-- High impact ranges highlight variables (e.g., churn, ARPU, adoption, or token costs) representing high leverage or risk.
-
-## Standard Report Components
-Financial reports typically include:
-- A summary table displaying key metrics (NPV, IRR, Payback, TCO, ROI%).
-- A timeline narrative indicating the break-even month (Payback Period).
-- Risk mitigation analysis identifying critical parameter sensitivities.`
-          }
-        }
-      ]
-    };
-  }
-);
-
-server.prompt(
-  "sherpa-scenario-comparator",
-  "Provides context for comparing SaaS ROI scenarios and evaluating opportunity costs.",
-  async () => {
-    return {
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `## Core Concepts
-
-**Opportunity Cost in Sherpa**: When evaluating multiple product strategies, choosing a sub-optimal scenario instead of the one with the highest NPV results in an opportunity cost.
-- **Delta NPV (ΔNPV)**: The difference in Net Present Value between the highest-NPV scenario and a given alternative.
-- **Tradeoff Analysis**: Balances higher ARPU (revenue) against higher Capex/Opex or LLM token usage (costs).
-
-## Workflow Patterns
-
-### 1. High-level Dashboard Review
-- The general dashboard summary (names, discount rates, projection horizons, and cached results) is available via the resource URI: \`sherpa://dashboard/summary\`
-
-### 2. Multi-scenario Comparison
-- Use \`scenario_action\` with \`action: "compare"\` to perform side-by-side financial comparisons and calculate opportunity costs.
-  - Arguments: \`{ action: "compare", ids: ["uuid-1", "uuid-2", ...] }\`
-  - Output: Markdown comparison table detailing Net Present Value differences.
-
-## Strategic Comparison Guidelines
-SaaS scenario evaluations generally consider:
-- The optimal candidate, which is the scenario that maximizes NPV.
-- Hurdle rate compatibility, ensuring the annualized IRR exceeds the WACC or discount rate.
-- Cash flow and liquidity risk, comparing payback periods (e.g., short vs. long break-even).
-- Infrastructure cost volatility, noting sensitivities to high-cost LLM providers under high adoption rates.`
-          }
-        }
-      ]
-    };
-  }
-);
-
-server.prompt(
-  "sherpa-scenario-manager",
-  "Provides context for creating and configuring SaaS ROI scenarios from text or structured metrics.",
-  async () => {
-    return {
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `## Core Concepts
-
-**SaaS Cohort Model**: Sherpa uses a cohort-based model to project revenue and calculate LLM/Infrastructure costs over time. A cohort is defined by:
-- **Starting/Current Users** (\`current_users\`): Initial user base.
-- **Monthly Acquisition** (\`monthly_acquisition\`): New users added each month.
-- **Acquisition Growth Rate** (\`acquisition_growth_rate\`): Growth of the acquisition channel.
-- **Monthly Churn Rate** (\`monthly_churn_rate\`): Customer churn.
-- **Retention Floor** (\`retention_floor\`): Minimum percentage of users retained in the long term.
-- **AI Adoption Rate** (\`ai_adoption_rate\`): The fraction of users within the cohort who adopt and trigger the active AI features.
-- **Base ARPU** (\`base_arpu\`): Average Revenue Per User.
-
-## Workflow Patterns
-
-### 1. Natural Language Scenario Generation
-- Use \`scenario_action\` with \`action: "generate"\` to parse natural language text and automatically create the scenario, cohort configuration, and link catalog services.
-  - Arguments: \`{ action: "generate", description: "A plain text description" }\`
-  - Example: "Utwórz scenariusz 'Chatbot Pro' z 5000 początkowych użytkowników, churnem 4% i ARPU 150$. Wprowadzamy usługę summarization w 3 miesiącu."
-
-### 2. Structured Scenario Lifecycle
-- Use \`scenario_action\` with \`action: "create" | "get" | "update" | "delete" | "list"\` to manage scenario records.
-  - Key Fields for \`action: "create"\`:
-    - \`name\`: Scenario name.
-    - \`projection_months\` (optional): Duration of analysis (typically 36 or 60).
-    - \`discount_rate\` (optional): Annual discount rate (default is 10%/0.10).
-    - \`cohort_config\`: Object defining user acquisition, churn, ARPU, and adoption.
-    - \`services\` (optional): Array of \`{ id: string, rollout_month?: number }\` to attach.
-    - \`packs\` (optional): Array of \`{ id: string, rollout_month?: number }\` to attach.
-    - \`plans\` (optional): Array of \`{ id: string, rollout_month?: number }\` to attach.
-    - \`cost_ids\` (optional): Array of Capex/Opex fixed cost item IDs to attach.
-  - Deletions (\`action: "delete"\`) require \`confirm: true\`.
-
-## Configuration Details
-- **Rollout Month**: Represents when a service starts. A rollout month of \`0\` starts immediately, while \`6\` defers costs until month 6.
-- **AI Adoption Rate**: Expressed as a decimal (e.g., 0.3 for 30%) to control what percentage of users incur model token costs.
-- **Discount Rate (WACC)**: Normally ranges between 0.08 and 0.15 to discount future cash flows.\``
-          }
-        }
-      ]
-    };
-  }
-);
+        ]
+      };
+    }
+  );
+}
 
 server.tool(
   "dashboard_action",
@@ -2257,7 +2085,7 @@ server.tool(
 // 11. Monetization config and override management tool
 server.tool(
   "monetization_action",
-  "Manage AI monetization configurations and overrides for services, packs, and plans. Support actions: 'get' (retrieve config for an entity), 'set' (upsert configuration or override), 'delete' (remove configuration or override), 'list_catalog' (list all catalog configurations), 'list_overrides' (list all scenario overrides).",
+  "Manage AI monetization configurations and overrides for services, packs, and plans. Supports model types ('none', 'addon', 'usage', 'hybrid') and credit/overcharge configurations. Catalog configuration applies globally (where scenario_id is null/omitted) and scenario overrides apply to specific scenario_id. Support actions: 'get' (retrieve config for an entity), 'set' (upsert configuration or override), 'delete' (remove configuration or override), 'list_catalog' (list all catalog configurations), 'list_overrides' (list all scenario overrides).",
   {
     action: z.enum(["get", "set", "delete", "list_catalog", "list_overrides"]).describe("Action to perform."),
     entity_type: z.enum(["service", "pack", "plan"]).optional().describe("Type of the entity ('service', 'pack', or 'plan'). Required for 'get', 'set', and 'delete'."),
