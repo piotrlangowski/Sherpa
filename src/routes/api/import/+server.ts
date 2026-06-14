@@ -12,6 +12,9 @@ import { plansRepository } from '$lib/server/repositories/plans';
 import { costsRepository } from '$lib/server/repositories/costs';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
+import { monetizationRepository } from '$lib/server/repositories/monetization';
+import { MonetizationConfigSchema } from '$lib/types/schemas';
+import type { MonetizationConfig } from '$lib/types';
 
 // Zod schemas for snapshot validation
 const ProviderSchema = z.object({
@@ -19,7 +22,9 @@ const ProviderSchema = z.object({
   model_name: z.string(),
   input_price: z.number(),
   output_price: z.number(),
-  is_predefined: z.boolean().optional()
+  is_predefined: z.boolean().optional(),
+  input_tokens_per_credit: z.number().optional(),
+  output_tokens_per_credit: z.number().optional()
 });
 
 const ServiceDependencySchema = z.object({
@@ -38,14 +43,16 @@ const ServiceSchema = z.object({
   fixed_cost_per_month: z.number().nullable().optional(),
   rollout_month: z.number().optional(),
   provider: ProviderSchema.nullable().optional(),
-  dependencies: z.array(ServiceDependencySchema).optional()
+  dependencies: z.array(ServiceDependencySchema).optional(),
+  monetization: MonetizationConfigSchema.optional()
 });
 
 const PackSchema = z.object({
   name: z.string(),
   description: z.string().nullable().optional(),
   rollout_month: z.number().optional(),
-  services: z.array(z.union([z.string(), z.object({ id: z.string(), name: z.string() })])).optional()
+  services: z.array(z.union([z.string(), z.object({ id: z.string(), name: z.string() })])).optional(),
+  monetization: MonetizationConfigSchema.optional()
 });
 
 const PlanSchema = z.object({
@@ -54,7 +61,8 @@ const PlanSchema = z.object({
   base_price: z.number(),
   rollout_month: z.number().optional(),
   services: z.array(z.union([z.string(), z.object({ id: z.string(), name: z.string() })])).optional(),
-  packs: z.array(z.union([z.string(), z.object({ id: z.string(), name: z.string() })])).optional()
+  packs: z.array(z.union([z.string(), z.object({ id: z.string(), name: z.string() })])).optional(),
+  monetization: MonetizationConfigSchema.optional()
 });
 
 const CostItemSchema = z.object({
@@ -119,7 +127,12 @@ const ScenarioSchema = z.object({
   services: z.array(ServiceSchema).optional(),
   packs: z.array(PackSchema).optional(),
   plans: z.array(PlanSchema).optional(),
-  costs: z.array(CostItemSchema).optional()
+  costs: z.array(CostItemSchema).optional(),
+  monetization_overrides: z.array(z.object({
+    entity_type: z.enum(['service', 'pack', 'plan']),
+    entity_name: z.string(),
+    config: MonetizationConfigSchema
+  })).optional()
 });
 
 const SnapshotSchema = z.object({
@@ -161,7 +174,9 @@ export const POST: RequestHandler = async ({ request }) => {
                   input_price: s.provider.input_price,
                   output_price: s.provider.output_price,
                   is_predefined: s.provider.is_predefined ?? false,
-                  currency: 'USD'
+                  currency: 'USD',
+                  input_tokens_per_credit: s.provider.input_tokens_per_credit ?? 1000000,
+                  output_tokens_per_credit: s.provider.output_tokens_per_credit ?? 333333
                 });
                 providerIdMap.set(key, created.id);
               }
@@ -281,6 +296,7 @@ export const POST: RequestHandler = async ({ request }) => {
               fixed_cost_per_month: s.fixed_cost_per_month ?? null
             });
             sId = createdS.id;
+            if (s.monetization) monetizationRepository.upsert('service', sId, s.monetization as MonetizationConfig);
           }
 
           serviceIdMap.set(s.name, sId);
@@ -353,6 +369,7 @@ export const POST: RequestHandler = async ({ request }) => {
               service_ids: serviceIds
             });
             pId = createdP.id;
+            if (p.monetization) monetizationRepository.upsert('pack', pId, p.monetization as MonetizationConfig);
           }
 
           packIdMap.set(p.name, pId);
@@ -361,6 +378,7 @@ export const POST: RequestHandler = async ({ request }) => {
       }
 
       // 6. Import Plans
+      const planIdMap = new Map<string, string>(); // plan name -> database ID
       const planRollouts: { id: string; rollout_month: number }[] = [];
       if (scenario.plans) {
         for (const pl of scenario.plans) {
@@ -399,8 +417,10 @@ export const POST: RequestHandler = async ({ request }) => {
               pack_ids: packIds
             });
             plId = createdPl.id;
+            if (pl.monetization) monetizationRepository.upsert('plan', plId, pl.monetization as MonetizationConfig);
           }
 
+          planIdMap.set(pl.name, plId);
           planRollouts.push({ id: plId, rollout_month: pl.rollout_month ?? 0 });
         }
       }
@@ -490,6 +510,19 @@ export const POST: RequestHandler = async ({ request }) => {
       });
 
       newScenarioId = createdScenario.id;
+
+      // Recreate scenario-level monetization overrides (entity name → newly created id).
+      if (scenario.monetization_overrides) {
+        for (const ov of scenario.monetization_overrides) {
+          const mappedId =
+            ov.entity_type === 'service' ? serviceIdMap.get(ov.entity_name) :
+            ov.entity_type === 'pack' ? packIdMap.get(ov.entity_name) :
+            planIdMap.get(ov.entity_name);
+          if (mappedId) {
+            monetizationRepository.upsert(ov.entity_type, mappedId, ov.config as MonetizationConfig, newScenarioId);
+          }
+        }
+      }
 
       // 9. Run ROI calculation
       runAndSaveScenario(newScenarioId);

@@ -8,6 +8,7 @@
 
 import type {
   Provider,
+  Service,
   Scenario,
   CohortConfig,
   ScopeOverride,
@@ -16,8 +17,24 @@ import type {
   CohortTimelineResult,
   CohortModelResult,
   SensitivityParamResult,
-  SensitivityAnalysisResult
+  SensitivityAnalysisResult,
+  MonetizationConfig,
+  CreditSettings,
+  MonetizationRevenueResult
 } from './types.js';
+
+/**
+ * Sensible global credit defaults. The DB-aware wrappers pass real settings in;
+ * these keep the pure functions usable standalone (tests, MCP) and backwards-compatible.
+ */
+export const DEFAULT_CREDIT_SETTINGS: CreditSettings = {
+  defaultPricePerCredit: 0.02,
+  defaultOverchargeMarkup: 1.5,
+  defaultOverchargeUserPct: 0.2,
+  defaultAvgOverchargePct: 0.5,
+  defaultInputTokensPerCredit: 1000000,
+  defaultOutputTokensPerCredit: 333333
+};
 
 // ============================================================
 // Scope Override Cascade
@@ -61,22 +78,34 @@ export function applyScopeOverrides(cohorts: CohortConfig[], overrides: ScopeOve
 }
 
 /**
- * Pure helper returning the effective with-AI cohort configuration.
- * Formulates the counterfactual baseline uplifts.
+ * Splits a cohort configuration into two sub-cohort configurations: AI Adopters and Non-Adopters.
  */
-export function applyAiUplifts(config: CohortConfig): CohortConfig {
-  const aiAdoptionRate = config.ai_adoption_rate || 0;
+export function splitCohortForAi(config: CohortConfig): { adopter: CohortConfig; nonAdopter: CohortConfig } {
+  const a = config.ai_adoption_rate || 0;
   const churnReduction = config.churn_reduction || 0;
   const acquisitionUplift = config.acquisition_uplift || 0;
   const arpuUpliftPercent = config.arpu_uplift_percent || 0;
   const arpuUplift = config.arpu_uplift || 0;
 
-  return {
+  const adopter: CohortConfig = {
     ...config,
-    monthly_churn_rate: config.monthly_churn_rate * (1 - churnReduction * aiAdoptionRate),
-    monthly_acquisition: config.monthly_acquisition * (1 + acquisitionUplift),
-    base_arpu: config.base_arpu * (1 + arpuUpliftPercent * aiAdoptionRate) + arpuUplift * aiAdoptionRate
+    current_users: config.current_users * a,
+    monthly_acquisition: config.monthly_acquisition * (1 + acquisitionUplift) * a,
+    monthly_churn_rate: config.monthly_churn_rate * (1 - churnReduction),
+    base_arpu: config.base_arpu * (1 + arpuUpliftPercent) + arpuUplift,
+    ai_adoption_rate: 1.0
   };
+
+  const nonAdopter: CohortConfig = {
+    ...config,
+    current_users: config.current_users * (1 - a),
+    monthly_acquisition: config.monthly_acquisition * (1 + acquisitionUplift) * (1 - a),
+    monthly_churn_rate: config.monthly_churn_rate,
+    base_arpu: config.base_arpu,
+    ai_adoption_rate: 0.0
+  };
+
+  return { adopter, nonAdopter };
 }
 
 // ============================================================
@@ -323,6 +352,148 @@ export function calculateTCO(timeline: MonthlyBreakdown[]): number {
 }
 
 // ============================================================
+// AI Monetization Revenue
+// ============================================================
+
+/**
+ * Credits consumed per AI user per month for a service, derived from its token
+ * usage and the provider's token→credit ratios.
+ *
+ *   creditsPerRequest = avg_input_tokens / input_tokens_per_credit
+ *                     + avg_output_tokens / output_tokens_per_credit
+ *   creditsPerUserMonth = creditsPerRequest * avg_requests_per_user_month
+ */
+export function calculateCreditsPerUserMonth(
+  service: Service,
+  provider: Provider | undefined,
+  creditSettings: CreditSettings = DEFAULT_CREDIT_SETTINGS
+): number {
+  if (!provider) return 0;
+  // Use provider-specific ratios when available, otherwise fall back to global defaults.
+  const inputTpc = provider.input_tokens_per_credit || creditSettings.defaultInputTokensPerCredit || 1;
+  const outputTpc = provider.output_tokens_per_credit || creditSettings.defaultOutputTokensPerCredit || 1;
+  const requests = service.avg_requests_per_user_month || 0;
+  const creditsPerRequest =
+    (service.avg_input_tokens || 0) / inputTpc +
+    (service.avg_output_tokens || 0) / outputTpc;
+  return creditsPerRequest * requests;
+}
+
+/**
+ * Revenue from users exceeding their included pool / usage limit.
+ * Shared by add-on (with limit) and hybrid models.
+ *
+ *   overchargingUsers      = aiUsers * overcharge_user_pct
+ *   extraCreditsPerUser    = normalCreditsPerUser * avg_overcharge_pct
+ *   revenue                = overchargingUsers * extraCreditsPerUser * pricePerCredit * markup
+ */
+function calculateOverchargeRevenue(
+  service: Service,
+  config: MonetizationConfig,
+  aiUsers: number,
+  pricePerCredit: number,
+  creditSettings: CreditSettings,
+  provider: Provider | undefined
+): number {
+  const normalCredits = calculateCreditsPerUserMonth(service, provider, creditSettings);
+  if (normalCredits <= 0) return 0;
+
+  // Determine the pool/limit from the config (hybrid: included_credits, addon: usage_limit).
+  // If a user's normal consumption doesn't exceed the pool, there's no overage.
+  const pool = config.monetization_type === 'hybrid'
+    ? (config.hybrid_included_credits ?? 0)
+    : (config.addon_usage_limit ?? 0);
+
+  // When pool is set to 0 (or unset), fall back to the percentage-based model.
+  // Otherwise, overage only occurs for the fraction of users whose consumption exceeds the pool.
+  const userPct = config.overcharge_user_pct ?? creditSettings.defaultOverchargeUserPct;
+  const avgPct = config.avg_overcharge_pct ?? creditSettings.defaultAvgOverchargePct;
+  const markup = config.overcharge_markup ?? creditSettings.defaultOverchargeMarkup;
+  const overchargingUsers = aiUsers * userPct;
+
+  let extraCreditsPerUser: number;
+  if (pool > 0) {
+    // Pool-aware: overage = (normal × (1 + avgPct)) − pool, floored at 0.
+    // An overcharging user consumes normalCredits × (1 + avgPct) on average.
+    const overuserConsumption = normalCredits * (1 + avgPct);
+    extraCreditsPerUser = Math.max(0, overuserConsumption - pool);
+  } else {
+    // Poolless (legacy / unset): pure percentage-based overage.
+    extraCreditsPerUser = normalCredits * avgPct;
+  }
+
+  // M4: If policy is 'credit_pack', users purchase overage in fixed credit packs (e.g. blocks of 100 credits)
+  const policy = config.monetization_type === 'hybrid'
+    ? config.hybrid_overcharge_policy
+    : config.addon_overcharge_policy;
+  
+  if (policy === 'credit_pack' && extraCreditsPerUser > 0) {
+    const packSize = 100;
+    extraCreditsPerUser = Math.ceil(extraCreditsPerUser / packSize) * packSize;
+  }
+
+  return overchargingUsers * extraCreditsPerUser * pricePerCredit * markup;
+}
+
+/**
+ * Computes a single month's AI monetization revenue across all active services.
+ * Each service carries its already-resolved effective config in `service.monetization`
+ * (the DB-aware wrapper resolves the Plan→Pack→Service inheritance + scenario override).
+ */
+export function calculateMonetizationRevenue(
+  aiUsers: number,
+  services: Array<Service & { monetization?: MonetizationConfig }>,
+  creditSettings: CreditSettings,
+  providersMap: Map<string, Provider>
+): MonetizationRevenueResult {
+  let addonRevenue = 0;
+  let usageRevenue = 0;
+  let hybridBaseRevenue = 0;
+  let overchargeRevenue = 0;
+
+  for (const service of services) {
+    const config = service.monetization;
+    if (!config || config.monetization_type === 'none') continue;
+
+    const provider = service.provider_id ? providersMap.get(service.provider_id) : undefined;
+    const pricePerCredit = config.price_per_credit ?? creditSettings.defaultPricePerCredit;
+
+    switch (config.monetization_type) {
+      case 'addon':
+        // Flat fee per AI user; optional overage when a usage limit is exceeded.
+        addonRevenue += (config.addon_monthly_fee ?? 0) * aiUsers;
+        if (config.addon_has_usage_limit && config.addon_overcharge_policy && config.addon_overcharge_policy !== 'hard_stop') {
+          overchargeRevenue += calculateOverchargeRevenue(service, config, aiUsers, pricePerCredit, creditSettings, provider);
+        }
+        break;
+
+      case 'usage': {
+        // Pure pay-per-credit: consumed credits × sale price.
+        const creditsPerUser = calculateCreditsPerUserMonth(service, provider, creditSettings);
+        // M3: If variant is prepaid, users purchase in blocks of 100 credits
+        const credits = (config.usage_variant === 'prepaid'
+          ? Math.ceil(creditsPerUser / 100) * 100
+          : creditsPerUser) * aiUsers;
+        usageRevenue += credits * pricePerCredit;
+        break;
+      }
+
+      case 'hybrid':
+        // Monthly fee for an included pool (counted at 100% — the user paid for it),
+        // plus overage once the pool is exceeded.
+        hybridBaseRevenue += (config.hybrid_monthly_fee ?? 0) * aiUsers;
+        if (config.hybrid_overcharge_policy && config.hybrid_overcharge_policy !== 'hard_stop') {
+          overchargeRevenue += calculateOverchargeRevenue(service, config, aiUsers, pricePerCredit, creditSettings, provider);
+        }
+        break;
+    }
+  }
+
+  const totalRevenue = addonRevenue + usageRevenue + hybridBaseRevenue + overchargeRevenue;
+  return { totalRevenue, addonRevenue, usageRevenue, hybridBaseRevenue, overchargeRevenue };
+}
+
+// ============================================================
 // Scenario Calculation
 // ============================================================
 
@@ -331,21 +502,40 @@ export function calculateTCO(timeline: MonthlyBreakdown[]): number {
  * This is a pure function – it requires providers to be passed in
  * rather than querying the database directly.
  */
-export function calculateScenario(scenario: Scenario, allProviders: Provider[]): CalculationResult {
+export function calculateScenario(
+  scenario: Scenario,
+  allProviders: Provider[],
+  creditSettings: CreditSettings = DEFAULT_CREDIT_SETTINGS
+): CalculationResult {
   const projectionMonths = scenario.projection_months ?? 36;
   const annualDiscountRate = scenario.discount_rate ?? 0.10;
+  const revenueSource = scenario.revenue_source ?? 'cohort';
 
   if (!scenario.scope_cohorts || scenario.scope_cohorts.length === 0) {
     throw new Error(`Scenario '${scenario.name}' has no cohort configurations.`);
   }
 
-  // 1. Generate baseline (without AI) and with-AI cohort timelines
-  const baselineResults = scenario.scope_cohorts.map(cc =>
-    buildCohortModel(cc, projectionMonths)
-  );
-  const withAiResults = scenario.scope_cohorts.map(cc =>
-    buildCohortModel(applyAiUplifts(cc), projectionMonths)
-  );
+  // 1. Generate baseline (without AI) and with-AI cohort timelines using adopter/non-adopter split
+  const baselineResults = scenario.scope_cohorts.map(cc => {
+    const { adopter, nonAdopter } = splitCohortForAi({
+      ...cc,
+      churn_reduction: 0,
+      acquisition_uplift: 0,
+      arpu_uplift_percent: 0,
+      arpu_uplift: 0
+    });
+    return {
+      adopterModel: buildCohortModel(adopter, projectionMonths),
+      nonAdopterModel: buildCohortModel(nonAdopter, projectionMonths)
+    };
+  });
+  const splitResults = scenario.scope_cohorts.map(cc => {
+    const { adopter, nonAdopter } = splitCohortForAi(cc);
+    return {
+      adopterModel: buildCohortModel(adopter, projectionMonths),
+      nonAdopterModel: buildCohortModel(nonAdopter, projectionMonths)
+    };
+  });
 
   // 2. Build provider lookup map
   const providersMap = new Map<string, Provider>();
@@ -367,23 +557,55 @@ export function calculateScenario(scenario: Scenario, allProviders: Provider[]):
     // Aggregate over all cohort models for month t
     for (let i = 0; i < scenario.scope_cohorts.length; i++) {
       const baseRes = baselineResults[i];
-      const withAiRes = withAiResults[i];
+      const { adopterModel, nonAdopterModel } = splitResults[i];
 
-      const baseMonth = baseRes.timeline[t];
-      const withAiMonth = withAiRes.timeline[t];
+      const baseAdopterMonth = baseRes.adopterModel.timeline[t];
+      const baseNonAdopterMonth = baseRes.nonAdopterModel.timeline[t];
+      const adopterMonth = adopterModel.timeline[t];
+      const nonAdopterMonth = nonAdopterModel.timeline[t];
 
-      if (withAiMonth) {
-        activeCustomers += withAiMonth.activeCustomers;
-        activeAiUsers += withAiMonth.activeAiUsers;
-        grossRevenue += withAiMonth.mrr;
+      if (adopterMonth) {
+        activeCustomers += adopterMonth.activeCustomers;
+        activeAiUsers += adopterMonth.activeCustomers; // exact adopters
+        grossRevenue += adopterMonth.mrr;
       }
-      if (baseMonth) {
-        baselineCustomers += baseMonth.activeCustomers;
-        baselineRevenue += baseMonth.mrr;
+      if (nonAdopterMonth) {
+        activeCustomers += nonAdopterMonth.activeCustomers;
+        grossRevenue += nonAdopterMonth.mrr;
+      }
+      if (baseAdopterMonth) {
+        baselineCustomers += baseAdopterMonth.activeCustomers;
+        baselineRevenue += baseAdopterMonth.mrr;
+      }
+      if (baseNonAdopterMonth) {
+        baselineCustomers += baseNonAdopterMonth.activeCustomers;
+        baselineRevenue += baseNonAdopterMonth.mrr;
       }
     }
 
-    const revenue = grossRevenue - baselineRevenue; // Incremental ΔRevenue
+    // Cohort ΔRevenue — incremental MRR uplift from AI adoption.
+    const cohortRevenue = grossRevenue - baselineRevenue;
+
+    // AI monetization revenue — direct sales of AI features, when enabled for this scenario.
+    let monetization: MonetizationRevenueResult = {
+      totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0
+    };
+    if (revenueSource === 'monetization' || revenueSource === 'both') {
+      const activeServices = (scenario.services ?? []).filter(s => t >= (s.rollout_month ?? 0));
+      monetization = calculateMonetizationRevenue(activeAiUsers, activeServices, creditSettings, providersMap);
+    }
+
+    let revenue: number;
+    switch (revenueSource) {
+      case 'monetization':
+        revenue = monetization.totalRevenue;
+        break;
+      case 'both':
+        revenue = cohortRevenue + monetization.totalRevenue;
+        break;
+      default:
+        revenue = cohortRevenue;
+    }
 
     let opex = 0;
     let capex = 0;
@@ -454,7 +676,12 @@ export function calculateScenario(scenario: Scenario, allProviders: Provider[]):
       cumulativeCashFlow: parseFloat(cumulativeCashFlow.toFixed(2)),
       grossRevenue: parseFloat(grossRevenue.toFixed(2)),
       baselineRevenue: parseFloat(baselineRevenue.toFixed(2)),
-      baselineCustomers: Math.round(baselineCustomers)
+      baselineCustomers: Math.round(baselineCustomers),
+      monetizationRevenue: parseFloat(monetization.totalRevenue.toFixed(2)),
+      addonRevenue: parseFloat(monetization.addonRevenue.toFixed(2)),
+      usageRevenue: parseFloat(monetization.usageRevenue.toFixed(2)),
+      hybridBaseRevenue: parseFloat(monetization.hybridBaseRevenue.toFixed(2)),
+      overchargeRevenue: parseFloat(monetization.overchargeRevenue.toFixed(2))
     });
   }
 
@@ -498,7 +725,8 @@ function cloneScenario(scenario: Scenario): Scenario {
 export function runSensitivityAnalysis(
   scenario: Scenario,
   allProviders: Provider[],
-  variationPercent: number = 0.1
+  variationPercent: number = 0.1,
+  creditSettings: CreditSettings = DEFAULT_CREDIT_SETTINGS
 ): SensitivityAnalysisResult {
   if (!scenario.scope_cohorts || scenario.scope_cohorts.length === 0) {
     return {
@@ -510,7 +738,12 @@ export function runSensitivityAnalysis(
     };
   }
 
-  const baseResult = calculateScenario(scenario, allProviders);
+  const revenueSource = scenario.revenue_source ?? 'cohort';
+  const monetizationActive =
+    (revenueSource === 'monetization' || revenueSource === 'both') &&
+    (scenario.services ?? []).some(s => s.monetization && s.monetization.monetization_type !== 'none');
+
+  const baseResult = calculateScenario(scenario, allProviders, creditSettings);
   const baseNpv = baseResult.npv;
 
   const results: SensitivityParamResult[] = [];
@@ -525,13 +758,13 @@ export function runSensitivityAnalysis(
     for (const cc of cloneLow.scope_cohorts!) {
       cc.churn_reduction = (cc.churn_reduction ?? 0) * (1 - variationPercent);
     }
-    const resLow = calculateScenario(cloneLow, allProviders);
+    const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
 
     const cloneHigh = cloneScenario(scenario);
     for (const cc of cloneHigh.scope_cohorts!) {
       cc.churn_reduction = (cc.churn_reduction ?? 0) * (1 + variationPercent);
     }
-    const resHigh = calculateScenario(cloneHigh, allProviders);
+    const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
 
     results.push({
       parameter: 'Churn Reduction Uplift',
@@ -554,13 +787,13 @@ export function runSensitivityAnalysis(
     for (const cc of cloneLow.scope_cohorts!) {
       cc.acquisition_uplift = (cc.acquisition_uplift ?? 0) * (1 - variationPercent);
     }
-    const resLow = calculateScenario(cloneLow, allProviders);
+    const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
 
     const cloneHigh = cloneScenario(scenario);
     for (const cc of cloneHigh.scope_cohorts!) {
       cc.acquisition_uplift = (cc.acquisition_uplift ?? 0) * (1 + variationPercent);
     }
-    const resHigh = calculateScenario(cloneHigh, allProviders);
+    const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
 
     results.push({
       parameter: 'Acquisition Uplift',
@@ -584,14 +817,14 @@ export function runSensitivityAnalysis(
       cc.arpu_uplift = (cc.arpu_uplift ?? 0) * (1 - variationPercent);
       cc.arpu_uplift_percent = (cc.arpu_uplift_percent ?? 0) * (1 - variationPercent);
     }
-    const resLow = calculateScenario(cloneLow, allProviders);
+    const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
 
     const cloneHigh = cloneScenario(scenario);
     for (const cc of cloneHigh.scope_cohorts!) {
       cc.arpu_uplift = (cc.arpu_uplift ?? 0) * (1 + variationPercent);
       cc.arpu_uplift_percent = (cc.arpu_uplift_percent ?? 0) * (1 + variationPercent);
     }
-    const resHigh = calculateScenario(cloneHigh, allProviders);
+    const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
 
     results.push({
       parameter: 'ARPU Uplift',
@@ -614,13 +847,13 @@ export function runSensitivityAnalysis(
     for (const cc of cloneLow.scope_cohorts!) {
       cc.ai_adoption_rate = cc.ai_adoption_rate * (1 - variationPercent);
     }
-    const resLow = calculateScenario(cloneLow, allProviders);
+    const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
 
     const cloneHigh = cloneScenario(scenario);
     for (const cc of cloneHigh.scope_cohorts!) {
       cc.ai_adoption_rate = cc.ai_adoption_rate * (1 + variationPercent);
     }
-    const resHigh = calculateScenario(cloneHigh, allProviders);
+    const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
 
     results.push({
       parameter: 'AI Adoption Rate',
@@ -645,11 +878,11 @@ export function runSensitivityAnalysis(
 
     const cloneLow = cloneScenario(scenario);
     cloneLow.discount_rate = lowVal;
-    const resLow = calculateScenario(cloneLow, allProviders);
+    const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
 
     const cloneHigh = cloneScenario(scenario);
     cloneHigh.discount_rate = highVal;
-    const resHigh = calculateScenario(cloneHigh, allProviders);
+    const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
 
     results.push({
       parameter: 'Discount Rate',
@@ -672,13 +905,13 @@ export function runSensitivityAnalysis(
     for (const c of cloneLow.costs!) {
       c.amount = c.amount * (1 - variationPercent);
     }
-    const resLow = calculateScenario(cloneLow, allProviders);
+    const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
 
     const cloneHigh = cloneScenario(scenario);
     for (const c of cloneHigh.costs!) {
       c.amount = c.amount * (1 + variationPercent);
     }
-    const resHigh = calculateScenario(cloneHigh, allProviders);
+    const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
 
     results.push({
       parameter: 'Operating & Capital Expenses',
@@ -705,7 +938,7 @@ export function runSensitivityAnalysis(
         s.fixed_cost_per_month = s.fixed_cost_per_month * (1 - variationPercent);
       }
     }
-    const resLow = calculateScenario(cloneLow, allProviders);
+    const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
 
     const cloneHigh = cloneScenario(scenario);
     for (const s of cloneHigh.services!) {
@@ -715,7 +948,7 @@ export function runSensitivityAnalysis(
         s.fixed_cost_per_month = s.fixed_cost_per_month * (1 + variationPercent);
       }
     }
-    const resHigh = calculateScenario(cloneHigh, allProviders);
+    const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
 
     results.push({
       parameter: 'AI Token Costs',
@@ -730,6 +963,102 @@ export function runSensitivityAnalysis(
       highPayback: resHigh.paybackMonths,
       impactRange: Math.abs(resLow.npv - resHigh.npv)
     });
+  }
+
+  // 8. AI Monetization parameters — only when the scenario actually sells AI.
+  if (monetizationActive) {
+    // 8a. Credit Price (scales explicit per-config price + the global default)
+    {
+      const csLow = { ...creditSettings, defaultPricePerCredit: creditSettings.defaultPricePerCredit * (1 - variationPercent) };
+      const cloneLow = cloneScenario(scenario);
+      for (const s of cloneLow.services ?? []) {
+        if (s.monetization?.price_per_credit != null) s.monetization.price_per_credit *= (1 - variationPercent);
+      }
+      const resLow = calculateScenario(cloneLow, allProviders, csLow);
+
+      const csHigh = { ...creditSettings, defaultPricePerCredit: creditSettings.defaultPricePerCredit * (1 + variationPercent) };
+      const cloneHigh = cloneScenario(scenario);
+      for (const s of cloneHigh.services ?? []) {
+        if (s.monetization?.price_per_credit != null) s.monetization.price_per_credit *= (1 + variationPercent);
+      }
+      const resHigh = calculateScenario(cloneHigh, allProviders, csHigh);
+
+      results.push({
+        parameter: 'Credit Price',
+        key: 'price_per_credit',
+        lowValueText: varLabelLow,
+        highValueText: varLabelHigh,
+        lowNpv: resLow.npv,
+        highNpv: resHigh.npv,
+        lowIrr: resLow.irrAnnual,
+        highIrr: resHigh.irrAnnual,
+        lowPayback: resLow.paybackMonths,
+        highPayback: resHigh.paybackMonths,
+        impactRange: Math.abs(resHigh.npv - resLow.npv)
+      });
+    }
+
+    // 8b. Monetization Fees (add-on + hybrid monthly fees)
+    {
+      const cloneLow = cloneScenario(scenario);
+      for (const s of cloneLow.services ?? []) {
+        if (!s.monetization) continue;
+        if (s.monetization.addon_monthly_fee != null) s.monetization.addon_monthly_fee *= (1 - variationPercent);
+        if (s.monetization.hybrid_monthly_fee != null) s.monetization.hybrid_monthly_fee *= (1 - variationPercent);
+      }
+      const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
+
+      const cloneHigh = cloneScenario(scenario);
+      for (const s of cloneHigh.services ?? []) {
+        if (!s.monetization) continue;
+        if (s.monetization.addon_monthly_fee != null) s.monetization.addon_monthly_fee *= (1 + variationPercent);
+        if (s.monetization.hybrid_monthly_fee != null) s.monetization.hybrid_monthly_fee *= (1 + variationPercent);
+      }
+      const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
+
+      results.push({
+        parameter: 'Monetization Fees',
+        key: 'monetization_fees',
+        lowValueText: varLabelLow,
+        highValueText: varLabelHigh,
+        lowNpv: resLow.npv,
+        highNpv: resHigh.npv,
+        lowIrr: resLow.irrAnnual,
+        highIrr: resHigh.irrAnnual,
+        lowPayback: resLow.paybackMonths,
+        highPayback: resHigh.paybackMonths,
+        impactRange: Math.abs(resHigh.npv - resLow.npv)
+      });
+    }
+
+    // 8c. Overcharge Users % (share of users exceeding their pool/limit)
+    {
+      const cloneLow = cloneScenario(scenario);
+      for (const s of cloneLow.services ?? []) {
+        if (s.monetization) s.monetization.overcharge_user_pct = (s.monetization.overcharge_user_pct ?? creditSettings.defaultOverchargeUserPct) * (1 - variationPercent);
+      }
+      const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
+
+      const cloneHigh = cloneScenario(scenario);
+      for (const s of cloneHigh.services ?? []) {
+        if (s.monetization) s.monetization.overcharge_user_pct = (s.monetization.overcharge_user_pct ?? creditSettings.defaultOverchargeUserPct) * (1 + variationPercent);
+      }
+      const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
+
+      results.push({
+        parameter: 'Overcharge Users %',
+        key: 'overcharge_user_pct',
+        lowValueText: varLabelLow,
+        highValueText: varLabelHigh,
+        lowNpv: resLow.npv,
+        highNpv: resHigh.npv,
+        lowIrr: resLow.irrAnnual,
+        highIrr: resHigh.irrAnnual,
+        lowPayback: resLow.paybackMonths,
+        highPayback: resHigh.paybackMonths,
+        impactRange: Math.abs(resHigh.npv - resLow.npv)
+      });
+    }
   }
 
   // Sort by impact range descending (standard Tornado chart sorting)

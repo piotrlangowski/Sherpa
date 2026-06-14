@@ -36,6 +36,8 @@ export const servicesRepository = {
         output_price: 0,
         is_predefined: false,
         currency: 'USD',
+        input_tokens_per_credit: 1000000,
+        output_tokens_per_credit: 333333,
         updated_at: ''
       } : null
     }));
@@ -48,7 +50,9 @@ export const servicesRepository = {
              s.fixed_cost_per_month, s.fixed_cost_currency, s.created_at, s.updated_at,
              p.name as provider_name, p.model_name as provider_model_name,
              p.input_price as provider_input_price, p.output_price as provider_output_price,
-             p.currency as provider_currency
+             p.currency as provider_currency,
+             p.input_tokens_per_credit as provider_input_tokens_per_credit,
+             p.output_tokens_per_credit as provider_output_tokens_per_credit
       FROM services s
       LEFT JOIN providers p ON s.provider_id = p.id
       WHERE s.id = ?
@@ -96,6 +100,8 @@ export const servicesRepository = {
         output_price: r.provider_output_price,
         is_predefined: false,
         currency: (r.provider_currency as Currency) || 'USD',
+        input_tokens_per_credit: r.provider_input_tokens_per_credit ?? 1000000,
+        output_tokens_per_credit: r.provider_output_tokens_per_credit ?? 333333,
         updated_at: ''
       } : null,
       dependencies
@@ -183,6 +189,7 @@ export const servicesRepository = {
       db.prepare("DELETE FROM service_dependencies WHERE source_id = ? OR target_id = ?").run(id, id);
       db.prepare("DELETE FROM cost_items WHERE service_id = ?").run(id);
       db.prepare("DELETE FROM scenario_services WHERE service_id = ?").run(id);
+      db.prepare("DELETE FROM monetization_configs WHERE entity_type = 'service' AND entity_id = ?").run(id);
       db.prepare("DELETE FROM services WHERE id = ?").run(id);
     })();
   }

@@ -44,7 +44,8 @@ export const actions: Actions = {
     const projectionMonths = parseInt(formData.get('projectionMonths') as string || '36', 10);
     const discountRate = parseFloat(formData.get('discountRate') as string || '10') / 100;
     const scopeType = formData.get('scopeType') as 'all_clients' | 'verticals' | 'cohorts';
-    
+    const revenueSource = (formData.get('revenueSource') as 'cohort' | 'monetization' | 'both') || 'cohort';
+
     let verticalIds: string[] = [];
     if (scopeType === 'verticals') {
       verticalIds = formData.getAll('verticalIds') as string[];
@@ -103,6 +104,7 @@ export const actions: Actions = {
         projection_months: projectionMonths,
         discount_rate: discountRate,
         scope_type: scopeType,
+        revenue_source: revenueSource,
         vertical_ids: verticalIds,
         cohort_config_ids: cohortConfigIds,
         scope_overrides: scopeOverrides,

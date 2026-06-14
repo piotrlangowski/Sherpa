@@ -2,7 +2,7 @@ import type { Currency, ExchangeRates } from '../types';
 import { FALLBACK_EXCHANGE_RATES } from '../shared/currency.js';
 
 class AppState {
-  companyName = $state<string>('Acme Analytics');
+  companyName = $state<string>('Beacon Helpdesk');
   currency = $state<Currency>('USD');
   defaultDiscountRate = $state<number>(0.10);
   setupCompleted = $state<boolean>(false);

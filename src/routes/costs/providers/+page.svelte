@@ -45,6 +45,8 @@
   let outputPrice = $state(0);
   let currency = $state<Currency>('USD');
   let isPredefined = $state(false);
+  let inputTokensPerCredit = $state(1000000);
+  let outputTokensPerCredit = $state(333333);
 
   function openCreate() {
     id = '';
@@ -54,6 +56,8 @@
     outputPrice = 0;
     currency = 'USD';
     isPredefined = false;
+    inputTokensPerCredit = 1000000;
+    outputTokensPerCredit = 333333;
     showEditDialog = true;
   }
 
@@ -65,6 +69,8 @@
     outputPrice = provider.output_price;
     currency = provider.currency || 'USD';
     isPredefined = provider.is_predefined;
+    inputTokensPerCredit = provider.input_tokens_per_credit ?? 1000000;
+    outputTokensPerCredit = provider.output_tokens_per_credit ?? 333333;
     showEditDialog = true;
   }
 
@@ -423,6 +429,25 @@
       suffix="/1M"
       step={0.0001}
       min={0}
+    />
+  </FormSection>
+
+  <FormSection title="Credit conversion" description="How many tokens of this model equal one sellable credit. Used by usage-based and hybrid monetization to convert token usage into billable credits.">
+    <NumberField
+      id="inputTokensPerCredit"
+      name="inputTokensPerCredit"
+      bind:value={inputTokensPerCredit}
+      label="Input tokens / credit"
+      step={1}
+      min={1}
+    />
+    <NumberField
+      id="outputTokensPerCredit"
+      name="outputTokensPerCredit"
+      bind:value={outputTokensPerCredit}
+      label="Output tokens / credit"
+      step={1}
+      min={1}
     />
   </FormSection>
 </FormDialog>

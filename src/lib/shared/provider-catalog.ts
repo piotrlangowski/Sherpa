@@ -4,7 +4,7 @@ import type { Provider } from './types.js';
 export const PROVIDER_PRICES_AS_OF = '2026-06-10';
 
 // Default AI models with prices per 1M tokens (USD), as of PROVIDER_PRICES_AS_OF
-export const PREDEFINED_PROVIDERS: Omit<Provider, 'id' | 'updated_at'>[] = [
+export const PREDEFINED_PROVIDERS: Omit<Provider, 'id' | 'updated_at' | 'input_tokens_per_credit' | 'output_tokens_per_credit'>[] = [
   {
     name: 'OpenAI',
     model_name: 'GPT-5.5',

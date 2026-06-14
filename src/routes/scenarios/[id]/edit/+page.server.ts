@@ -7,6 +7,7 @@ import { packsRepository } from '$lib/server/repositories/packs';
 import { plansRepository } from '$lib/server/repositories/plans';
 import { costsRepository } from '$lib/server/repositories/costs';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
+import { monetizationRepository } from '$lib/server/repositories/monetization';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
 import { error, fail, redirect } from '@sveltejs/kit';
 
@@ -24,6 +25,10 @@ export const load: PageServerLoad = async ({ params }) => {
   const plans = plansRepository.getAll();
   const costs = costsRepository.getAll();
 
+  // Monetization: catalog configs (all) + this scenario's overrides, keyed `${type}:${id}`.
+  const monetizationCatalog = Object.fromEntries(monetizationRepository.getCatalogMap());
+  const monetizationOverrides = Object.fromEntries(monetizationRepository.getScenarioOverrideMap(params.id));
+
   return {
     scenario,
     clientBase,
@@ -32,7 +37,9 @@ export const load: PageServerLoad = async ({ params }) => {
     services,
     packs,
     plans,
-    costs
+    costs,
+    monetizationCatalog,
+    monetizationOverrides
   };
 };
 
@@ -44,7 +51,8 @@ export const actions: Actions = {
     const projectionMonths = parseInt(formData.get('projectionMonths') as string || '36', 10);
     const discountRate = parseFloat(formData.get('discountRate') as string || '10') / 100;
     const scopeType = formData.get('scopeType') as 'all_clients' | 'verticals' | 'cohorts';
-    
+    const revenueSource = (formData.get('revenueSource') as 'cohort' | 'monetization' | 'both') || 'cohort';
+
     let verticalIds: string[] = [];
     if (scopeType === 'verticals') {
       verticalIds = formData.getAll('verticalIds') as string[];
@@ -101,6 +109,7 @@ export const actions: Actions = {
         projection_months: projectionMonths,
         discount_rate: discountRate,
         scope_type: scopeType,
+        revenue_source: revenueSource,
         vertical_ids: verticalIds,
         cohort_config_ids: cohortConfigIds,
         scope_overrides: scopeOverrides,

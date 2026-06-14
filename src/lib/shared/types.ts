@@ -11,6 +11,74 @@ export type CostCategory = 'capex' | 'opex';
 export type CostFrequency = 'one_time' | 'monthly' | 'yearly';
 export type ScopeType = 'all_clients' | 'verticals' | 'cohorts';
 
+// ============================================================
+// AI Monetization Models
+// ============================================================
+
+/** Monetization model attached to a Service / Pack / Plan. */
+export type MonetizationType = 'none' | 'addon' | 'usage' | 'hybrid';
+/** Usage-based billing variant. */
+export type UsageVariant = 'prepaid' | 'payg';
+/** Behaviour once a usage limit / credit pool is exhausted. */
+export type OverchargePolicy = 'hard_stop' | 'credit_pack' | 'payg';
+/** Where a scenario draws its revenue from. */
+export type RevenueSource = 'cohort' | 'monetization' | 'both';
+
+/**
+ * Monetization configuration shared by Service, Pack and Plan.
+ * Persisted in the polymorphic `monetization_configs` table.
+ * Monetary values (fees, price_per_credit) are expressed in the company base currency.
+ */
+export interface MonetizationConfig {
+  monetization_type: MonetizationType;
+
+  // Add-on (flat fee) fields
+  addon_monthly_fee?: number | null;
+  addon_has_usage_limit?: boolean;
+  addon_usage_limit?: number | null;
+  addon_overcharge_policy?: OverchargePolicy | null;
+
+  // Usage-based (credits) fields
+  usage_variant?: UsageVariant | null;
+  price_per_credit?: number | null;
+
+  // Hybrid fields
+  hybrid_monthly_fee?: number | null;
+  hybrid_included_credits?: number | null;
+  hybrid_overcharge_policy?: OverchargePolicy | null;
+
+  // Shared overcharge params
+  overcharge_markup?: number | null;
+  overcharge_user_pct?: number | null;
+  avg_overcharge_pct?: number | null;
+
+  // Resolver metadata (not persisted) — describes where an effective config was inherited from.
+  inherited_from?: 'service' | 'pack' | 'plan' | null;
+  inherited_from_name?: string | null;
+  is_scenario_override?: boolean | null;
+}
+
+/** Global credit defaults passed into the pure engine. */
+export interface CreditSettings {
+  defaultPricePerCredit: number;
+  defaultOverchargeMarkup: number;
+  defaultOverchargeUserPct: number;
+  defaultAvgOverchargePct: number;
+  /** Fallback input token→credit ratio when the provider has none set. */
+  defaultInputTokensPerCredit: number;
+  /** Fallback output token→credit ratio when the provider has none set. */
+  defaultOutputTokensPerCredit: number;
+}
+
+/** Breakdown of a single month's monetization revenue. */
+export interface MonetizationRevenueResult {
+  totalRevenue: number;
+  addonRevenue: number;
+  usageRevenue: number;
+  hybridBaseRevenue: number;
+  overchargeRevenue: number;
+}
+
 export interface ClientBase {
   id: string;
   total_users: number;
@@ -36,6 +104,13 @@ export interface Settings {
   projection_horizon_months: number;
   exchange_rates: ExchangeRates;
   exchange_rates_as_of: string;
+  // Credit configuration (global defaults for AI monetization)
+  default_price_per_credit: number;
+  default_input_tokens_per_credit: number;
+  default_output_tokens_per_credit: number;
+  default_overcharge_markup: number;
+  default_overcharge_user_pct: number;
+  default_avg_overcharge_pct: number;
 }
 
 export interface Provider {
@@ -46,6 +121,9 @@ export interface Provider {
   output_price: number;
   is_predefined: boolean;
   currency: Currency;
+  // How many input/output tokens of this model map to 1 sellable credit.
+  input_tokens_per_credit: number;
+  output_tokens_per_credit: number;
   updated_at: string;
 }
 
@@ -76,6 +154,9 @@ export interface Service {
   provider?: Provider | null;
   dependencies?: ServiceDependency[];
   rollout_month?: number;
+
+  // Monetization (catalog config, or the resolved effective config when attached by the engine)
+  monetization?: MonetizationConfig;
 }
 
 export interface Pack {
@@ -84,8 +165,9 @@ export interface Pack {
   description?: string;
   created_at?: string;
   updated_at?: string;
-  
+
   services?: Service[];
+  monetization?: MonetizationConfig;
 }
 
 export interface Plan {
@@ -95,9 +177,10 @@ export interface Plan {
   base_price: number;
   created_at?: string;
   updated_at?: string;
-  
+
   services?: Service[];
   packs?: Pack[];
+  monetization?: MonetizationConfig;
 }
 
 export interface Vertical {
@@ -176,9 +259,10 @@ export interface Scenario {
   projection_months: number;
   discount_rate: number;
   scope_type: ScopeType;
+  revenue_source?: RevenueSource;
   created_at?: string;
   updated_at?: string;
-  
+
   scope_verticals?: Vertical[];
   scope_cohorts?: CohortConfig[];
   scope_overrides?: ScopeOverride[];
@@ -239,6 +323,12 @@ export interface MonthlyBreakdown {
   grossRevenue: number; // MRR with AI
   baselineRevenue: number; // MRR baseline
   baselineCustomers: number; // baseline customers
+  // AI monetization revenue breakdown (zero unless revenue_source includes monetization)
+  monetizationRevenue: number;
+  addonRevenue: number;
+  usageRevenue: number;
+  hybridBaseRevenue: number;
+  overchargeRevenue: number;
 }
 
 export interface CalculationResult {

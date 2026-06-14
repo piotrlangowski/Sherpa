@@ -34,6 +34,14 @@
   let isRefreshing = $state(false);
   let refreshError = $state<string | null>(null);
 
+  // Credit configuration (global AI monetization defaults)
+  let pricePerCredit = $state(data.settings.pricePerCredit);
+  let inputTokensPerCredit = $state(data.settings.inputTokensPerCredit);
+  let outputTokensPerCredit = $state(data.settings.outputTokensPerCredit);
+  let overchargeMarkup = $state(data.settings.overchargeMarkup);
+  let overchargeUserPct = $state(data.settings.overchargeUserPct);
+  let avgOverchargePct = $state(data.settings.avgOverchargePct);
+
   async function handleRefresh() {
     isRefreshing = true;
     refreshError = null;
@@ -187,6 +195,44 @@
           </div>
         </div>
 
+        <!-- Credit Configuration -->
+        <div class="space-y-4 pt-4 border-t border-border">
+          <div class="max-w-md">
+            <h3 class="text-sm font-semibold">Credit Configuration</h3>
+            <p class="text-xs text-muted-foreground">
+              Global defaults for AI monetization (usage-based & hybrid models). Per-provider token ratios
+              and per-config overrides take precedence over these.
+            </p>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-md">
+            <div class="space-y-2">
+              <Label for="pricePerCredit">Price per credit ({currency})</Label>
+              <Input type="number" step="0.0001" min="0" id="pricePerCredit" name="pricePerCredit" bind:value={pricePerCredit} class="bg-(--glass-inset-bg)" />
+            </div>
+            <div class="space-y-2">
+              <Label for="overchargeMarkup">Overage markup (×)</Label>
+              <Input type="number" step="0.1" min="0" id="overchargeMarkup" name="overchargeMarkup" bind:value={overchargeMarkup} class="bg-(--glass-inset-bg)" />
+            </div>
+            <div class="space-y-2">
+              <Label for="inputTokensPerCredit">Input tokens / credit</Label>
+              <Input type="number" step="1" min="1" id="inputTokensPerCredit" name="inputTokensPerCredit" bind:value={inputTokensPerCredit} class="bg-(--glass-inset-bg)" />
+            </div>
+            <div class="space-y-2">
+              <Label for="outputTokensPerCredit">Output tokens / credit</Label>
+              <Input type="number" step="1" min="1" id="outputTokensPerCredit" name="outputTokensPerCredit" bind:value={outputTokensPerCredit} class="bg-(--glass-inset-bg)" />
+            </div>
+            <div class="space-y-2">
+              <Label for="overchargeUserPct">Default users exceeding (0–1)</Label>
+              <Input type="number" step="0.01" min="0" max="1" id="overchargeUserPct" name="overchargeUserPct" bind:value={overchargeUserPct} class="bg-(--glass-inset-bg)" />
+            </div>
+            <div class="space-y-2">
+              <Label for="avgOverchargePct">Default avg overage over pool</Label>
+              <Input type="number" step="0.01" min="0" id="avgOverchargePct" name="avgOverchargePct" bind:value={avgOverchargePct} class="bg-(--glass-inset-bg)" />
+            </div>
+          </div>
+        </div>
+
       </CardContent>
 
       <CardFooter class="border-t border-border glass-inset flex justify-end py-4">
@@ -213,7 +259,7 @@
         <div class="space-y-0.5 max-w-md">
           <h4 class="text-sm font-semibold">Reset Workspace to Sample Data</h4>
           <p class="text-xs text-muted-foreground">
-            This will permanently wipe all your customized services, packs, plans, verticals, and scenarios, and re-seed the workspace with the "Acme Analytics" sample dataset.
+            This will permanently wipe all your customized services, packs, plans, verticals, and scenarios, and re-seed the workspace with the "Beacon Helpdesk" sample dataset.
           </p>
         </div>
         
@@ -241,7 +287,7 @@
     <li>Remove all Pricing Plans & Market Verticals</li>
     <li>Wipe all Cohort configurations</li>
     <li>Wipe all Scenarios & Projections</li>
-    <li>Re-seed with "Acme Analytics" sample database</li>
+    <li>Re-seed with "Beacon Helpdesk" sample database</li>
   </ul>
 
   {#snippet footer()}

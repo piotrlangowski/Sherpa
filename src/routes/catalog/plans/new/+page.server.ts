@@ -2,6 +2,7 @@ import type { PageServerLoad, Actions } from './$types';
 import { servicesRepository } from '$lib/server/repositories/services';
 import { packsRepository } from '$lib/server/repositories/packs';
 import { plansRepository } from '$lib/server/repositories/plans';
+import { saveMonetizationFromForm } from '$lib/server/services/monetization-form';
 import { fail, redirect } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async () => {
@@ -27,13 +28,14 @@ export const actions: Actions = {
     }
 
     try {
-      plansRepository.create({
+      const created = plansRepository.create({
         name,
         description,
         base_price: basePrice,
         service_ids: serviceIds,
         pack_ids: packIds
       });
+      saveMonetizationFromForm('plan', created.id, formData);
     } catch (err: any) {
       return fail(500, { error: err.message });
     }

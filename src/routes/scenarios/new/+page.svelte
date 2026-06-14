@@ -43,6 +43,7 @@
   const discountRate = $derived(discountRateArr[0]);
 
   let scopeType = $state<'all_clients' | 'verticals' | 'cohorts'>('all_clients');
+  let revenueSource = $state<'cohort' | 'monetization' | 'both'>('cohort');
   let selectedVerticals = $state<Record<string, boolean>>({});
   let selectedCohorts = $state<Record<string, boolean>>({});
 
@@ -322,7 +323,7 @@
   function renderChart() {
     if (!chartElement || currentStep !== 5 || !previewResult) return;
     import('echarts').then((echarts) => {
-      if (!chartElement) return;
+      if (!chartElement || currentStep !== 5 || !previewResult) return;
       if (chartInstance) {
         chartInstance.setOption(chartOptions, true);
       } else {
@@ -426,7 +427,7 @@
           <div class="space-y-4">
             <div class="space-y-2">
               <Label for="name" class="font-semibold">Scenario Name</Label>
-              <Input id="name" name="name" bind:value={name} placeholder="e.g. Enterprise LegalTech Rollout" required class="bg-(--glass-inset-bg) border-border" />
+              <Input id="name" name="name" bind:value={name} placeholder="e.g. Is it worth adding AI Ticket Summaries?" required class="bg-(--glass-inset-bg) border-border" />
             </div>
             <div class="space-y-2">
               <Label for="description" class="font-semibold">Description</Label>
@@ -456,6 +457,25 @@
               <Slider id="discountRateSlider" bind:value={discountRateArr} min={0} max={30} step={1} type="multiple" />
               <input type="hidden" name="discountRate" value={discountRate} />
             </div>
+          </div>
+
+          <!-- Revenue Source -->
+          <div class="space-y-2">
+            <Label for="revenueSource" class="font-semibold">Revenue Source</Label>
+            <select id="revenueSource" name="revenueSource" bind:value={revenueSource} class="w-full glass-inset border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground">
+              <option value="cohort">Cohort ARPU uplift (incremental)</option>
+              <option value="monetization">AI monetization only</option>
+              <option value="both">Both — ARPU uplift + AI monetization</option>
+            </select>
+            <p class="text-xs text-muted-foreground">
+              How this scenario books revenue: incremental cohort ARPU, direct AI monetization
+              (add-on / usage / hybrid models on the included plans, packs and services), or both combined.
+            </p>
+            {#if revenueSource !== 'cohort'}
+              <p class="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                ⚡ Per-entity monetization overrides can be configured after saving, via the scenario edit page.
+              </p>
+            {/if}
           </div>
 
           <hr class="border-border/60" />

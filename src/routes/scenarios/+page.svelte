@@ -268,6 +268,12 @@
                     </span>
                   </div>
                 </div>
+              {:else}
+                <div class="p-3 bg-muted/20 rounded-lg border border-dashed border-border/60 text-center">
+                  <p class="text-[11px] text-muted-foreground leading-snug">
+                    KPIs pending — open the dashboard to calculate.
+                  </p>
+                </div>
               {/if}
             </CardContent>
 
@@ -311,28 +317,28 @@
                   {#if scenario.results}
                     {formatCurrency(scenario.results.npv, appState.currency, 0)}
                   {:else}
-                    —
+                    <span class="text-muted-foreground/60 font-sans font-normal" title="KPIs pending — open the dashboard to calculate">Pending</span>
                   {/if}
                 </TableCell>
                 <TableCell class="text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                   {#if scenario.results}
                     {formatPercent(scenario.results.irr_annual || 0)}
                   {:else}
-                    —
+                    <span class="text-muted-foreground/40" title="KPIs pending — open the dashboard to calculate">—</span>
                   {/if}
                 </TableCell>
                 <TableCell class="text-right font-mono font-medium text-cyan-600 dark:text-cyan-400">
                   {#if scenario.results}
                     {scenario.results.payback_months === 0 ? 'Immediate' : scenario.results.payback_months === null ? 'Never' : formatMonths(scenario.results.payback_months)}
                   {:else}
-                    —
+                    <span class="text-muted-foreground/40" title="KPIs pending — open the dashboard to calculate">—</span>
                   {/if}
                 </TableCell>
                 <TableCell class="text-right font-mono text-xs text-foreground">
                   {#if scenario.results}
                     {formatCurrency(scenario.results.tco, appState.currency, 0)}
                   {:else}
-                    —
+                    <span class="text-muted-foreground/40" title="KPIs pending — open the dashboard to calculate">—</span>
                   {/if}
                 </TableCell>
                 <TableCell class="text-right">
