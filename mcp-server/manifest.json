@@ -61,11 +61,11 @@
     },
     {
       "name": "client_base_action",
-      "description": "Retrieve or modify default customer base parameters"
+      "description": "Retrieve or modify default customer base parameters and uplifts"
     },
     {
       "name": "provider_action",
-      "description": "List, create, update, or delete AI model providers and token pricing"
+      "description": "List, create, update, or delete AI model providers, token pricing, and credit rates"
     },
     {
       "name": "vertical_action",
@@ -93,7 +93,7 @@
     },
     {
       "name": "scenario_action",
-      "description": "Manage ROI scenarios, execute projections, and compare alternatives"
+      "description": "Manage ROI scenarios (scope_type, revenue_source, overrides), execute projections, and compare alternatives"
     },
     {
       "name": "dashboard_action",
@@ -101,7 +101,7 @@
     },
     {
       "name": "monetization_action",
-      "description": "Manage AI feature monetization models (addon, usage, hybrid) and scenario overrides"
+      "description": "Manage AI feature monetization models (addon, usage, hybrid, overcharges) and scenario overrides"
     }
   ]
 }

@@ -105,6 +105,7 @@ A `Scenario` targets a **scope** (`scope_type`: `all_clients` | `verticals` | `c
 - **Database lock & busy_timeout**: SvelteKit and MCP write to the same SQLite WAL file. Both connection initialization paths must set `db.pragma('busy_timeout = 5000')` to handle lock contention.
 - **Health check contract**: SvelteKit exposes `/api/health` returning `{ ok: true, name: 'sherpa', version, dbPath }`. The `name` proving identity and `version` mapping to `package.json` are critical for launcher validation; `dbPath` must match the launcher's resolved DB or the dashboard is treated as belonging to a different Sherpa install (not reused, not killed).
 - `.npmrc` sets `engine-strict=true`.
+- **MCP Architecture and Guidance**: Comprehensive details on MCP exposure surfaces, transport, codegen sync, and development maintenance reside in [MCP-ARCHITECTURE.md](file:///Users/piotrlangowski/Documents/Sherpa/MCP-ARCHITECTURE.md).
 
 ## graphify
 

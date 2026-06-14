@@ -4,6 +4,7 @@ description: Coding patterns and architectural conventions extracted from the Sh
 version: 1.0.0
 source: local-git-analysis
 analyzed_commits: 100
+surface: dev
 ---
 
 # Sherpa Coding Patterns
