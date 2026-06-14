@@ -103,7 +103,7 @@ Typical ROI calculators don't understand LLM economics; token cost calculators d
 - **Scenario comparison** — side-by-side KPIs, cumulative ROI curves and opportunity cost (ΔNPV) between alternatives.
 - **Import & export** — model your real customer base from a CSV export (CRM/billing), export scenarios to JSON/CSV, download the dashboard as a high-res PNG.
 - **Current model prices** — bundled price list for OpenAI, Anthropic and Google models with a visible "prices as of" date and one-click sync.
-- **MCP server** — 11 consolidated tools and 2 resources exposing the same engine to LLM hosts; includes full database CRUD capabilities with action parameters and Human-in-the-Loop safety confirmation for deletions, natural-language scenario generation, and 4 bundled agent skills.
+- **MCP server** — 12 consolidated tools (including a dedicated monetization manager) and 2 resources exposing the same engine to LLM hosts; includes full database CRUD capabilities with action parameters and Human-in-the-Loop safety confirmation for deletions, natural-language scenario generation, and 4 bundled agent skills.
 
 ## Methodology & ROI Calculations
 

@@ -29,7 +29,10 @@ import type {
   CostItem,
   CalculationResult,
   Currency,
-  ExchangeRates
+  ExchangeRates,
+  CreditSettings,
+  MonetizationConfig,
+  RevenueSource
 } from "./shared/types.js";
 
 const manifestPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../manifest.json');
@@ -78,15 +81,193 @@ function loadCurrencyContext(): CurrencyContext {
 // Helper: Query all providers from database
 function getProviders(): Provider[] {
   return db.prepare(`
-    SELECT id, name, model_name, input_price, output_price, is_predefined, currency, updated_at
+    SELECT id, name, model_name, input_price, output_price, is_predefined, currency, input_tokens_per_credit, output_tokens_per_credit, updated_at
     FROM providers
   `).all() as any[];
+}
+
+// Helper: Query default credit settings from settings table
+function getCreditSettings(): CreditSettings {
+  const rows = db.prepare("SELECT key, value FROM settings WHERE key LIKE 'default_%'").all() as { key: string; value: string }[];
+  const map: Record<string, string> = {};
+  for (const r of rows) {
+    map[r.key] = r.value;
+  }
+  return {
+    defaultPricePerCredit: parseFloat(map['default_price_per_credit'] || '0.02'),
+    defaultOverchargeMarkup: parseFloat(map['default_overcharge_markup'] || '1.5'),
+    defaultOverchargeUserPct: parseFloat(map['default_overcharge_user_pct'] || '0.2'),
+    defaultAvgOverchargePct: parseFloat(map['default_avg_overcharge_pct'] || '0.5'),
+    defaultInputTokensPerCredit: parseInt(map['default_input_tokens_per_credit'] || '1000000', 10),
+    defaultOutputTokensPerCredit: parseInt(map['default_output_tokens_per_credit'] || '333333', 10)
+  };
+}
+
+// Helper: Resolve effective monetization config for each service in the scenario
+function attachMonetization(scenario: Scenario): void {
+  const services = scenario.services ?? [];
+  if (services.length === 0) return;
+
+  const catalogRows = db.prepare(`
+    SELECT entity_type, entity_id, monetization_type,
+           addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+           usage_variant, price_per_credit,
+           hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+           overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+    FROM monetization_configs
+    WHERE scenario_id IS NULL
+  `).all() as any[];
+
+  const catalog = new Map<string, MonetizationConfig>();
+  for (const r of catalogRows) {
+    catalog.set(`${r.entity_type}:${r.entity_id}`, {
+      monetization_type: r.monetization_type,
+      addon_monthly_fee: r.addon_monthly_fee,
+      addon_has_usage_limit: r.addon_has_usage_limit === 1,
+      addon_usage_limit: r.addon_usage_limit,
+      addon_overcharge_policy: r.addon_overcharge_policy,
+      usage_variant: r.usage_variant,
+      price_per_credit: r.price_per_credit,
+      hybrid_monthly_fee: r.hybrid_monthly_fee,
+      hybrid_included_credits: r.hybrid_included_credits,
+      hybrid_overcharge_policy: r.hybrid_overcharge_policy,
+      overcharge_markup: r.overcharge_markup,
+      overcharge_user_pct: r.overcharge_user_pct,
+      avg_overcharge_pct: r.avg_overcharge_pct
+    });
+  }
+
+  const overrides = new Map<string, MonetizationConfig>();
+  if (scenario.id) {
+    const overrideRows = db.prepare(`
+      SELECT entity_type, entity_id, monetization_type,
+             addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+             usage_variant, price_per_credit,
+             hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+             overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+      FROM monetization_configs
+      WHERE scenario_id = ?
+    `).all(scenario.id) as any[];
+
+    for (const r of overrideRows) {
+      overrides.set(`${r.entity_type}:${r.entity_id}`, {
+        monetization_type: r.monetization_type,
+        addon_monthly_fee: r.addon_monthly_fee,
+        addon_has_usage_limit: r.addon_has_usage_limit === 1,
+        addon_usage_limit: r.addon_usage_limit,
+        addon_overcharge_policy: r.addon_overcharge_policy,
+        usage_variant: r.usage_variant,
+        price_per_credit: r.price_per_credit,
+        hybrid_monthly_fee: r.hybrid_monthly_fee,
+        hybrid_included_credits: r.hybrid_included_credits,
+        hybrid_overcharge_policy: r.hybrid_overcharge_policy,
+        overcharge_markup: r.overcharge_markup,
+        overcharge_user_pct: r.overcharge_user_pct,
+        avg_overcharge_pct: r.avg_overcharge_pct
+      });
+    }
+  }
+
+  const getEffective = (entityType: 'service' | 'pack' | 'plan', entityId: string): (MonetizationConfig & { is_scenario_override: boolean }) | undefined => {
+    const key = `${entityType}:${entityId}`;
+    const ov = overrides.get(key);
+    if (ov && ov.monetization_type !== 'none') return { ...ov, is_scenario_override: true };
+    const cat = catalog.get(key);
+    if (cat && cat.monetization_type !== 'none') return { ...cat, is_scenario_override: false };
+    return undefined;
+  };
+
+  const packIds = (scenario.packs ?? []).map(p => p.id);
+  const packServicesMap = new Map<string, string[]>();
+  if (packIds.length > 0) {
+    const placeholders = packIds.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT pack_id, service_id FROM pack_services WHERE pack_id IN (${placeholders})
+    `).all(...packIds) as any[];
+    for (const r of rows) {
+      if (!packServicesMap.has(r.pack_id)) packServicesMap.set(r.pack_id, []);
+      packServicesMap.get(r.pack_id)!.push(r.service_id);
+    }
+  }
+
+  const packInfos = (scenario.packs ?? []).map(p => {
+    const serviceIds = packServicesMap.get(p.id) ?? [];
+    return {
+      name: p.name ?? '',
+      serviceIds: new Set(serviceIds),
+      config: getEffective('pack', p.id)
+    };
+  });
+
+  const planIds = (scenario.plans ?? []).map(p => p.id);
+  const planServicesMap = new Map<string, Set<string>>();
+  if (planIds.length > 0) {
+    const placeholders = planIds.map(() => '?').join(',');
+    const directRows = db.prepare(`
+      SELECT plan_id, service_id FROM plan_services WHERE plan_id IN (${placeholders})
+    `).all(...planIds) as any[];
+    for (const r of directRows) {
+      if (!planServicesMap.has(r.plan_id)) planServicesMap.set(r.plan_id, new Set());
+      planServicesMap.get(r.plan_id)!.add(r.service_id);
+    }
+    const packRows = db.prepare(`
+      SELECT pp.plan_id, ps.service_id
+      FROM plan_packs pp
+      JOIN pack_services ps ON pp.pack_id = ps.pack_id
+      WHERE pp.plan_id IN (${placeholders})
+    `).all(...planIds) as any[];
+    for (const r of packRows) {
+      if (!planServicesMap.has(r.plan_id)) planServicesMap.set(r.plan_id, new Set());
+      planServicesMap.get(r.plan_id)!.add(r.service_id);
+    }
+  }
+
+  const planInfos = (scenario.plans ?? []).map(p => {
+    const serviceIds = planServicesMap.get(p.id) ?? new Set<string>();
+    return {
+      name: p.name ?? '',
+      serviceIds,
+      config: getEffective('plan', p.id)
+    };
+  });
+
+  for (const service of services) {
+    const own = getEffective('service', service.id);
+    if (own) {
+      service.monetization = {
+        ...own,
+        inherited_from: 'service',
+        inherited_from_name: service.name,
+        is_scenario_override: own.is_scenario_override
+      };
+      continue;
+    }
+    const pack = packInfos.find(p => p.config && p.serviceIds.has(service.id));
+    if (pack) {
+      service.monetization = {
+        ...pack.config!,
+        inherited_from: 'pack',
+        inherited_from_name: pack.name,
+        is_scenario_override: pack.config!.is_scenario_override
+      };
+      continue;
+    }
+    const plan = planInfos.find(p => p.config && p.serviceIds.has(service.id));
+    if (plan) {
+      service.monetization = {
+        ...plan.config!,
+        inherited_from: 'plan',
+        inherited_from_name: plan.name,
+        is_scenario_override: plan.config!.is_scenario_override
+      };
+    }
+  }
 }
 
 // Helper: Load a full scenario using the current multi-cohort schema (scope_type + junctions)
 function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
-    SELECT id, name, description, projection_months, discount_rate, scope_type
+    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source
     FROM scenarios
     WHERE id = ?
   `).get(scenarioId) as any;
@@ -149,6 +330,24 @@ function getFullScenario(scenarioId: string): Scenario | null {
     ORDER BY ss.rollout_month ASC
   `).all(scenarioId) as any[];
 
+  // Load packs in scenario
+  s.packs = db.prepare(`
+    SELECT p.id, p.name, sp.rollout_month
+    FROM packs p
+    JOIN scenario_packs sp ON p.id = sp.pack_id
+    WHERE sp.scenario_id = ?
+    ORDER BY sp.rollout_month ASC
+  `).all(scenarioId) as any[];
+
+  // Load plans in scenario
+  s.plans = db.prepare(`
+    SELECT pl.id, pl.name, spl.rollout_month
+    FROM plans pl
+    JOIN scenario_plans spl ON pl.id = spl.plan_id
+    WHERE spl.scenario_id = ?
+    ORDER BY spl.rollout_month ASC
+  `).all(scenarioId) as any[];
+
   // Load cost items
   s.costs = db.prepare(`
     SELECT c.id, c.name, c.category, c.subcategory, c.amount, c.frequency, c.currency, c.service_id
@@ -156,6 +355,9 @@ function getFullScenario(scenarioId: string): Scenario | null {
     JOIN scenario_costs sc ON c.id = sc.cost_item_id
     WHERE sc.scenario_id = ?
   `).all(scenarioId) as any[];
+
+  // Attach effective monetization configs
+  attachMonetization(s as Scenario);
 
   return s as Scenario;
 }
@@ -201,7 +403,14 @@ server.tool(
     default_discount_rate: z.number().min(0).max(1).optional().describe("Annual discount rate (WACC) as a decimal (e.g. 0.10 for 10%), used in NPV calculations."),
     projection_horizon_months: z.number().min(12).max(120).optional().describe("Default financial projection duration in months (e.g. 36 or 60)."),
     exchange_rates: z.record(z.enum(["USD", "EUR", "PLN", "GBP"]), z.number()).optional().describe("Exchange rates relative to USD. Modifying this invalidates cached results."),
-    exchange_rates_as_of: z.string().optional().describe("ISO timestamp or date string indicating when exchange rates were last updated.")
+    exchange_rates_as_of: z.string().optional().describe("ISO timestamp or date string indicating when exchange rates were last updated."),
+    // Credit configuration defaults
+    default_price_per_credit: z.number().nonnegative().optional().describe("Default price per credit (default: 0.02)."),
+    default_input_tokens_per_credit: z.number().int().positive().optional().describe("Default input tokens per credit (default: 1000000)."),
+    default_output_tokens_per_credit: z.number().int().positive().optional().describe("Default output tokens per credit (default: 333333)."),
+    default_overcharge_markup: z.number().nonnegative().optional().describe("Default overcharge markup (default: 1.5)."),
+    default_overcharge_user_pct: z.number().min(0).max(1).optional().describe("Default overcharge user percentage (default: 0.2)."),
+    default_avg_overcharge_pct: z.number().nonnegative().optional().describe("Default average overcharge percentage (default: 0.5).")
   },
   async (args) => {
     try {
@@ -246,6 +455,37 @@ server.tool(
           if (args.exchange_rates_as_of !== undefined) {
             db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('exchange_rates_as_of', ?)")
               .run(args.exchange_rates_as_of);
+          }
+          // Credit configuration updates
+          if (args.default_price_per_credit !== undefined) {
+            db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('default_price_per_credit', ?)")
+              .run(args.default_price_per_credit.toString());
+            shouldInvalidateCache = true;
+          }
+          if (args.default_input_tokens_per_credit !== undefined) {
+            db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('default_input_tokens_per_credit', ?)")
+              .run(args.default_input_tokens_per_credit.toString());
+            shouldInvalidateCache = true;
+          }
+          if (args.default_output_tokens_per_credit !== undefined) {
+            db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('default_output_tokens_per_credit', ?)")
+              .run(args.default_output_tokens_per_credit.toString());
+            shouldInvalidateCache = true;
+          }
+          if (args.default_overcharge_markup !== undefined) {
+            db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('default_overcharge_markup', ?)")
+              .run(args.default_overcharge_markup.toString());
+            shouldInvalidateCache = true;
+          }
+          if (args.default_overcharge_user_pct !== undefined) {
+            db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('default_overcharge_user_pct', ?)")
+              .run(args.default_overcharge_user_pct.toString());
+            shouldInvalidateCache = true;
+          }
+          if (args.default_avg_overcharge_pct !== undefined) {
+            db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('default_avg_overcharge_pct', ?)")
+              .run(args.default_avg_overcharge_pct.toString());
+            shouldInvalidateCache = true;
           }
 
           if (shouldInvalidateCache) {
@@ -355,12 +595,14 @@ server.tool(
     input_price: z.number().nonnegative().optional().describe("Price per million input tokens in the specified currency. Required for 'create' action."),
     output_price: z.number().nonnegative().optional().describe("Price per million output tokens in the specified currency. Required for 'create' action."),
     currency: z.enum(["USD", "EUR", "PLN", "GBP"]).optional().describe("Currency for token pricing (default: USD)."),
+    input_tokens_per_credit: z.number().int().positive().optional().describe("Number of input tokens equal to 1 credit (default: 1000000)."),
+    output_tokens_per_credit: z.number().int().positive().optional().describe("Number of output tokens equal to 1 credit (default: 333333)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
   async (args) => {
     try {
       if (args.action === "list") {
-        const providers = db.prepare("SELECT id, name, model_name, input_price, output_price, is_predefined, currency FROM providers ORDER BY name ASC").all() as any[];
+        const providers = db.prepare("SELECT id, name, model_name, input_price, output_price, is_predefined, currency, input_tokens_per_credit, output_tokens_per_credit FROM providers ORDER BY name ASC").all() as any[];
         return { content: [{ type: "text", text: JSON.stringify(providers, null, 2) }] };
       }
       if (args.action === "create") {
@@ -378,10 +620,12 @@ server.tool(
         }
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
+        const inputTokens = args.input_tokens_per_credit !== undefined ? args.input_tokens_per_credit : 1000000;
+        const outputTokens = args.output_tokens_per_credit !== undefined ? args.output_tokens_per_credit : 333333;
         db.prepare(`
-          INSERT INTO providers (id, name, model_name, input_price, output_price, is_predefined, currency, updated_at)
-          VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-        `).run(id, args.name, args.model_name, args.input_price, args.output_price, args.currency || "USD", now);
+          INSERT INTO providers (id, name, model_name, input_price, output_price, is_predefined, currency, input_tokens_per_credit, output_tokens_per_credit, updated_at)
+          VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+        `).run(id, args.name, args.model_name, args.input_price, args.output_price, args.currency || "USD", inputTokens, outputTokens, now);
         return { content: [{ type: "text", text: `Provider '${args.name}' (${args.model_name}) created with ID: ${id}` }] };
       }
       if (args.action === "update") {
@@ -397,12 +641,14 @@ server.tool(
         const input_price = args.input_price !== undefined ? args.input_price : current.input_price;
         const output_price = args.output_price !== undefined ? args.output_price : current.output_price;
         const currency = args.currency !== undefined ? args.currency : current.currency;
+        const input_tokens = args.input_tokens_per_credit !== undefined ? args.input_tokens_per_credit : current.input_tokens_per_credit;
+        const output_tokens = args.output_tokens_per_credit !== undefined ? args.output_tokens_per_credit : current.output_tokens_per_credit;
         const now = new Date().toISOString();
         db.prepare(`
           UPDATE providers
-          SET name = ?, model_name = ?, input_price = ?, output_price = ?, currency = ?, updated_at = ?
+          SET name = ?, model_name = ?, input_price = ?, output_price = ?, currency = ?, input_tokens_per_credit = ?, output_tokens_per_credit = ?, updated_at = ?
           WHERE id = ?
-        `).run(name, model_name, input_price, output_price, currency, now, args.id);
+        `).run(name, model_name, input_price, output_price, currency, input_tokens, output_tokens, now, args.id);
         return { content: [{ type: "text", text: `Provider '${name}' updated successfully.` }] };
       }
       if (args.action === "delete") {
@@ -765,6 +1011,33 @@ server.tool(
           LEFT JOIN providers p ON s.provider_id = p.id
           ORDER BY s.name ASC
         `).all() as any[];
+        const configs = db.prepare(`
+          SELECT entity_id, monetization_type, addon_monthly_fee, addon_has_usage_limit,
+                 addon_usage_limit, addon_overcharge_policy, usage_variant, price_per_credit,
+                 hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+                 overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+          FROM monetization_configs
+          WHERE entity_type = 'service' AND scenario_id IS NULL
+        `).all() as any[];
+        const configMap = new Map(configs.map(c => [c.entity_id, c]));
+        for (const s of services) {
+          const cfg = configMap.get(s.id);
+          s.monetization = cfg ? {
+            monetization_type: cfg.monetization_type,
+            addon_monthly_fee: cfg.addon_monthly_fee,
+            addon_has_usage_limit: cfg.addon_has_usage_limit === 1,
+            addon_usage_limit: cfg.addon_usage_limit,
+            addon_overcharge_policy: cfg.addon_overcharge_policy,
+            usage_variant: cfg.usage_variant,
+            price_per_credit: cfg.price_per_credit,
+            hybrid_monthly_fee: cfg.hybrid_monthly_fee,
+            hybrid_included_credits: cfg.hybrid_included_credits,
+            hybrid_overcharge_policy: cfg.hybrid_overcharge_policy,
+            overcharge_markup: cfg.overcharge_markup,
+            overcharge_user_pct: cfg.overcharge_user_pct,
+            avg_overcharge_pct: cfg.avg_overcharge_pct
+          } : { monetization_type: 'none' };
+        }
         return {
           content: [{ type: "text", text: JSON.stringify(services, null, 2) }]
         };
@@ -874,6 +1147,15 @@ server.tool(
     try {
       if (args.action === "list") {
         const packs = db.prepare("SELECT id, name, description FROM packs").all() as any[];
+        const configs = db.prepare(`
+          SELECT entity_id, monetization_type, addon_monthly_fee, addon_has_usage_limit,
+                 addon_usage_limit, addon_overcharge_policy, usage_variant, price_per_credit,
+                 hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+                 overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+          FROM monetization_configs
+          WHERE entity_type = 'pack' AND scenario_id IS NULL
+        `).all() as any[];
+        const configMap = new Map(configs.map(c => [c.entity_id, c]));
         for (const p of packs) {
           p.services = db.prepare(`
             SELECT s.id, s.name, s.status
@@ -881,6 +1163,22 @@ server.tool(
             JOIN pack_services ps ON s.id = ps.service_id
             WHERE ps.pack_id = ?
           `).all(p.id) as any[];
+          const cfg = configMap.get(p.id);
+          p.monetization = cfg ? {
+            monetization_type: cfg.monetization_type,
+            addon_monthly_fee: cfg.addon_monthly_fee,
+            addon_has_usage_limit: cfg.addon_has_usage_limit === 1,
+            addon_usage_limit: cfg.addon_usage_limit,
+            addon_overcharge_policy: cfg.addon_overcharge_policy,
+            usage_variant: cfg.usage_variant,
+            price_per_credit: cfg.price_per_credit,
+            hybrid_monthly_fee: cfg.hybrid_monthly_fee,
+            hybrid_included_credits: cfg.hybrid_included_credits,
+            hybrid_overcharge_policy: cfg.hybrid_overcharge_policy,
+            overcharge_markup: cfg.overcharge_markup,
+            overcharge_user_pct: cfg.overcharge_user_pct,
+            avg_overcharge_pct: cfg.avg_overcharge_pct
+          } : { monetization_type: 'none' };
         }
         return {
           content: [{ type: "text", text: JSON.stringify(packs, null, 2) }]
@@ -983,6 +1281,15 @@ server.tool(
     try {
       if (args.action === "list") {
         const plans = db.prepare("SELECT id, name, description, base_price FROM plans").all() as any[];
+        const configs = db.prepare(`
+          SELECT entity_id, monetization_type, addon_monthly_fee, addon_has_usage_limit,
+                 addon_usage_limit, addon_overcharge_policy, usage_variant, price_per_credit,
+                 hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+                 overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+          FROM monetization_configs
+          WHERE entity_type = 'plan' AND scenario_id IS NULL
+        `).all() as any[];
+        const configMap = new Map(configs.map(c => [c.entity_id, c]));
         for (const p of plans) {
           p.services = db.prepare(`
             SELECT s.id, s.name FROM services s
@@ -995,6 +1302,22 @@ server.tool(
             JOIN plan_packs pp ON pk.id = pp.pack_id
             WHERE pp.plan_id = ?
           `).all(p.id) as any[];
+          const cfg = configMap.get(p.id);
+          p.monetization = cfg ? {
+            monetization_type: cfg.monetization_type,
+            addon_monthly_fee: cfg.addon_monthly_fee,
+            addon_has_usage_limit: cfg.addon_has_usage_limit === 1,
+            addon_usage_limit: cfg.addon_usage_limit,
+            addon_overcharge_policy: cfg.addon_overcharge_policy,
+            usage_variant: cfg.usage_variant,
+            price_per_credit: cfg.price_per_credit,
+            hybrid_monthly_fee: cfg.hybrid_monthly_fee,
+            hybrid_included_credits: cfg.hybrid_included_credits,
+            hybrid_overcharge_policy: cfg.hybrid_overcharge_policy,
+            overcharge_markup: cfg.overcharge_markup,
+            overcharge_user_pct: cfg.overcharge_user_pct,
+            avg_overcharge_pct: cfg.avg_overcharge_pct
+          } : { monetization_type: 'none' };
         }
         return {
           content: [{ type: "text", text: JSON.stringify(plans, null, 2) }]
@@ -1110,6 +1433,7 @@ server.tool(
     projection_months: z.number().int().min(12).max(120).optional().describe("Projection horizon in months (default: 36)."),
     discount_rate: z.number().min(0).max(1).optional().describe("Annual discount rate as a decimal (default: 0.10 for 10%)."),
     scope_type: z.enum(["all_clients", "verticals", "cohorts"]).optional().describe("Scope type (default: cohorts)."),
+    revenue_source: z.enum(["cohort", "monetization", "both"]).optional().describe("Where the scenario draws its revenue from (default: cohort)."),
     cohort_config: z.object({
       name: z.string(),
       current_users: z.number(),
@@ -1137,7 +1461,7 @@ server.tool(
     try {
       if (args.action === "list") {
         const scenarios = db.prepare(`
-          SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type,
+          SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source,
                  r.payback_months, r.npv, r.irr_annual, r.tco, r.roi_percent
           FROM scenarios s
           LEFT JOIN scenario_results r ON s.id = r.scenario_id
@@ -1187,10 +1511,11 @@ server.tool(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate ?? 0, cc.monthly_churn_rate ?? 0.05, cc.retention_floor ?? 0.60, cc.monthly_expansion_rate ?? 0.02, cc.ai_adoption_rate ?? 0.30, cc.base_arpu ?? 100, cc.arpu_uplift ?? 0, cc.arpu_uplift_percent ?? 0, cc.churn_reduction ?? 0, cc.acquisition_uplift ?? 0, now, now);
 
+          const revSource = args.revenue_source || 'cohort';
           db.prepare(`
-            INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?)
-          `).run(scenarioId, args.name, args.description || null, args.projection_months ?? 36, args.discount_rate ?? 0.10, now, now);
+            INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?, ?)
+          `).run(scenarioId, args.name, args.description || null, args.projection_months ?? 36, args.discount_rate ?? 0.10, revSource, now, now);
 
           db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`)
             .run(scenarioId, cohortId);
@@ -1224,6 +1549,7 @@ server.tool(
         // Calculate and cache results
         const fullScenario = getFullScenario(scenarioId)!;
         const providers = getProviders();
+        const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
           fullScenario,
@@ -1231,7 +1557,7 @@ server.tool(
           currency,
           exchangeRates
         );
-        const results = calculateScenario(normalizedScenario, normalizedProviders);
+        const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
         const resultsId = crypto.randomUUID();
 
         db.prepare(`
@@ -1264,18 +1590,20 @@ server.tool(
           const projection_months = args.projection_months !== undefined ? args.projection_months : current.projection_months;
           const discount_rate = args.discount_rate !== undefined ? args.discount_rate : current.discount_rate;
           const scope_type = args.scope_type !== undefined ? args.scope_type : current.scope_type;
+          const revenue_source = args.revenue_source !== undefined ? args.revenue_source : current.revenue_source;
           const now = new Date().toISOString();
 
           db.prepare(`
             UPDATE scenarios
-            SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, updated_at = ?
+            SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, updated_at = ?
             WHERE id = ?
-          `).run(name, description, projection_months, discount_rate, scope_type, now, args.id);
+          `).run(name, description, projection_months, discount_rate, scope_type, revenue_source, now, args.id);
         })();
 
         // Re-calculate projections after modification
         const fullScenario = getFullScenario(args.id)!;
         const providers = getProviders();
+        const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
           fullScenario,
@@ -1283,7 +1611,7 @@ server.tool(
           currency,
           exchangeRates
         );
-        const results = calculateScenario(normalizedScenario, normalizedProviders);
+        const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
         const now = new Date().toISOString();
 
         db.prepare(`
@@ -1326,6 +1654,7 @@ server.tool(
           return { content: [{ type: "text", text: `Scenario '${args.id}' not found` }], isError: true };
         }
         const providers = getProviders();
+        const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
           scenario,
@@ -1333,7 +1662,7 @@ server.tool(
           currency,
           exchangeRates
         );
-        const results = calculateScenario(normalizedScenario, normalizedProviders);
+        const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
         const now = new Date().toISOString();
         db.prepare(`
           INSERT OR REPLACE INTO scenario_results (id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at)
@@ -1367,7 +1696,8 @@ server.tool(
           exchangeRates
         );
         const varPercent = args.variation_percent ?? 0.10;
-        const sensitivity = runSensitivityAnalysis(normalizedScenario, normalizedProviders, varPercent);
+        const creditSettings = getCreditSettings();
+        const sensitivity = runSensitivityAnalysis(normalizedScenario, normalizedProviders, varPercent, creditSettings);
 
         let md = `### Sensitivity Analysis (Tornado Chart Data) for ${scenario.name}\n`;
         md += `*Base NPV: ${sensitivity.baseNpv.toLocaleString()} ${currency}*\n\n`;
@@ -1384,6 +1714,7 @@ server.tool(
           throw new z.ZodError([{ code: "custom", path: ["ids"], message: "Porównanie wymaga podania co najmniej dwóch identyfikatorów w tablicy 'ids'." }]);
         }
         const providers = getProviders();
+        const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
         const scenarios: { scenario: Scenario; results: CalculationResult }[] = [];
 
@@ -1398,7 +1729,7 @@ server.tool(
             currency,
             exchangeRates
           );
-          const results = calculateScenario(normalizedScenario, normalizedProviders);
+          const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
           scenarios.push({ scenario, results });
         }
 
@@ -1512,6 +1843,7 @@ server.tool(
         // Run and cache ROI results
         const fullScenario = getFullScenario(scenarioId)!;
         const providers = getProviders();
+        const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
           fullScenario,
@@ -1519,7 +1851,7 @@ server.tool(
           currency,
           exchangeRates
         );
-        const results = calculateScenario(normalizedScenario, normalizedProviders);
+        const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
         const resultsId = crypto.randomUUID();
 
         db.prepare(`
@@ -1918,6 +2250,199 @@ server.tool(
       throw new Error(`Nieobsługiwana akcja: ${args.action}`);
     } catch (err: any) {
       return formatSemanticError(err, "dashboard_action");
+    }
+  }
+);
+
+// 11. Monetization config and override management tool
+server.tool(
+  "monetization_action",
+  "Manage AI monetization configurations and overrides for services, packs, and plans. Support actions: 'get' (retrieve config for an entity), 'set' (upsert configuration or override), 'delete' (remove configuration or override), 'list_catalog' (list all catalog configurations), 'list_overrides' (list all scenario overrides).",
+  {
+    action: z.enum(["get", "set", "delete", "list_catalog", "list_overrides"]).describe("Action to perform."),
+    entity_type: z.enum(["service", "pack", "plan"]).optional().describe("Type of the entity ('service', 'pack', or 'plan'). Required for 'get', 'set', and 'delete'."),
+    entity_id: z.string().optional().describe("UUID of the entity. Required for 'get', 'set', and 'delete'."),
+    scenario_id: z.string().nullable().optional().describe("Scenario UUID for scenario-level override. If null/omitted, applies to the catalog definition."),
+    
+    // MonetizationConfig parameters (optional/nullable)
+    monetization_type: z.enum(["none", "addon", "usage", "hybrid"]).optional().describe("Monetization model type (default: none)."),
+    addon_monthly_fee: z.number().nullable().optional().describe("Monthly flat fee for add-on."),
+    addon_has_usage_limit: z.boolean().optional().describe("Whether the add-on has usage limits."),
+    addon_usage_limit: z.number().nullable().optional().describe("Usage credit limit for add-on."),
+    addon_overcharge_policy: z.enum(["hard_stop", "credit_pack", "payg"]).nullable().optional().describe("Policy when addon limit is reached."),
+    usage_variant: z.enum(["prepaid", "payg"]).nullable().optional().describe("Usage billing variant: 'prepaid' or 'payg'."),
+    price_per_credit: z.number().nullable().optional().describe("Price charged per usage credit."),
+    hybrid_monthly_fee: z.number().nullable().optional().describe("Monthly base fee for hybrid model."),
+    hybrid_included_credits: z.number().nullable().optional().describe("Included credits in hybrid model monthly fee."),
+    hybrid_overcharge_policy: z.enum(["hard_stop", "credit_pack", "payg"]).nullable().optional().describe("Policy when hybrid credit pool is exhausted."),
+    overcharge_markup: z.number().nullable().optional().describe("Markup multiplier for overcharge credits."),
+    overcharge_user_pct: z.number().min(0).max(1).nullable().optional().describe("Percentage of users exceeding usage limits."),
+    avg_overcharge_pct: z.number().nullable().optional().describe("Average amount of overcharge as a percentage of standard limit.")
+  },
+  async (args) => {
+    try {
+      if (args.action === "list_catalog") {
+        const rows = db.prepare(`
+          SELECT id, entity_type, entity_id, scenario_id, monetization_type,
+                 addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+                 usage_variant, price_per_credit,
+                 hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+                 overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+          FROM monetization_configs
+          WHERE scenario_id IS NULL
+        `).all() as any[];
+        // coerce boolean
+        for (const r of rows) {
+          r.addon_has_usage_limit = r.addon_has_usage_limit === 1;
+        }
+        return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
+      }
+
+      if (args.action === "list_overrides") {
+        const rows = db.prepare(`
+          SELECT id, entity_type, entity_id, scenario_id, monetization_type,
+                 addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+                 usage_variant, price_per_credit,
+                 hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+                 overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+          FROM monetization_configs
+          WHERE scenario_id IS NOT NULL
+        `).all() as any[];
+        for (const r of rows) {
+          r.addon_has_usage_limit = r.addon_has_usage_limit === 1;
+        }
+        return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
+      }
+
+      if (!args.entity_type || !args.entity_id) {
+        throw new z.ZodError([
+          { code: "custom", path: ["entity_type"], message: "entity_type i entity_id są wymagane dla get, set i delete." }
+        ]);
+      }
+
+      const entityType = args.entity_type;
+      const entityId = args.entity_id;
+      const scenarioId = args.scenario_id || null;
+
+      if (args.action === "get") {
+        const row = scenarioId
+          ? db.prepare(`
+              SELECT id, entity_type, entity_id, scenario_id, monetization_type,
+                     addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+                     usage_variant, price_per_credit,
+                     hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+                     overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+              FROM monetization_configs
+              WHERE entity_type = ? AND entity_id = ? AND scenario_id = ?
+            `).get(entityType, entityId, scenarioId)
+          : db.prepare(`
+              SELECT id, entity_type, entity_id, scenario_id, monetization_type,
+                     addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+                     usage_variant, price_per_credit,
+                     hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+                     overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+              FROM monetization_configs
+              WHERE entity_type = ? AND entity_id = ? AND scenario_id IS NULL
+            `).get(entityType, entityId);
+
+        if (!row) {
+          return { content: [{ type: "text", text: JSON.stringify({ monetization_type: "none" }, null, 2) }] };
+        }
+        (row as any).addon_has_usage_limit = (row as any).addon_has_usage_limit === 1;
+        return { content: [{ type: "text", text: JSON.stringify(row, null, 2) }] };
+      }
+
+      if (args.action === "delete") {
+        db.transaction(() => {
+          if (scenarioId) {
+            db.prepare(`
+              DELETE FROM monetization_configs
+              WHERE entity_type = ? AND entity_id = ? AND scenario_id = ?
+            `).run(entityType, entityId, scenarioId);
+          } else {
+            db.prepare(`
+              DELETE FROM monetization_configs
+              WHERE entity_type = ? AND entity_id = ? AND scenario_id IS NULL
+            `).run(entityType, entityId);
+          }
+          // Invalidate cache
+          db.prepare("DELETE FROM scenario_results").run();
+        })();
+        return { content: [{ type: "text", text: `Monetization configuration for ${entityType} '${entityId}' deleted successfully.` }] };
+      }
+
+      if (args.action === "set") {
+        // Upsert logic
+        // If monetization_type is 'none', it behaves as delete
+        const monType = args.monetization_type || 'none';
+        if (monType === 'none') {
+          db.transaction(() => {
+            if (scenarioId) {
+              db.prepare(`
+                DELETE FROM monetization_configs
+                WHERE entity_type = ? AND entity_id = ? AND scenario_id = ?
+              `).run(entityType, entityId, scenarioId);
+            } else {
+              db.prepare(`
+                DELETE FROM monetization_configs
+                WHERE entity_type = ? AND entity_id = ? AND scenario_id IS NULL
+              `).run(entityType, entityId);
+            }
+            db.prepare("DELETE FROM scenario_results").run();
+          })();
+          return { content: [{ type: "text", text: `Monetization configuration for ${entityType} '${entityId}' set to 'none' (deleted).` }] };
+        }
+
+        db.transaction(() => {
+          const existing = scenarioId
+            ? db.prepare(`SELECT id FROM monetization_configs WHERE entity_type = ? AND entity_id = ? AND scenario_id = ?`).get(entityType, entityId, scenarioId) as { id: string } | undefined
+            : db.prepare(`SELECT id FROM monetization_configs WHERE entity_type = ? AND entity_id = ? AND scenario_id IS NULL`).get(entityType, entityId) as { id: string } | undefined;
+
+          const values = [
+            monType,
+            args.addon_monthly_fee ?? null,
+            args.addon_has_usage_limit ? 1 : 0,
+            args.addon_usage_limit ?? null,
+            args.addon_overcharge_policy ?? null,
+            args.usage_variant ?? null,
+            args.price_per_credit ?? null,
+            args.hybrid_monthly_fee ?? null,
+            args.hybrid_included_credits ?? null,
+            args.hybrid_overcharge_policy ?? null,
+            args.overcharge_markup ?? null,
+            args.overcharge_user_pct ?? null,
+            args.avg_overcharge_pct ?? null
+          ];
+
+          if (existing) {
+            db.prepare(`
+              UPDATE monetization_configs SET
+                monetization_type = ?, addon_monthly_fee = ?, addon_has_usage_limit = ?, addon_usage_limit = ?, addon_overcharge_policy = ?,
+                usage_variant = ?, price_per_credit = ?,
+                hybrid_monthly_fee = ?, hybrid_included_credits = ?, hybrid_overcharge_policy = ?,
+                overcharge_markup = ?, overcharge_user_pct = ?, avg_overcharge_pct = ?
+              WHERE id = ?
+            `).run(...values, existing.id);
+          } else {
+            db.prepare(`
+              INSERT INTO monetization_configs (
+                id, entity_type, entity_id, scenario_id, monetization_type,
+                addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+                usage_variant, price_per_credit,
+                hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+                overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(crypto.randomUUID(), entityType, entityId, scenarioId, ...values);
+          }
+          db.prepare("DELETE FROM scenario_results").run();
+        })();
+
+        return { content: [{ type: "text", text: `Monetization configuration for ${entityType} '${entityId}' saved successfully.` }] };
+      }
+
+      throw new Error(`Nieobsługiwana akcja: ${args.action}`);
+    } catch (err: any) {
+      return formatSemanticError(err, "monetization_action");
     }
   }
 );
