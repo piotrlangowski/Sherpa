@@ -256,6 +256,24 @@ export interface ScopeOverride {
   acquisition_uplift?: number | null;
   gross_margin?: number | null;
   adoption_ramp_months?: number | null;
+  
+  // Presentation-only fields loaded on demand
+  target_name?: string;
+  base_values?: {
+    monthly_churn_rate: number | null;
+    monthly_acquisition: number | null;
+    acquisition_growth_rate: number | null;
+    ai_adoption_rate: number | null;
+    retention_floor: number | null;
+    expansion_rate: number | null;
+    arpu_override: number | null;
+    arpu_uplift: number | null;
+    arpu_uplift_percent: number | null;
+    churn_reduction: number | null;
+    acquisition_uplift: number | null;
+    gross_margin: number | null;
+    adoption_ramp_months: number | null;
+  } | null;
 }
 
 export interface Scenario {
@@ -339,6 +357,7 @@ export interface MonthlyBreakdown {
   totalCosts: number;
   netCashFlow: number;
   cumulativeCashFlow: number;
+  cumulativeCashFlowLower?: number; // lower bound: ARPU-uplift-only attribution
   grossRevenue: number; // MRR with AI
   baselineRevenue: number; // MRR baseline
   baselineCustomers: number; // baseline customers

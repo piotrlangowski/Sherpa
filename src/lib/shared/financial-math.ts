@@ -605,6 +605,7 @@ export function calculateScenario(
 
   const timeline: MonthlyBreakdown[] = [];
   let cumulativeCashFlow = 0;
+  let cumulativeCashFlowLower = 0;
   const cashFlowsLower: number[] = [];
   let totalRevenueLowerSum = 0;
 
@@ -737,6 +738,7 @@ export function calculateScenario(
     const netCashFlow = upperRevenue - totalCosts;
     const netCashFlowLower = lowerRevenue - totalCosts;
     cumulativeCashFlow += netCashFlow;
+    cumulativeCashFlowLower += netCashFlowLower;
 
     timeline.push({
       month: t,
@@ -749,6 +751,7 @@ export function calculateScenario(
       totalCosts: parseFloat(totalCosts.toFixed(2)),
       netCashFlow: parseFloat(netCashFlow.toFixed(2)),
       cumulativeCashFlow: parseFloat(cumulativeCashFlow.toFixed(2)),
+      cumulativeCashFlowLower: parseFloat(cumulativeCashFlowLower.toFixed(2)),
       grossRevenue: parseFloat(grossRevenue.toFixed(2)),
       baselineRevenue: parseFloat(baselineRevenue.toFixed(2)),
       baselineCustomers: Math.round(baselineCustomers),

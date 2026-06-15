@@ -188,6 +188,10 @@
       ]
     };
 
+    const hasLowerBound = timeline.some((t: any) =>
+      t.cumulativeCashFlowLower !== undefined && t.cumulativeCashFlowLower !== t.cumulativeCashFlow
+    );
+
     const cumulative = {
       tooltip: {
         trigger: 'axis',
@@ -196,14 +200,62 @@
         borderWidth: 1,
         textStyle: { color: tooltipText },
         formatter: (params: any) => {
-          const p = params[0];
-          return `<div class="px-2 py-1 select-none text-xs">
-            <span class="text-muted-foreground">${p.name}</span><br/>
-            <span class="font-bold text-foreground">Cumulative: ${formatCurrency(p.value, appState.currency)}</span>
+          const upper = params.find((p: any) => p.seriesName === 'Full Attribution (upper)') ?? params[0];
+          const lower = params.find((p: any) => p.seriesName === 'ARPU Uplift Only (lower)');
+          const upperVal = upper?.value ?? 0;
+          const lowerVal = lower?.value ?? upperVal;
+          const isBand = hasLowerBound && lower;
+
+          const breakeven = upperVal >= 0
+            ? `<span style="color:#10b981;font-weight:bold">✓ ROI positive</span>`
+            : `<span style="color:#f59e0b;font-weight:bold">⏳ Pre-break-even</span>`;
+
+          return `<div style="padding:8px 10px;min-width:230px;font-size:11px;line-height:1.6">
+            <div style="font-weight:700;margin-bottom:4px;color:${tooltipText}">${upper?.name ?? ''}</div>
+            ${isBand ? `
+            <div style="display:flex;justify-content:space-between;gap:12px">
+              <span style="color:#06b6d4">▬ Full attribution</span>
+              <span style="font-weight:700;font-family:monospace">${formatCurrency(upperVal, appState.currency)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:12px">
+              <span style="color:#818cf8">▬ ARPU uplift only</span>
+              <span style="font-weight:700;font-family:monospace">${formatCurrency(lowerVal, appState.currency)}</span>
+            </div>
+            <div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(148,163,184,0.2);font-size:10px;color:${isDark ? '#94a3b8' : '#64748b'}">
+              Band = attribution uncertainty range (V15 methodology)
+            </div>
+            ` : `
+            <div style="display:flex;justify-content:space-between;gap:12px">
+              <span style="color:#06b6d4">▬ Cumulative incremental margin</span>
+              <span style="font-weight:700;font-family:monospace">${formatCurrency(upperVal, appState.currency)}</span>
+            </div>
+            `}
+            <div style="margin-top:4px;font-size:10px">${breakeven}</div>
           </div>`;
         }
       },
-      grid: { left: '3%', right: '4%', top: '10%', bottom: '8%', containLabel: true },
+      legend: {
+        data: hasLowerBound
+          ? ['Full Attribution (upper)', 'ARPU Uplift Only (lower)']
+          : ['Cumulative Incremental Margin'],
+        textStyle: { color: textColor, fontSize: 10 },
+        bottom: 0,
+        itemWidth: 20,
+        itemHeight: 3,
+        tooltip: {
+          show: true,
+          formatter: (params: any) => {
+            if (params.name === 'Full Attribution (upper)') {
+              return '<div style="max-width:220px;padding:6px 8px;font-size:10px;line-height:1.5">Upper bound: credits full incremental retention + acquisition + ARPU uplift effect (gross margin applied). Sherpa V15.</div>';
+            }
+            if (params.name === 'ARPU Uplift Only (lower)') {
+              return '<div style="max-width:220px;padding:6px 8px;font-size:10px;line-height:1.5">Lower bound: credits only the per-seat price uplift (ARPU delta × retained customers). Conservative attribution. Sherpa V15.</div>';
+            }
+            return '<div style="max-width:220px;padding:6px 8px;font-size:10px;line-height:1.5">Cumulative incremental contribution margin minus total costs. Crosses $0 at break-even. Sherpa V15 methodology.</div>';
+          }
+        }
+      },
+      grid: { left: '3%', right: '4%', top: '8%', bottom: '15%', containLabel: true },
       xAxis: {
         type: 'category',
         data: monthsLabel,
@@ -221,20 +273,34 @@
         splitLine: { lineStyle: { color: splitLineColor } }
       },
       series: [
+        // Lower bound rendered first so upper fills on top
+        ...(hasLowerBound ? [{
+          name: 'ARPU Uplift Only (lower)',
+          type: 'line',
+          data: timeline.map((t: any) => t.cumulativeCashFlowLower),
+          smooth: true,
+          lineStyle: { width: 2, color: '#818cf8', type: 'dashed' },
+          itemStyle: { color: '#818cf8' },
+          symbolSize: 3,
+          areaStyle: {
+            color: isDark ? 'rgba(6, 182, 212, 0.06)' : 'rgba(6, 182, 212, 0.04)'
+          }
+        }] : []),
         {
-          name: 'Cumulative Cash Flow',
+          name: hasLowerBound ? 'Full Attribution (upper)' : 'Cumulative Incremental Margin',
           type: 'line',
           data: timeline.map((t: any) => t.cumulativeCashFlow),
           smooth: true,
           lineStyle: { width: 3.5, color: '#06b6d4' },
+          itemStyle: { color: '#06b6d4' },
           symbolSize: 4,
           areaStyle: {
             color: {
               type: 'linear',
               x: 0, y: 0, x2: 0, y2: 1,
               colorStops: [
-                { offset: 0, color: 'rgba(6, 182, 212, 0.35)' },
-                { offset: 1, color: 'rgba(6, 182, 212, 0)' }
+                { offset: 0, color: 'rgba(6, 182, 212, 0.30)' },
+                { offset: 1, color: 'rgba(6, 182, 212, 0.02)' }
               ]
             }
           },
@@ -242,6 +308,14 @@
             silent: true,
             symbol: ['none', 'none'],
             lineStyle: { color: '#ef4444', type: 'dashed', width: 1.5 },
+            label: {
+              show: true,
+              position: 'insideEndTop',
+              color: '#ef4444',
+              fontSize: 10,
+              fontWeight: 'bold',
+              formatter: 'Break-even'
+            },
             data: [{ yAxis: 0 }]
           }
         }
@@ -620,21 +694,48 @@
               {/if}
 
               {#if scenario.scope_overrides && scenario.scope_overrides.length > 0}
+                {#snippet renderComparison(label: string, baseVal: number | null | undefined, ovVal: number | null | undefined, formatFn: (val: number) => string)}
+                  {#if ovVal !== null && ovVal !== undefined}
+                    <div class="flex justify-between items-center text-[10px] py-1 border-b border-border/10 last:border-b-0">
+                      <span class="text-muted-foreground/85">{label}</span>
+                      <span class="font-mono text-foreground flex items-center">
+                        {#if baseVal !== null && baseVal !== undefined && Math.abs(baseVal - ovVal) > 0.00001}
+                          <span class="opacity-40 line-through mr-1 text-muted-foreground">{formatFn(baseVal)}</span>
+                          <span class="text-amber-500 dark:text-amber-400 font-bold mr-1 text-[9px]">➔</span>
+                        {/if}
+                        <span class="text-foreground font-semibold">{formatFn(ovVal)}</span>
+                      </span>
+                    </div>
+                  {/if}
+                {/snippet}
+
                 <div class="mt-2 text-xs">
-                  <div class="mb-1 text-amber-500 font-bold">Parameter Overrides Applied:</div>
-                  <div class="space-y-1">
+                  <div class="mb-1.5 text-amber-500 font-bold flex items-center select-none text-[10px] uppercase tracking-wider">
+                    <TrendingUp class="h-3.5 w-3.5 mr-1" /> Parameter Overrides Applied
+                  </div>
+                  <div class="space-y-2">
                     {#each scenario.scope_overrides as ov}
-                      <div class="bg-muted/40 p-1.5 rounded text-[10px]">
-                        <strong>{ov.target_type === 'all_clients' ? 'Global Base' : ov.target_id}</strong>
-                        <div class="grid grid-cols-2 gap-x-2">
-                          {#if ov.arpu_override !== null}<span>ARPU: {formatCurrency(ov.arpu_override, appState.currency, 0)}</span>{/if}
-                          {#if ov.monthly_churn_rate !== null}<span>Churn: {ov.monthly_churn_rate * 100}%</span>{/if}
-                          {#if ov.ai_adoption_rate !== null}<span>Adoption: {ov.ai_adoption_rate * 100}%</span>{/if}
-                          {#if ov.monthly_acquisition !== null}<span>Acq: {ov.monthly_acquisition}/mo</span>{/if}
-                          {#if ov.arpu_uplift !== null && ov.arpu_uplift !== undefined}<span>AI ARPU Up ($): {formatCurrency(ov.arpu_uplift, appState.currency, 0)}</span>{/if}
-                          {#if ov.arpu_uplift_percent !== null && ov.arpu_uplift_percent !== undefined}<span>AI ARPU Up (%): {ov.arpu_uplift_percent * 100}%</span>{/if}
-                          {#if ov.churn_reduction !== null && ov.churn_reduction !== undefined}<span>AI Churn Red: {ov.churn_reduction * 100}%</span>{/if}
-                          {#if ov.acquisition_uplift !== null && ov.acquisition_uplift !== undefined}<span>AI Acq Up: {ov.acquisition_uplift * 100}%</span>{/if}
+                      <div class="bg-muted/30 p-2.5 rounded border border-border/40 border-l-2 border-l-amber-500/80 space-y-1.5">
+                        <div class="flex justify-between items-center border-b border-border/45 pb-1 select-none">
+                          <span class="font-bold text-foreground truncate max-w-[170px]" title={ov.target_name}>{ov.target_name}</span>
+                          <Badge variant="outline" class="text-[8px] px-1 py-0 uppercase tracking-wider font-extrabold bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+                            {ov.target_type === 'all_clients' ? 'Global' : ov.target_type}
+                          </Badge>
+                        </div>
+                        <div class="space-y-0">
+                          {@render renderComparison('ARPU Base', ov.base_values?.arpu_override, ov.arpu_override, (v: number) => formatCurrency(v, appState.currency, 0))}
+                          {@render renderComparison('Monthly Churn', ov.base_values?.monthly_churn_rate, ov.monthly_churn_rate, formatPercent)}
+                          {@render renderComparison('Adoption Rate', ov.base_values?.ai_adoption_rate, ov.ai_adoption_rate, formatPercent)}
+                          {@render renderComparison('New Customers', ov.base_values?.monthly_acquisition, ov.monthly_acquisition, (v: number) => `${formatNumber(v)}/mo`)}
+                          {@render renderComparison('Acquisition Growth', ov.base_values?.acquisition_growth_rate, ov.acquisition_growth_rate, formatPercent)}
+                          {@render renderComparison('Retention Floor', ov.base_values?.retention_floor, ov.retention_floor, formatPercent)}
+                          {@render renderComparison('Expansion Rate', ov.base_values?.expansion_rate, ov.expansion_rate, formatPercent)}
+                          {@render renderComparison('AI ARPU Uplift ($)', ov.base_values?.arpu_uplift, ov.arpu_uplift, (v: number) => formatCurrency(v, appState.currency, 0))}
+                          {@render renderComparison('AI ARPU Uplift (%)', ov.base_values?.arpu_uplift_percent, ov.arpu_uplift_percent, formatPercent)}
+                          {@render renderComparison('AI Churn Reduction', ov.base_values?.churn_reduction, ov.churn_reduction, formatPercent)}
+                          {@render renderComparison('AI Acquisition Uplift', ov.base_values?.acquisition_uplift, ov.acquisition_uplift, formatPercent)}
+                          {@render renderComparison('Gross Margin', ov.base_values?.gross_margin, ov.gross_margin, formatPercent)}
+                          {@render renderComparison('Adoption Ramp', ov.base_values?.adoption_ramp_months, ov.adoption_ramp_months, (v: number) => `${v} mo`)}
                         </div>
                       </div>
                     {/each}

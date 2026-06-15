@@ -147,15 +147,109 @@ export const scenariosRepository = {
       WHERE sc.scenario_id = ?
     `).all(id) as any[];
 
-    // Load scope overrides
+    // Load scope overrides with resolved target names and base values
     const overrideRows = db.prepare(`
-      SELECT id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
-             acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
-             arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
-             gross_margin, adoption_ramp_months
-      FROM scenario_scope_overrides
-      WHERE scenario_id = ?
+      SELECT 
+        o.id, o.scenario_id, o.target_type, o.target_id, o.monthly_churn_rate, o.monthly_acquisition,
+        o.acquisition_growth_rate, o.ai_adoption_rate, o.retention_floor, o.expansion_rate, o.arpu_override,
+        o.arpu_uplift, o.arpu_uplift_percent, o.churn_reduction, o.acquisition_uplift,
+        o.gross_margin, o.adoption_ramp_months,
+        CASE 
+          WHEN o.target_type = 'cohort' THEN c.name 
+          WHEN o.target_type = 'vertical' THEN v.name
+          ELSE 'Global Client Base'
+        END as target_name,
+        c.base_arpu as cohort_base_arpu,
+        c.monthly_churn_rate as cohort_base_monthly_churn_rate,
+        c.monthly_acquisition as cohort_base_monthly_acquisition,
+        c.acquisition_growth_rate as cohort_base_acquisition_growth_rate,
+        c.ai_adoption_rate as cohort_base_ai_adoption_rate,
+        c.retention_floor as cohort_base_retention_floor,
+        c.monthly_expansion_rate as cohort_base_expansion_rate,
+        c.arpu_uplift as cohort_base_arpu_uplift,
+        c.arpu_uplift_percent as cohort_base_arpu_uplift_percent,
+        c.churn_reduction as cohort_base_churn_reduction,
+        c.acquisition_uplift as cohort_base_acquisition_uplift,
+        c.gross_margin as cohort_base_gross_margin,
+        c.adoption_ramp_months as cohort_base_adoption_ramp_months,
+        cb.default_arpu as global_base_arpu,
+        cb.default_monthly_churn_rate as global_base_monthly_churn_rate,
+        cb.default_monthly_acquisition as global_base_monthly_acquisition,
+        cb.default_acquisition_growth_rate as global_base_acquisition_growth_rate,
+        cb.default_ai_adoption_rate as global_base_ai_adoption_rate,
+        cb.default_retention_floor as global_base_retention_floor,
+        cb.default_expansion_rate as global_base_expansion_rate,
+        cb.default_arpu_uplift as global_base_arpu_uplift,
+        cb.default_arpu_uplift_percent as global_base_arpu_uplift_percent,
+        cb.default_churn_reduction as global_base_churn_reduction,
+        cb.default_acquisition_uplift as global_base_acquisition_uplift,
+        cb.default_gross_margin as global_base_gross_margin,
+        cb.default_adoption_ramp_months as global_base_adoption_ramp_months
+      FROM scenario_scope_overrides o
+      LEFT JOIN cohort_configs c ON o.target_type = 'cohort' AND o.target_id = c.id
+      LEFT JOIN verticals v ON o.target_type = 'vertical' AND o.target_id = v.id
+      LEFT JOIN client_base cb ON o.target_type = 'all_clients'
+      WHERE o.scenario_id = ?
     `).all(id) as any[];
+
+    const mappedOverrides = overrideRows.map((row: any) => {
+      let base_values = null;
+      if (row.target_type === 'cohort') {
+        base_values = {
+          monthly_churn_rate: row.cohort_base_monthly_churn_rate,
+          monthly_acquisition: row.cohort_base_monthly_acquisition,
+          acquisition_growth_rate: row.cohort_base_acquisition_growth_rate,
+          ai_adoption_rate: row.cohort_base_ai_adoption_rate,
+          retention_floor: row.cohort_base_retention_floor,
+          expansion_rate: row.cohort_base_expansion_rate,
+          arpu_override: row.cohort_base_arpu,
+          arpu_uplift: row.cohort_base_arpu_uplift,
+          arpu_uplift_percent: row.cohort_base_arpu_uplift_percent,
+          churn_reduction: row.cohort_base_churn_reduction,
+          acquisition_uplift: row.cohort_base_acquisition_uplift,
+          gross_margin: row.cohort_base_gross_margin,
+          adoption_ramp_months: row.cohort_base_adoption_ramp_months
+        };
+      } else if (row.target_type === 'all_clients') {
+        base_values = {
+          monthly_churn_rate: row.global_base_monthly_churn_rate,
+          monthly_acquisition: row.global_base_monthly_acquisition,
+          acquisition_growth_rate: row.global_base_acquisition_growth_rate,
+          ai_adoption_rate: row.global_base_ai_adoption_rate,
+          retention_floor: row.global_base_retention_floor,
+          expansion_rate: row.global_base_expansion_rate,
+          arpu_override: row.global_base_arpu,
+          arpu_uplift: row.global_base_arpu_uplift,
+          arpu_uplift_percent: row.global_base_arpu_uplift_percent,
+          churn_reduction: row.global_base_churn_reduction,
+          acquisition_uplift: row.global_base_acquisition_uplift,
+          gross_margin: row.global_base_gross_margin,
+          adoption_ramp_months: row.global_base_adoption_ramp_months
+        };
+      }
+
+      return {
+        id: row.id,
+        scenario_id: row.scenario_id,
+        target_type: row.target_type,
+        target_id: row.target_id,
+        monthly_churn_rate: row.monthly_churn_rate,
+        monthly_acquisition: row.monthly_acquisition,
+        acquisition_growth_rate: row.acquisition_growth_rate,
+        ai_adoption_rate: row.ai_adoption_rate,
+        retention_floor: row.retention_floor,
+        expansion_rate: row.expansion_rate,
+        arpu_override: row.arpu_override,
+        arpu_uplift: row.arpu_uplift,
+        arpu_uplift_percent: row.arpu_uplift_percent,
+        churn_reduction: row.churn_reduction,
+        acquisition_uplift: row.acquisition_uplift,
+        gross_margin: row.gross_margin,
+        adoption_ramp_months: row.adoption_ramp_months,
+        target_name: row.target_name || (row.target_type === 'all_clients' ? 'Global Client Base' : row.target_id),
+        base_values
+      };
+    });
 
     // Load services in scenario
     const serviceRows = db.prepare(`
@@ -206,7 +300,7 @@ export const scenariosRepository = {
       updated_at: r.updated_at,
       scope_verticals: verticalRows,
       scope_cohorts: cohortRows,
-      scope_overrides: overrideRows,
+      scope_overrides: mappedOverrides,
       services: serviceRows,
       packs: packRows,
       plans: planRows,
