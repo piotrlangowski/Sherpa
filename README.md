@@ -8,6 +8,10 @@
 
 Built for product leaders (CPO/RevOps) at SaaS companies, it also ships as an **MCP server**, so you can model scenarios conversationally from Claude Desktop: *"create a scenario with 5,000 users, 4% churn and a $150 ARPU chatbot rollout"*.
 
+### Disclaimer
+Yes, it is vibecoded, but the problems it tackles are real. Test it yourself.
+Altough I am not a SWE I have given Sherpa all the technical attention I could think of.
+
 ### Why Sherpa
 By this name I wanted to convey two things:
 1. This is a journey that is hard and complicated. We have many tools nowaydays to make it easier, but we still go into the uknown (be it everest or todays markets) and only our prepardness makes it successful.
@@ -16,11 +20,13 @@ By this name I wanted to convey two things:
 **Work your way**
 Work as a Claude Desktop App user connecting to a permanent data source that **lives only on your computer, locally, private**
 
-<img width="902" height="765" alt="image" src="https://github.com/user-attachments/assets/c0414aa0-2104-4acb-980e-45f878d95f4a" />
+<img width="1178" height="831" alt="image" src="https://github.com/user-attachments/assets/0e0ee317-2801-4df9-ae88-8f7c28ea7773" />
 
-or as a separate App with its own UI
 
-<img width="1430" height="790" alt="image" src="https://github.com/user-attachments/assets/f8e8b706-5064-400c-8d8f-b13dd19944ec" />
+or as a separate App with its own UI that launches from Claude with a command: **open Sherpa's dashobard**
+
+<img width="1407" height="796" alt="image" src="https://github.com/user-attachments/assets/62d1c7a6-4935-4773-85f0-ca0c8085d5f3" />
+
 
 data:
 * **is stored on your computer**
