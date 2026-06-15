@@ -22,8 +22,7 @@ By this name I wanted to convey two things:
 **Work your way**
 Work as a Claude Desktop App user connecting to a permanent data source that **lives only on your computer, locally, private**
 
-<img width="1178" height="831" alt="image" src="https://github.com/user-attachments/assets/0e0ee317-2801-4df9-ae88-8f7c28ea7773" />
-
+<img width="1420" height="798" alt="image" src="https://github.com/user-attachments/assets/426c5a58-ad3b-4c83-add0-8aff93ad4648" />
 
 or as a separate App with its own UI that launches from Claude with a command: **open Sherpa's dashobard**
 
