@@ -12,6 +12,8 @@ Built for product leaders (CPO/RevOps) at SaaS companies, it also ships as an **
 Yes, it is vibecoded, but the problems it tackles are real. Test it yourself.
 Altough I am not a SWE I have given Sherpa all the technical attention I could think of.
 
+**Sherpa requires Claude Desktop to run.**
+
 ### Why Sherpa
 By this name I wanted to convey two things:
 1. This is a journey that is hard and complicated. We have many tools nowaydays to make it easier, but we still go into the uknown (be it everest or todays markets) and only our prepardness makes it successful.
