@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Sherpa is a **local-first** AI-feature ROI calculator for SaaS (financial modeling: NPV/IRR/payback/TCO over a cohort revenue model plus LLM token + CAPEX/OPEX cost engine). It is a SvelteKit app backed by SQLite, plus a standalone MCP server that exposes the same engine to LLM hosts (e.g. Claude Desktop). All data lives locally in `data/sherpa.db`; nothing is sent to the cloud. The README is in Polish; many commit messages are too.
+Sherpa is a **local-first** AI-feature ROI calculator for SaaS (financial modeling: NPV/payback/Profitability Index plus a guarded IRR, computed on a **contribution-margin** cohort revenue model and reported as an upper/lower attribution band, with an LLM token + CAPEX/OPEX cost engine). It is a SvelteKit app backed by SQLite, plus a standalone MCP server that exposes the same engine to LLM hosts (e.g. Claude Desktop). All data lives locally in `data/sherpa.db`; nothing is sent to the cloud. The README is in Polish; many commit messages are too.
 
 ## Commands
 
@@ -61,9 +61,20 @@ They share code through a **symlink**: `mcp-server/src/shared → ../../src/lib/
 
 ### Pure vs. impure split (the central design decision)
 
-- **`src/lib/shared/financial-math.ts`** — ALL computation: `buildCohortModel`, `calculateNPV`/`calculateIRR` (Newton-Raphson + bisection fallback) / `calculatePaybackPeriod` / `calculateTCO`, `calculateScenario`, `runSensitivityAnalysis`. These are **pure** functions with zero DB access; providers are passed in as arguments. This is what the MCP server consumes.
+- **`src/lib/shared/financial-math.ts`** — ALL computation: `buildCohortModel`, `calculateNPV`/`solveMonthlyIRR` + `calculateIRRGuarded` (Newton-Raphson + bisection, then a nominal-×12 guard) / `countSignChanges` / `calculatePaybackPeriod` / `calculateTCO`, `calculateScenario`, `runSensitivityAnalysis`. These are **pure** functions with zero DB access; providers are passed in as arguments. This is what the MCP server consumes.
 - **`src/lib/server/services/financial-engine.ts`** — thin **DB-aware wrappers**: resolve the scenario's cohorts + provider list from the DB, then delegate to the pure functions. `runAndSaveScenario` recomputes and caches results.
 - Put new financial math in the **shared** module, not in the server wrapper, so the app and MCP stay consistent.
+
+### Financial methodology (CFO-grade)
+
+`calculateScenario` does **not** credit top-line revenue. The model (all in the shared module):
+
+- **Contribution margin.** Each cohort carries a `gross_margin` (cascaded global → vertical → cohort, default `1.0`); incremental revenue is booked at margin, so cashflows reflect contribution, not gross revenue.
+- **Upper/lower attribution band.** Three projections are built per cohort — baseline, full-adoption, and uplift-only (ARPU effect on a baseline customer-count path). The engine returns a band: **upper** = full retention + acquisition + price effect; **lower** = ARPU-uplift only. NPV, payback and the PI are each returned as `…Upper`/`…Lower`.
+- **Adoption ramp.** `adoption_ramp_months` ramps effective adoption linearly from 0 to the target; implemented as a per-month blend `a(t)·fullAdopt + (1−a(t))·baseline` (the cohort model is linear in size, so `ramp=0` reproduces the old split). Late adopters inherit retention as if from month 0 — a documented approximation.
+- **CAPEX contingency.** `scenarios.capex_contingency_pct` scales CAPEX line items to model overrun risk.
+- **Guarded IRR.** `solveMonthlyIRR` returns the monthly rate; `calculateIRRGuarded` annualizes **nominally (×12, not compounded)** and returns `IrrResult { monthly, annualNominal, status, displayable }`. Status suppresses the number for `unstable_short_payback` (< 12 mo), `ambiguous_multiple_roots` (> 1 sign change on the **cumulative** stream), `undefined_no_sign_change`, or `non_converged`. The UI shows IRR only when `displayable`.
+- **Profitability Index, not raw ROI.** The `roi*` fields/columns now hold a discounted PI = `NPV / PV(costs) + 1` (a multiple like `4.47x`) — see Gotchas.
 
 ### Data layer
 
@@ -85,6 +96,8 @@ A `Scenario` targets a **scope** (`scope_type`: `all_clients` | `verticals` | `c
 
 `scenario_results` caches computed KPIs and the monthly arrays (cashflows/MRR/customers stored as JSON strings). Any mutation that changes a scenario's inputs must **delete the cached row** — `scenariosRepository.update` already does this, and `invalidateResults` + the `findScenarioIdsBy*` helpers exist to cascade-invalidate when upstream entities (services, providers, cohorts, verticals, cost items) change. When adding a new way to edit inputs, wire in invalidation or KPIs will go stale.
 
+The row stores both bounds of the band plus the guarded IRR: `npv`/`payback_months`/`roi_percent` hold the **upper** bound, with `npv_lower`/`payback_months_lower`/`roi_percent_lower` the lower, and `irr_monthly`/`irr_annual_nominal`/`irr_status` the guarded IRR. Migration 8 added these columns (and the cohort `gross_margin`/`adoption_ramp_months` + scenario `capex_contingency_pct` inputs) and invalidated all cached results.
+
 ### Client state, UI, styling
 
 - consult DESIGN.md for detailed styling and component guidelines
@@ -104,6 +117,7 @@ A `Scenario` targets a **scope** (`scope_type`: `all_clients` | `verticals` | `c
 - **MCP Stderr Logging & Guard**: MCP servers must log only to `stderr` (stdout carries JSON-RPC). To prevent third-party dashboard or SvelteKit logs from leaking to stdout, `mcp-server/src/stderr-guard.ts` is imported as the very first line of `index.ts` to globally bind `console.log/info/debug/warn` to `console.error`.
 - **Database lock & busy_timeout**: SvelteKit and MCP write to the same SQLite WAL file. Both connection initialization paths must set `db.pragma('busy_timeout = 5000')` to handle lock contention.
 - **Health check contract**: SvelteKit exposes `/api/health` returning `{ ok: true, name: 'sherpa', version, dbPath }`. The `name` proving identity and `version` mapping to `package.json` are critical for launcher validation; `dbPath` must match the launcher's resolved DB or the dashboard is treated as belonging to a different Sherpa install (not reused, not killed).
+- **`roi_percent` columns hold a Profitability Index, not a percentage.** Since the CFO-grade overhaul, `scenario_results.roi_percent`/`roi_percent_lower` (and `CalculationResult.roiUpper`/`roiLower`) store a discounted PI multiple (e.g. `4.47`) — render with `formatPI` (→ `4.47x`), never `formatPercent`. Likewise the legacy `irr_annual` column now stores the **nominal** annual IRR (monthly × 12, not compounded); read `irr_status`/`irr_annual_nominal` and gate on `displayable` via `formatIrr`, since IRR is intentionally suppressed (`n/d`) for short-payback or ambiguous-sign profiles. (One known seam: the scenario-compare table still renders IRR with `formatPercent(irr_annual)` without the guard.)
 - `.npmrc` sets `engine-strict=true`.
 - **MCP Architecture and Guidance**: Comprehensive details on MCP exposure surfaces, transport, codegen sync, and development maintenance reside in [MCP-ARCHITECTURE.md](file:///Users/piotrlangowski/Documents/Sherpa/MCP-ARCHITECTURE.md).
 

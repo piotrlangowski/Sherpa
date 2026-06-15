@@ -143,11 +143,15 @@ export function exportScenarioToCSV(scenarioId: string): string {
   lines.push(`Scenario Name,"${scenario.name.replace(/"/g, '""')}"`);
   lines.push(`Projection Horizon (Months),${scenario.projection_months}`);
   lines.push(`Discount Rate (Annual),${(scenario.discount_rate * 100).toFixed(1)}%`);
-  lines.push(`NPV,${results.npv}`);
-  lines.push(`IRR (Annual),${results.irrAnnual !== null ? (results.irrAnnual * 100).toFixed(2) + '%' : 'N/A'}`);
-  lines.push(`Payback Period (Months),${results.paybackMonths !== null ? results.paybackMonths : 'N/A'}`);
+  lines.push(`NPV Upper,${results.npvUpper}`);
+  lines.push(`NPV Lower,${results.npvLower}`);
+  lines.push(`IRR Status,${results.irr.status}`);
+  lines.push(`IRR (Annual Nominal),${results.irr.annualNominal !== null ? (results.irr.annualNominal * 100).toFixed(2) + '%' : 'N/A'}`);
+  lines.push(`Payback Period Upper (Months),${results.paybackUpper !== null ? results.paybackUpper : 'N/A'}`);
+  lines.push(`Payback Period Lower (Months),${results.paybackLower !== null ? results.paybackLower : 'N/A'}`);
   lines.push(`TCO,${results.tco}`);
-  lines.push(`ROI,${(results.roiPercent * 100).toFixed(2)}%`);
+  lines.push(`Profitability Index Upper,${results.piUpper.toFixed(2)}`);
+  lines.push(`Profitability Index Lower,${results.piLower.toFixed(2)}`);
   lines.push(''); // spacing row
 
   // Column headers

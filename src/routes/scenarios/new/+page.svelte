@@ -27,7 +27,7 @@
   import { resolveScenarioCohortsClient, buildDraftScenario } from '$lib/shared/scenario-preview';
   import { calculateScenario } from '$lib/shared/financial-math';
   import { normalizeScenarioCurrency } from '$lib/shared/currency';
-  import { formatCurrency, formatPercent, formatMonths } from '$lib/utils/format';
+  import { formatCurrency, formatPercent, formatMonths, formatIrr } from '$lib/utils/format';
   import { mode } from 'mode-watcher';
 
   let { data } = $props();
@@ -41,6 +41,8 @@
   let projectionMonths = $state(36);
   let discountRateArr = $state([10]); // slider
   const discountRate = $derived(discountRateArr[0]);
+  let capexContingencyPctArr = $state([0]); // slider
+  const capexContingencyPct = $derived(capexContingencyPctArr[0]);
 
   let scopeType = $state<'all_clients' | 'verticals' | 'cohorts'>('all_clients');
   let revenueSource = $state<'cohort' | 'monetization' | 'both'>('cohort');
@@ -191,7 +193,8 @@
         description,
         projectionMonths,
         discountRate: discountRate / 100,
-        scopeType
+        scopeType,
+        capexContingencyPct: capexContingencyPct / 100
       },
       resolvedCohortsClient,
       formattedOverrides as any[],
@@ -320,9 +323,12 @@
     }
   }
 
-  function renderChart() {
+  let activeEffectId = 0;
+
+  function renderChart(currentRunId: number) {
     if (!chartElement || currentStep !== 5 || !previewResult) return;
     import('echarts').then((echarts) => {
+      if (currentRunId !== activeEffectId) return;
       if (!chartElement || currentStep !== 5 || !previewResult) return;
       if (chartInstance) {
         chartInstance.setOption(chartOptions, true);
@@ -339,11 +345,15 @@
 
   $effect(() => {
     const _options = chartOptions; // Synchronous read registers dependency
+    const currentRunId = ++activeEffectId;
     if (currentStep === 5 && previewResult && mode.current) {
-      renderChart();
+      renderChart(currentRunId);
     } else {
       cleanupChart();
     }
+    return () => {
+      cleanupChart();
+    };
   });
 
   onMount(() => {
@@ -364,6 +374,22 @@
   const prevStep = () => {
     currentStep -= 1;
   };
+
+  function formatPaybackRange(upper: number | null | undefined, lower: number | null | undefined): string {
+    if (upper === null || upper === undefined) {
+      return 'Not within horizon';
+    }
+    if (upper === 0 && (lower === 0 || lower === null || lower === undefined)) {
+      if (lower === 0) return 'Immediate';
+      return `Immediate – ${lower === null || lower === undefined ? '∞' : formatMonths(lower)}`;
+    }
+    const upperStr = upper === 0 ? 'Immediate' : formatMonths(upper);
+    const lowerStr = (lower === null || lower === undefined) ? '∞' : formatMonths(lower);
+    if (upper === lower) {
+      return upperStr;
+    }
+    return `${upperStr} – ${lowerStr}`;
+  }
 </script>
 
 <div class="max-w-4xl mx-auto space-y-6">
@@ -456,6 +482,19 @@
               </div>
               <Slider id="discountRateSlider" bind:value={discountRateArr} min={0} max={30} step={1} type="multiple" />
               <input type="hidden" name="discountRate" value={discountRate} />
+            </div>
+          </div>
+
+          <!-- Capex Contingency -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="space-y-3 pt-2">
+              <div class="flex justify-between items-center">
+                <Label for="capexContingencySlider" class="font-semibold">CAPEX Contingency Buffer</Label>
+                <span class="text-sm font-semibold text-primary">{capexContingencyPct}%</span>
+              </div>
+              <Slider id="capexContingencySlider" bind:value={capexContingencyPctArr} min={0} max={100} step={5} type="multiple" />
+              <input type="hidden" name="capexContingencyPct" value={capexContingencyPct / 100} />
+              <p class="text-[10px] text-muted-foreground mt-1">Inflation/overrun buffer multiplier applied to all CAPEX cost items.</p>
             </div>
           </div>
 
@@ -805,9 +844,13 @@
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card class="glass border p-4 flex flex-col justify-between">
                 <div>
-                  <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Provisional Incremental NPV</span>
-                  <span class="text-lg font-mono font-black mt-1 block {previewResult.npv >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
-                    {formatCurrency(previewResult.npv, data.settings.currency, 0)}
+                  <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Provisional NPV Range</span>
+                  <span class="text-sm font-mono font-black mt-1 block {previewResult.npvUpper >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
+                    {#if previewResult.npvLower !== undefined && previewResult.npvLower !== previewResult.npvUpper}
+                      {formatCurrency(previewResult.npvLower, data.settings.currency, 0)} – {formatCurrency(previewResult.npvUpper, data.settings.currency, 0)}
+                    {:else}
+                      {formatCurrency(previewResult.npvUpper, data.settings.currency, 0)}
+                    {/if}
                   </span>
                 </div>
                 <p class="text-[9px] text-muted-foreground/80 mt-1">Discounted lifetime net value</p>
@@ -815,17 +858,23 @@
               <Card class="glass border p-4 flex flex-col justify-between">
                 <div>
                   <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Provisional IRR</span>
-                  <span class="text-lg font-mono font-black mt-1 block {previewResult.irrAnnual !== null ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}">
-                    {previewResult.irrAnnual !== null ? formatPercent(previewResult.irrAnnual) : 'N/A'}
+                  <span class="text-lg font-mono font-black mt-1 block {previewResult.irr && previewResult.irr.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}">
+                    {formatIrr(previewResult.irr)}
                   </span>
                 </div>
-                <p class="text-[9px] text-muted-foreground/80 mt-1">AI internal rate of return</p>
+                <p class="text-[9px] text-muted-foreground/80 mt-1">
+                  {#if previewResult.irr && previewResult.irr.status !== 'ok'}
+                    Status: <span class="capitalize font-medium text-amber-500">{previewResult.irr.status.replace(/_/g, ' ')}</span>
+                  {:else}
+                    AI internal rate of return
+                  {/if}
+                </p>
               </Card>
               <Card class="glass border p-4 flex flex-col justify-between">
                 <div>
-                  <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Provisional Payback</span>
-                  <span class="text-lg font-mono font-black text-cyan-600 dark:text-cyan-400 mt-1 block">
-                    {previewResult.paybackMonths === 0 ? 'Immediate' : previewResult.paybackMonths === null ? 'Not within horizon' : formatMonths(previewResult.paybackMonths)}
+                  <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block">Provisional Payback Range</span>
+                  <span class="text-xs font-mono font-black text-cyan-600 dark:text-cyan-400 mt-1 block">
+                    {formatPaybackRange(previewResult.paybackUpper, previewResult.paybackLower)}
                   </span>
                 </div>
                 <p class="text-[9px] text-muted-foreground/80 mt-1">Months to recover investment</p>

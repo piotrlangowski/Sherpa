@@ -29,6 +29,8 @@
   let default_arpu_uplift_percent = $state(0);
   let default_churn_reduction = $state(0);
   let default_acquisition_uplift = $state(0);
+  let default_gross_margin = $state(100);
+  let default_adoption_ramp_months = $state(0);
 
   // Synchronize state when clientBase changes
   $effect(() => {
@@ -46,6 +48,8 @@
     default_arpu_uplift_percent = (cb.default_arpu_uplift_percent || 0) * 100;
     default_churn_reduction = (cb.default_churn_reduction || 0) * 100;
     default_acquisition_uplift = (cb.default_acquisition_uplift || 0) * 100;
+    default_gross_margin = (cb.default_gross_margin !== undefined ? cb.default_gross_margin : 1.0) * 100;
+    default_adoption_ramp_months = cb.default_adoption_ramp_months || 0;
   });
 
   let isSaving = $state(false);
@@ -160,6 +164,25 @@
               <Label for="default_acquisition_uplift" class="font-semibold">Default AI Acquisition Uplift (%)</Label>
               <Input id="default_acquisition_uplift" name="default_acquisition_uplift" type="number" step="0.1" min="0" max="200" bind:value={default_acquisition_uplift} required class="bg-(--glass-inset-bg) border-border font-mono" />
               <p class="text-[10px] text-muted-foreground mt-1">Percentage increase in new-customer acquisition.</p>
+            </div>
+          </div>
+        </div>
+
+        <hr class="border-border/60" />
+
+        <!-- Methodology Settings -->
+        <div class="space-y-4">
+          <h3 class="text-sm font-bold text-foreground uppercase tracking-wider text-primary">Methodology Realism Settings</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="space-y-2">
+              <Label for="default_gross_margin" class="font-semibold">Default Gross Margin (%)</Label>
+              <Input id="default_gross_margin" name="default_gross_margin" type="number" step="0.1" min="0" max="100" bind:value={default_gross_margin} required class="bg-(--glass-inset-bg) border-border font-mono" />
+              <p class="text-[10px] text-muted-foreground mt-1">Global default gross margin percentage, used for incremental contribution margin calculations.</p>
+            </div>
+            <div class="space-y-2">
+              <Label for="default_adoption_ramp_months" class="font-semibold">Default Adoption Ramp Period (months)</Label>
+              <Input id="default_adoption_ramp_months" name="default_adoption_ramp_months" type="number" min="0" max="60" bind:value={default_adoption_ramp_months} required class="bg-(--glass-inset-bg) border-border font-mono" />
+              <p class="text-[10px] text-muted-foreground mt-1">Global default number of months over which AI adoption ramps up linearly.</p>
             </div>
           </div>
         </div>

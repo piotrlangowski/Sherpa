@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Local-first](https://img.shields.io/badge/data-100%25%20local-success)
 
-**Should we ship that AI feature?** Sherpa answers with CFO-grade numbers instead of gut feeling: it combines a cohort-based revenue model with an LLM token cost engine and CAPEX/OPEX tracking, and turns them into NPV, IRR, payback period, TCO and ROI — locally, with nothing leaving your machine.
+**Should we ship that AI feature?** Sherpa answers with CFO-grade numbers instead of gut feeling: it combines a cohort-based revenue model with an LLM token cost engine and CAPEX/OPEX tracking, and turns them into NPV, payback period, a discounted Profitability Index and a guarded IRR — computed on a **contribution-margin** basis and presented as an upper/lower range — locally, with nothing leaving your machine.
 
 Built for product leaders (CPO/RevOps) at SaaS companies, it also ships as an **MCP server**, so you can model scenarios conversationally from Claude Desktop: *"create a scenario with 5,000 users, 4% churn and a $150 ARPU chatbot rollout"*.
 
@@ -91,9 +91,9 @@ You can open and close the web dashboard directly from your chat with Claude usi
 
 Typical ROI calculators don't understand LLM economics; token cost calculators don't understand revenue. Sherpa models both sides of the equation in one place:
 
-- **Revenue side** — cohort projections with exponential retention decay (`retention(n) = max(floor, e^(-λ·n))`), acquisition growth, ARPU expansion, and an AI-adoption overlay that controls which users actually generate token costs.
-- **Cost side** — per-service LLM token costs (input/output prices per model, requests per user), plus CAPEX/OPEX items (engineering, infrastructure, marketing, compliance).
-- **Decision layer** — monthly discounted cashflows rolled up into NPV, IRR (Newton-Raphson with bisection fallback), payback period (with linear interpolation), TCO and ROI%.
+- **Revenue side** — cohort projections with exponential retention decay (`retention(n) = max(floor, e^(-λ·n))`), acquisition growth, ARPU expansion, and an AI-adoption overlay (with an optional multi-month ramp) that controls which users actually generate token costs. Each cohort carries a **gross margin**, so value is booked as contribution, not top-line.
+- **Cost side** — per-service LLM token costs (input/output prices per model, requests per user), plus CAPEX/OPEX items (engineering, infrastructure, marketing, compliance) with an optional CAPEX contingency buffer.
+- **Decision layer** — monthly discounted **contribution-margin** cashflows rolled up into an upper/lower band of NPV, payback period (linear interpolation) and a discounted **Profitability Index** (PV of benefits ÷ PV of costs), plus a **guarded IRR** (nominal ×12, suppressed when uninformative) and TCO.
 
 ## Features
 
@@ -107,7 +107,7 @@ Typical ROI calculators don't understand LLM economics; token cost calculators d
 
 ## Methodology & ROI Calculations
 
-Sherpa operates on an **incremental value** model: all KPIs (NPV, IRR, Payback, ROI%) are computed on the delta between a "With AI" projection and a "Without AI" counterfactual baseline.
+Sherpa operates on an **incremental value** model: all KPIs are computed on the delta between a "With AI" projection and a "Without AI" counterfactual baseline. That delta is booked at **contribution margin** (not top-line revenue) and reported as an **upper/lower band** rather than a single point estimate.
 
 ### Uplift Parameters
 Four AI impact parameters can be configured at cohort, vertical, or scenario override levels:
@@ -115,6 +115,8 @@ Four AI impact parameters can be configured at cohort, vertical, or scenario ove
 - `arpu_uplift_percent` — percentage ARPU increase for users adopting AI.
 - `churn_reduction` — percentage reduction of monthly churn rate for users adopting AI.
 - `acquisition_uplift` — percentage increase in new-customer acquisition (attributable to the product having AI; unweighted by adoption).
+
+Plus two realism controls (also cascaded): `gross_margin` (cohort-level contribution margin, default 100%) and `adoption_ramp_months` (months to ramp adoption from 0 to the target); and one scenario-level control, `capex_contingency_pct`.
 
 ### Formulas
 Sherpa partitions the target cohort into two distinct sub-cohorts to model the counterfactual with-AI projection:
@@ -129,10 +131,24 @@ Sherpa partitions the target cohort into two distinct sub-cohorts to model the c
 
 The total with-AI MRR and active customers are the sum of these two sub-cohort timelines.
 
+### Contribution Margin & the Attribution Band
+The engine never treats top-line revenue as value. Each cohort carries a `gross_margin` (default 100%, cascaded global → vertical → cohort), and incremental revenue is booked at margin. Because crediting the *entire* retained/acquired base to one AI feature is optimistic, every headline KPI (NPV, payback, Profitability Index) is reported as a **range**:
+- **Upper bound** — full effect: ARPU uplift **plus** churn reduction **plus** acquisition uplift across the whole adopter base.
+- **Lower bound** — price effect only: ARPU uplift on a customer base that still follows the baseline churn/acquisition path.
+
+### Adoption Ramp & CAPEX Contingency
+- `adoption_ramp_months` ramps effective adoption linearly from 0 to the target over *N* months (0 = instant, matching the legacy behavior), pushing payback rightward. It is implemented as a per-month blend of the full-adoption and baseline projections.
+- `capex_contingency_pct` (scenario level) inflates CAPEX line items to model build-cost overrun risk.
+
+### Guarded IRR & Profitability Index
+- **IRR** is annualized **nominally (monthly × 12)**, not compounded — compounding a high monthly rate produced absurd four-figure percentages. It is further *guarded*: the UI shows it only when informative and reports `n/d` for short paybacks (< 12 months), non-unique roots (multiple sign changes on the cumulative cashflow), or non-convergence. For the fast-payback projects Sherpa typically models, NPV and payback are the load-bearing metrics.
+- **Profitability Index (PI)** replaces the old undiscounted ROI%. `PI = PV(benefits) / PV(costs) = NPV / PV(costs) + 1`, shown as a multiple (e.g. `4.47x`) on the same discounted basis as NPV.
+
 ### Known Limitations & Approximations
 1. **Expansion-rate uplift:** Excluded from the current scope.
 2. **Horizon truncation:** The standard 36-month horizon truncates terminal value, leading to conservative NPV calculations.
-3. **IRR non-uniqueness:** For non-conventional cash flows (e.g. multiple sign changes), IRR may have non-unique solutions. The engine uses a Newton-Raphson method with Bisection fallback to resolve one root.
+3. **IRR is conditional, by design:** For non-conventional cash flows (multiple sign changes) or very short paybacks, a single annualized IRR is misleading, so the guard reports `n/d` rather than a spurious root. Lean on NPV + payback.
+4. **Adoption-ramp retention:** The linear ramp blends the full-adoption and baseline projections, so customers who adopt mid-ramp inherit the lower churn as if they had adopted at month 0 — a slight upward bias on retention during the ramp.
 
 ## Architecture
 
@@ -194,7 +210,7 @@ Keep only one of the two enabled at a time — both expose the same tool names, 
 
 ## Testing
 
-The pure math core is the contract: [`financial-math.test.ts`](src/lib/shared/financial-math.test.ts) covers cohort modeling, NPV/IRR/payback/TCO and full-scenario calculation (99% stmt / 77% branch coverage, enforced thresholds in CI). The importer has its own suite. UI and integration layers are exercised by `svelte-check` and the CI build; treat the financial outputs as tested, the UI as best-effort.
+The pure math core is the contract: [`financial-math.test.ts`](src/lib/shared/financial-math.test.ts) covers cohort modeling, NPV/payback/TCO, full-scenario calculation, contribution-margin scaling, the upper/lower attribution band, the adoption ramp, CAPEX contingency, the Profitability Index, and every guarded-IRR status (kept well above the enforced 80/80/65 coverage thresholds in CI). The importer has its own suite. UI and integration layers are exercised by `svelte-check` and the CI build; treat the financial outputs as tested, the UI as best-effort.
 
 ## Privacy
 

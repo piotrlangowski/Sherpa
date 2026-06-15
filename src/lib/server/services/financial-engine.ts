@@ -186,15 +186,21 @@ export function runAndSaveScenario(scenarioId: string): CalculationResult {
   scenariosRepository.saveResults({
     id: '', 
     scenario_id: scenarioId,
-    payback_months: result.paybackMonths,
-    npv: result.npv,
-    irr_annual: result.irrAnnual,
+    payback_months: result.paybackUpper,
+    npv: result.npvUpper,
+    irr_annual: result.irr.annualNominal,
     tco: result.tco,
-    roi_percent: result.roiPercent,
+    profitability_index: result.piUpper,
     monthly_cashflows: result.timeline.map(t => t.netCashFlow),
     monthly_mrr: result.timeline.map(t => t.revenue),
     monthly_customers: result.timeline.map(t => t.customers),
-    calculated_at: new Date().toISOString()
+    calculated_at: new Date().toISOString(),
+    payback_months_lower: result.paybackLower,
+    npv_lower: result.npvLower,
+    profitability_index_lower: result.piLower,
+    irr_monthly: result.irr.monthly,
+    irr_annual_nominal: result.irr.annualNominal,
+    irr_status: result.irr.status
   });
 
   return result;

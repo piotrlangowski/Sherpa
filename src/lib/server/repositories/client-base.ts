@@ -32,6 +32,8 @@ export const clientBaseRepository = {
     const default_arpu_uplift_percent = data.default_arpu_uplift_percent !== undefined ? data.default_arpu_uplift_percent : current.default_arpu_uplift_percent;
     const default_churn_reduction = data.default_churn_reduction !== undefined ? data.default_churn_reduction : current.default_churn_reduction;
     const default_acquisition_uplift = data.default_acquisition_uplift !== undefined ? data.default_acquisition_uplift : current.default_acquisition_uplift;
+    const default_gross_margin = data.default_gross_margin !== undefined ? data.default_gross_margin : (current.default_gross_margin !== undefined ? current.default_gross_margin : 1.0);
+    const default_adoption_ramp_months = data.default_adoption_ramp_months !== undefined ? data.default_adoption_ramp_months : (current.default_adoption_ramp_months !== undefined ? current.default_adoption_ramp_months : 0);
     const now = new Date().toISOString();
     
     db.prepare(`
@@ -40,14 +42,16 @@ export const clientBaseRepository = {
           default_monthly_acquisition = ?, default_acquisition_growth_rate = ?,
           default_ai_adoption_rate = ?, default_retention_floor = ?,
           default_expansion_rate = ?, default_arpu_uplift = ?, default_arpu_uplift_percent = ?,
-          default_churn_reduction = ?, default_acquisition_uplift = ?, updated_at = ?
+          default_churn_reduction = ?, default_acquisition_uplift = ?, 
+          default_gross_margin = ?, default_adoption_ramp_months = ?, updated_at = ?
       WHERE id = 'singleton'
     `).run(
       total_users, default_arpu, default_monthly_churn_rate,
       default_monthly_acquisition, default_acquisition_growth_rate,
       default_ai_adoption_rate, default_retention_floor,
       default_expansion_rate, default_arpu_uplift, default_arpu_uplift_percent,
-      default_churn_reduction, default_acquisition_uplift, now
+      default_churn_reduction, default_acquisition_uplift, 
+      default_gross_margin, default_adoption_ramp_months, now
     );
     
     return this.get();

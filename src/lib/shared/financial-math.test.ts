@@ -11,7 +11,8 @@ import {
   splitCohortForAi,
   calculateMonetizationRevenue,
   calculateCreditsPerUserMonth,
-  DEFAULT_CREDIT_SETTINGS
+  DEFAULT_CREDIT_SETTINGS,
+  calculateIRRGuarded
 } from './financial-math.js';
 import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig } from './types.js';
 
@@ -227,7 +228,8 @@ describe('Financial Math Module Tests', () => {
 
     it('should calculate scenario results successfully', () => {
       const results = calculateScenario(scenario, [provider]);
-      expect(results.npv).toBeDefined();
+      expect(results.npvUpper).toBeDefined();
+      expect(results.npvLower).toBeDefined();
       expect(results.tco).toBeDefined();
       expect(results.timeline.length).toBe(12);
       expect(results.timeline[0].capex).toBe(10000);
@@ -605,9 +607,9 @@ describe('Financial Math Module Tests', () => {
         costs: [costCapex]
       };
       const results = calculateScenario(zeroUpliftScenario, [provider]);
-      expect(results.npv).toBeLessThan(0);
-      expect(results.irrAnnual).toBeNull();
-      expect(results.paybackMonths).toBeNull();
+      expect(results.npvUpper).toBeLessThan(0);
+      expect(results.irr.annualNominal).toBeNull();
+      expect(results.paybackUpper).toBeNull();
       results.timeline.forEach(t => {
         expect(t.revenue).toBeCloseTo(0, 2);
         expect(t.netCashFlow).toBeLessThanOrEqual(0);
@@ -616,17 +618,17 @@ describe('Financial Math Module Tests', () => {
 
     it('Positive uplifts + one-time CAPEX → IRR and payback defined', () => {
       const costCapex: CostItem = {
-        id: 'cost1', name: 'Setup Fee', category: 'capex', amount: 10000, frequency: 'one_time', currency: 'USD'
+        id: 'cost1', name: 'Setup Fee', category: 'capex', amount: 120000, frequency: 'one_time', currency: 'USD'
       };
       const testScenario = {
         ...scenario,
         costs: [costCapex]
       };
       const results = calculateScenario(testScenario, [provider]);
-      expect(results.npv).toBeGreaterThan(0);
-      expect(results.irrAnnual).not.toBeNull();
-      expect(results.paybackMonths).not.toBeNull();
-      expect(results.paybackMonths).toBeGreaterThan(0);
+      expect(results.npvUpper).toBeGreaterThan(0);
+      expect(results.irr.annualNominal).not.toBeNull();
+      expect(results.paybackUpper).not.toBeNull();
+      expect(results.paybackUpper).toBeGreaterThan(0);
     });
 
     it('No CAPEX + immediate positive delta → payback 0, IRR null', () => {
@@ -635,9 +637,9 @@ describe('Financial Math Module Tests', () => {
         costs: []
       };
       const results = calculateScenario(testScenario, [provider]);
-      expect(results.npv).toBeGreaterThan(0);
-      expect(results.irrAnnual).toBeNull();
-      expect(results.paybackMonths).toBe(0);
+      expect(results.npvUpper).toBeGreaterThan(0);
+      expect(results.irr.annualNominal).toBeNull();
+      expect(results.paybackUpper).toBe(0);
     });
 
     it('Churn reduction ↑ ⇒ NPV ↑; retention floor binding ⇒ churn reduction delta → 0', () => {
@@ -646,7 +648,7 @@ describe('Financial Math Module Tests', () => {
       const higherChurnReductionCohort = { ...cohort, churn_reduction: 0.90 };
       const testScenarioHigher = { ...scenario, scope_cohorts: [higherChurnReductionCohort] };
       const higherRes = calculateScenario(testScenarioHigher, [provider]);
-      expect(higherRes.npv).toBeGreaterThan(baseRes.npv);
+      expect(higherRes.npvUpper).toBeGreaterThan(baseRes.npvUpper);
 
       // floor binding: if retention floor is 100% (floor=1.0) and current users = 1000, no one churns regardless of rate.
       const floorCohort = { ...cohort, retention_floor: 1.0, current_users: 1000, monthly_acquisition: 0 };
@@ -655,7 +657,7 @@ describe('Financial Math Module Tests', () => {
 
       const lowRes = calculateScenario({ ...scenario, scope_cohorts: [lowUpliftCohort] }, [provider]);
       const highRes = calculateScenario({ ...scenario, scope_cohorts: [highUpliftCohort] }, [provider]);
-      expect(lowRes.npv).toBeCloseTo(highRes.npv, 2);
+      expect(lowRes.npvUpper).toBeCloseTo(highRes.npvUpper, 2);
     });
 
     it('Sensitivity: result set contains uplift dimensions and impact ordering is sane', () => {
@@ -671,6 +673,113 @@ describe('Financial Math Module Tests', () => {
       for (let i = 1; i < results.results.length; i++) {
         expect(results.results[i-1].impactRange).toBeGreaterThanOrEqual(results.results[i].impactRange);
       }
+    });
+
+    describe('Methodology Realism Overhaul Tests', () => {
+      it('should scale incremental margins with gross_margin', () => {
+        const cohort100 = { ...cohort, gross_margin: 1.0 };
+        const cohort50 = { ...cohort, gross_margin: 0.5 };
+
+        const scenario100 = { ...scenario, scope_cohorts: [cohort100] };
+        const scenario50 = { ...scenario, scope_cohorts: [cohort50] };
+
+        const res100 = calculateScenario(scenario100, [provider]);
+        const res50 = calculateScenario(scenario50, [provider]);
+
+        // With no costs, NPV and ROI should be scaled exactly by the gross margin
+        expect(res50.npvUpper).toBeCloseTo(res100.npvUpper * 0.5, 1);
+        expect(res50.npvLower).toBeCloseTo(res100.npvLower * 0.5, 1);
+        expect(res50.piUpper).toBe(0);
+      });
+
+      it('should apply time-varying linear adoption ramps', () => {
+        const rampCohort = {
+          ...cohort,
+          ai_adoption_rate: 0.60,
+          adoption_ramp_months: 6
+        };
+        const rampScenario = { ...scenario, scope_cohorts: [rampCohort] };
+        const results = calculateScenario(rampScenario, [provider]);
+
+        const m0 = results.timeline[0];
+        const m2 = results.timeline[2];
+
+        // Month 0 ramp factor: (0+1)/6 = 1/6. Effective adoption = 1/6 * 0.60 = 0.10
+        // M0 aiUsers = 0.10 * 1000 = 100
+        expect(m0.aiUsers).toBeCloseTo(100, 1);
+
+        // Month 2 ramp factor: (2+1)/6 = 3/6 = 0.5. Effective adoption = 0.5 * 0.60 = 0.30
+        // Adopters base is 1000 * 0.5 = 500. With 30% effective adoption:
+        // blending is: fullAdoptModel has adoption=1.0. baselineModel has adoption=0.0.
+        // fullAdoptModel timeline[2] activeCustomers is ~1176.4
+        // M2 aiUsers = a(2) * fullAdoptModel.timeline[2].activeCustomers = 0.30 * 1176.4 = ~352.92
+        expect(m2.aiUsers).toBeCloseTo(352.9, 0);
+      });
+
+      it('should scale CAPEX with capex_contingency_pct', () => {
+        const costCapex: CostItem = {
+          id: 'cost1', name: 'Setup Fee', category: 'capex', amount: 10000, frequency: 'one_time', currency: 'USD'
+        };
+        const scenarioWithContingency = {
+          ...scenario,
+          costs: [costCapex],
+          capex_contingency_pct: 0.25
+        };
+
+        const results = calculateScenario(scenarioWithContingency, [provider]);
+        expect(results.timeline[0].capex).toBe(12500);
+      });
+
+      it('should guard IRR with appropriate status checks', () => {
+        // 1. unstable_short_payback: payback < 12 months (e.g. payback = ~2 months)
+        const costCapexShort: CostItem = {
+          id: 'cost1', name: 'Setup Fee', category: 'capex', amount: 80000, frequency: 'one_time', currency: 'USD'
+        };
+        const resShortPayback = calculateScenario({
+          ...scenario,
+          costs: [costCapexShort]
+        }, [provider]);
+        expect(resShortPayback.paybackUpper).toBeLessThan(12);
+        expect(resShortPayback.irr.status).toBe('unstable_short_payback');
+        expect(resShortPayback.irr.displayable).toBe(false);
+        expect(resShortPayback.irr.annualNominal).not.toBeNull();
+
+        // 2. undefined_no_sign_change: no CAPEX, all net cash flows are positive or all negative
+        const resNoSignChange = calculateScenario({
+          ...scenario,
+          costs: []
+        }, [provider]);
+        expect(resNoSignChange.irr.status).toBe('undefined_no_sign_change');
+        expect(resNoSignChange.irr.displayable).toBe(false);
+        expect(resNoSignChange.irr.annualNominal).toBeNull();
+
+        // 3. ambiguous_multiple_roots: multiple sign changes in cumulative cash flows
+        const resAmbiguous = calculateIRRGuarded([-100, 300, -250, 400], 12);
+        expect(resAmbiguous.status).toBe('ambiguous_multiple_roots');
+        expect(resAmbiguous.annualNominal).toBeNull();
+
+        // 4. non_converged: monthly IRR rate fails to converge or monthly IRR > 1.0
+        const resNonConverged = calculateIRRGuarded([-100, 1000], 12);
+        expect(resNonConverged.status).toBe('non_converged');
+        expect(resNonConverged.annualNominal).toBeNull();
+      });
+
+      it('should calculate Profitability Index (PI) correctly', () => {
+        const costCapex: CostItem = {
+          id: 'cost1', name: 'Setup Fee', category: 'capex', amount: 10000, frequency: 'one_time', currency: 'USD'
+        };
+        const testScenario = {
+          ...scenario,
+          costs: [costCapex]
+        };
+
+        const results = calculateScenario(testScenario, [provider]);
+        const rMonthly = Math.pow(1 + scenario.discount_rate, 1 / 12) - 1;
+        const computedPvCosts = results.timeline.reduce((acc, curr) => acc + curr.totalCosts / Math.pow(1 + rMonthly, curr.month), 0);
+
+        expect(results.piUpper).toBeCloseTo(results.npvUpper / computedPvCosts + 1, 4);
+        expect(results.piLower).toBeCloseTo(results.npvLower / computedPvCosts + 1, 4);
+      });
     });
   });
 });

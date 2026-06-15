@@ -172,6 +172,8 @@ export function runMigrations(db: DatabaseConnection): void {
         arpu_uplift_percent     REAL DEFAULT 0,
         churn_reduction         REAL DEFAULT 0,
         acquisition_uplift      REAL DEFAULT 0,
+        gross_margin            REAL DEFAULT 1.0,
+        adoption_ramp_months    INTEGER DEFAULT 0,
         created_at              TEXT NOT NULL,
         updated_at              TEXT NOT NULL
       )
@@ -193,6 +195,8 @@ export function runMigrations(db: DatabaseConnection): void {
         default_arpu_uplift_percent REAL DEFAULT 0,
         default_churn_reduction     REAL DEFAULT 0,
         default_acquisition_uplift  REAL DEFAULT 0,
+        default_gross_margin        REAL DEFAULT 1.0,
+        default_adoption_ramp_months INTEGER DEFAULT 0,
         updated_at                  TEXT NOT NULL
       )
     `).run();
@@ -213,6 +217,7 @@ export function runMigrations(db: DatabaseConnection): void {
         discount_rate          REAL DEFAULT 0.10,
         scope_type             TEXT NOT NULL DEFAULT 'cohorts',
         revenue_source         TEXT NOT NULL DEFAULT 'cohort',
+        capex_contingency_pct  REAL DEFAULT 0,
         created_at             TEXT NOT NULL,
         updated_at             TEXT NOT NULL
       )
@@ -254,7 +259,9 @@ export function runMigrations(db: DatabaseConnection): void {
         arpu_uplift             REAL,
         arpu_uplift_percent     REAL,
         churn_reduction         REAL,
-        acquisition_uplift      REAL
+        acquisition_uplift      REAL,
+        gross_margin            REAL,
+        adoption_ramp_months    INTEGER
       )
     `).run();
 
@@ -307,11 +314,17 @@ export function runMigrations(db: DatabaseConnection): void {
         npv             REAL,
         irr_annual      REAL,
         tco             REAL,
-        roi_percent     REAL,
+        profitability_index REAL,
         monthly_cashflows TEXT,
         monthly_mrr      TEXT,
         monthly_customers TEXT,
-        calculated_at   TEXT NOT NULL
+        calculated_at   TEXT NOT NULL,
+        npv_lower             REAL,
+        payback_months_lower  REAL,
+        profitability_index_lower REAL,
+        irr_monthly           REAL,
+        irr_status            TEXT,
+        irr_annual_nominal    REAL
       )
     `).run();
 
@@ -470,5 +483,78 @@ function runDataMigrations(db: DatabaseConnection): void {
 
     // Note: We cannot DROP COLUMN in SQLite < 3.35, so we leave cohort_config_id in place
     // and simply stop writing to it. New scenarios will use scenario_cohorts instead.
+  }
+
+  // Migration 8: CFO overhaul — contribution margin, adoption ramp, CAPEX contingency, and lower bounds/guarded IRR in scenario_results.
+  const scenarioResultsColumns = (db.prepare("PRAGMA table_info(scenario_results)").all() as any[]).map(c => c.name);
+  let resultsInvalidated8 = false;
+
+  const cohortCols8 = (db.prepare("PRAGMA table_info(cohort_configs)").all() as any[]).map(c => c.name);
+  if (!cohortCols8.includes('gross_margin')) {
+    db.prepare("ALTER TABLE cohort_configs ADD COLUMN gross_margin REAL DEFAULT 1.0").run();
+    resultsInvalidated8 = true;
+  }
+  if (!cohortCols8.includes('adoption_ramp_months')) {
+    db.prepare("ALTER TABLE cohort_configs ADD COLUMN adoption_ramp_months INTEGER DEFAULT 0").run();
+    resultsInvalidated8 = true;
+  }
+
+  const clientBaseCols8 = (db.prepare("PRAGMA table_info(client_base)").all() as any[]).map(c => c.name);
+  if (!clientBaseCols8.includes('default_gross_margin')) {
+    db.prepare("ALTER TABLE client_base ADD COLUMN default_gross_margin REAL DEFAULT 1.0").run();
+    resultsInvalidated8 = true;
+  }
+  if (!clientBaseCols8.includes('default_adoption_ramp_months')) {
+    db.prepare("ALTER TABLE client_base ADD COLUMN default_adoption_ramp_months INTEGER DEFAULT 0").run();
+    resultsInvalidated8 = true;
+  }
+
+  const overrideCols8 = (db.prepare("PRAGMA table_info(scenario_scope_overrides)").all() as any[]).map(c => c.name);
+  if (!overrideCols8.includes('gross_margin')) {
+    db.prepare("ALTER TABLE scenario_scope_overrides ADD COLUMN gross_margin REAL").run();
+    resultsInvalidated8 = true;
+  }
+  if (!overrideCols8.includes('adoption_ramp_months')) {
+    db.prepare("ALTER TABLE scenario_scope_overrides ADD COLUMN adoption_ramp_months INTEGER").run();
+    resultsInvalidated8 = true;
+  }
+
+  const scenarioCols8 = (db.prepare("PRAGMA table_info(scenarios)").all() as any[]).map(c => c.name);
+  if (!scenarioCols8.includes('capex_contingency_pct')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN capex_contingency_pct REAL DEFAULT 0").run();
+    resultsInvalidated8 = true;
+  }
+
+  if (!scenarioResultsColumns.includes('npv_lower')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN npv_lower REAL").run();
+  }
+  if (!scenarioResultsColumns.includes('payback_months_lower')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN payback_months_lower REAL").run();
+  }
+  if (!scenarioResultsColumns.includes('irr_monthly')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN irr_monthly REAL").run();
+  }
+  if (!scenarioResultsColumns.includes('irr_status')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN irr_status TEXT").run();
+  }
+  if (!scenarioResultsColumns.includes('irr_annual_nominal')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN irr_annual_nominal REAL").run();
+  }
+
+  // Rename columns from old roi_percent names if they exist, or add them if creating fresh or from intermediate schemas
+  if (scenarioResultsColumns.includes('roi_percent')) {
+    db.prepare("ALTER TABLE scenario_results RENAME COLUMN roi_percent TO profitability_index").run();
+  } else if (!scenarioResultsColumns.includes('profitability_index')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN profitability_index REAL").run();
+  }
+
+  if (scenarioResultsColumns.includes('roi_percent_lower')) {
+    db.prepare("ALTER TABLE scenario_results RENAME COLUMN roi_percent_lower TO profitability_index_lower").run();
+  } else if (!scenarioResultsColumns.includes('profitability_index_lower')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN profitability_index_lower REAL").run();
+  }
+
+  if (resultsInvalidated8) {
+    db.prepare("DELETE FROM scenario_results").run();
   }
 }

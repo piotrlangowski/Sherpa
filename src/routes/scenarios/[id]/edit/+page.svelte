@@ -37,6 +37,8 @@
   let projectionMonths = $state(36);
   let discountRateArr = $state([10]); // slider
   const discountRate = $derived(discountRateArr[0]);
+  let capexContingencyPctArr = $state([0]); // slider
+  const capexContingencyPct = $derived(capexContingencyPctArr[0]);
 
   let scopeType = $state<'all_clients' | 'verticals' | 'cohorts'>('all_clients');
   let revenueSource = $state<'cohort' | 'monetization' | 'both'>('cohort');
@@ -94,6 +96,7 @@
       description = s.description || '';
       projectionMonths = s.projection_months;
       discountRateArr = [Math.round(s.discount_rate * 100)];
+      capexContingencyPctArr = [Math.round((s.capex_contingency_pct || 0) * 100)];
       scopeType = s.scope_type;
       revenueSource = s.revenue_source ?? 'cohort';
 
@@ -495,6 +498,19 @@
               </div>
               <Slider id="discountRateSlider" bind:value={discountRateArr} min={0} max={30} step={1} type="multiple" />
               <input type="hidden" name="discountRate" value={discountRate} />
+            </div>
+          </div>
+
+          <!-- Capex Contingency -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="space-y-3 pt-2">
+              <div class="flex justify-between items-center">
+                <Label for="capexContingencySlider" class="font-semibold">CAPEX Contingency Buffer</Label>
+                <span class="text-sm font-semibold text-primary">{capexContingencyPct}%</span>
+              </div>
+              <Slider id="capexContingencySlider" bind:value={capexContingencyPctArr} min={0} max={100} step={5} type="multiple" />
+              <input type="hidden" name="capexContingencyPct" value={capexContingencyPct / 100} />
+              <p class="text-[10px] text-muted-foreground mt-1">Inflation/overrun buffer multiplier applied to all CAPEX cost items.</p>
             </div>
           </div>
 

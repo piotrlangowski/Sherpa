@@ -32,6 +32,7 @@ interface DraftFormState {
   projectionMonths: number;
   discountRate: number;
   scopeType: 'all_clients' | 'verticals' | 'cohorts';
+  capexContingencyPct?: number;
 }
 
 /**
@@ -116,6 +117,7 @@ export function buildDraftScenario(
     projection_months: formState.projectionMonths,
     discount_rate: formState.discountRate,
     scope_type: formState.scopeType,
+    capex_contingency_pct: formState.capexContingencyPct ?? 0,
     scope_cohorts: resolvedCohorts,
     scope_overrides: overrides,
     services,

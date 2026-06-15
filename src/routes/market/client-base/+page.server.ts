@@ -25,6 +25,8 @@ export const actions: Actions = {
     const default_arpu_uplift_percent = Number(data.get('default_arpu_uplift_percent')) / 100;
     const default_churn_reduction = Number(data.get('default_churn_reduction')) / 100;
     const default_acquisition_uplift = Number(data.get('default_acquisition_uplift')) / 100;
+    const default_gross_margin = Number(data.get('default_gross_margin') ?? '100') / 100;
+    const default_adoption_ramp_months = parseInt(data.get('default_adoption_ramp_months') as string || '0', 10);
 
     if (isNaN(total_users) || total_users < 0) return fail(400, { error: 'Invalid total users' });
 
@@ -41,7 +43,9 @@ export const actions: Actions = {
         default_arpu_uplift,
         default_arpu_uplift_percent,
         default_churn_reduction,
-        default_acquisition_uplift
+        default_acquisition_uplift,
+        default_gross_margin,
+        default_adoption_ramp_months
       });
     } catch (err: any) {
       return fail(500, { error: err.message });

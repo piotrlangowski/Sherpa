@@ -44,9 +44,36 @@ When editing code in `src/lib/shared/` (e.g., `types.ts`, `financial-math.ts`, `
 - Results are cached in `scenario_results`.
 - If modifying cohorts, cost items, providers, or services associated with scenarios, ensure that you delete the cached row in `scenario_results` so the financial engine recomputes correct values next time it runs.
 
+### 4. Svelte 5 Reactivity & Lifecycle Best Practices
+- **Reactivity Loop Prevention**: Wrap any dependent state mutations (like syncing overrides or lists) in `untrack(() => { ... })` inside `$effect` blocks. Synchronous reads that act as triggers should remain outside `untrack`.
+- **Asynchronous Effect Cleanups**: Svelte 5 ignores cleanups returned from async callbacks (e.g., inside promise `.then()` or after an `await`).
+  - To initialize async assets (like dynamic ECharts imports or resize listeners) safely, use the **active effect run ID pattern**:
+    ```svelte
+    <script>
+      let activeEffectId = 0;
+
+      $effect(() => {
+        const _options = chartOptions; // Sync read trigger
+        const currentRunId = ++activeEffectId;
+
+        import('echarts').then((echarts) => {
+          if (currentRunId !== activeEffectId) return; // Cancel if cleaned up
+          // Initialize/bind assets...
+        });
+
+        return () => {
+          cleanup(); // Run synchronous cleanup
+        };
+      });
+    </script>
+    ```
+
 ## Testing Patterns
 
 - Colocation: Test files are named `[name].test.ts` and placed next to the source code file.
 - Framework: Vitest.
 - Run tests: `npm test` or `npx vitest run`.
-- Main focus of testing: financial math (`src/lib/shared/financial-math.test.ts`).
+- Main focus of testing: financial math (`src/lib/shared/financial-math.test.ts`), validating:
+  - Contribution margin scaling, time-varying linear adoption ramps, and CAPEX contingencies.
+  - NPV, Payback, and ROI upper/lower bounds.
+  - Nominal guarded IRR status outputs (`unstable_short_payback`, `undefined_no_sign_change`, `ambiguous_multiple_roots`, `non_converged`).

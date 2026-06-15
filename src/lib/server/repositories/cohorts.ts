@@ -10,6 +10,7 @@ export const cohortsRepository = {
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
              c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
              c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.gross_margin, c.adoption_ramp_months,
              c.created_at, c.updated_at,
              v.name as vertical_name
       FROM cohort_configs c
@@ -33,6 +34,8 @@ export const cohortsRepository = {
       arpu_uplift_percent: r.arpu_uplift_percent,
       churn_reduction: r.churn_reduction,
       acquisition_uplift: r.acquisition_uplift,
+      gross_margin: r.gross_margin,
+      adoption_ramp_months: r.adoption_ramp_months,
       created_at: r.created_at,
       updated_at: r.updated_at,
       vertical_name: r.vertical_name || undefined
@@ -45,6 +48,7 @@ export const cohortsRepository = {
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
              c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
              c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.gross_margin, c.adoption_ramp_months,
              c.created_at, c.updated_at,
              v.name as vertical_name
       FROM cohort_configs c
@@ -69,6 +73,8 @@ export const cohortsRepository = {
       arpu_uplift_percent: r.arpu_uplift_percent,
       churn_reduction: r.churn_reduction,
       acquisition_uplift: r.acquisition_uplift,
+      gross_margin: r.gross_margin,
+      adoption_ramp_months: r.adoption_ramp_months,
       created_at: r.created_at,
       updated_at: r.updated_at,
       vertical_name: r.vertical_name || undefined
@@ -83,6 +89,7 @@ export const cohortsRepository = {
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
              c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
              c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.gross_margin, c.adoption_ramp_months,
              c.created_at, c.updated_at,
              v.name as vertical_name
       FROM cohort_configs c
@@ -107,6 +114,8 @@ export const cohortsRepository = {
       arpu_uplift_percent: r.arpu_uplift_percent,
       churn_reduction: r.churn_reduction,
       acquisition_uplift: r.acquisition_uplift,
+      gross_margin: r.gross_margin,
+      adoption_ramp_months: r.adoption_ramp_months,
       created_at: r.created_at,
       updated_at: r.updated_at,
       vertical_name: r.vertical_name || undefined
@@ -122,8 +131,9 @@ export const cohortsRepository = {
                                  acquisition_growth_rate, monthly_churn_rate, retention_floor, 
                                  monthly_expansion_rate, ai_adoption_rate, base_arpu,
                                  arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+                                 gross_margin, adoption_ramp_months,
                                  created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.name,
@@ -140,6 +150,8 @@ export const cohortsRepository = {
       data.arpu_uplift_percent ?? 0,
       data.churn_reduction ?? 0,
       data.acquisition_uplift ?? 0,
+      data.gross_margin ?? 1.0,
+      data.adoption_ramp_months ?? 0,
       now,
       now
     );
@@ -165,6 +177,8 @@ export const cohortsRepository = {
     const arpu_uplift_percent = data.arpu_uplift_percent !== undefined ? data.arpu_uplift_percent : current.arpu_uplift_percent;
     const churn_reduction = data.churn_reduction !== undefined ? data.churn_reduction : current.churn_reduction;
     const acquisition_uplift = data.acquisition_uplift !== undefined ? data.acquisition_uplift : current.acquisition_uplift;
+    const gross_margin = data.gross_margin !== undefined ? data.gross_margin : (current.gross_margin !== undefined ? current.gross_margin : 1.0);
+    const adoption_ramp_months = data.adoption_ramp_months !== undefined ? data.adoption_ramp_months : (current.adoption_ramp_months !== undefined ? current.adoption_ramp_months : 0);
     const now = new Date().toISOString();
     
     db.prepare(`
@@ -173,6 +187,7 @@ export const cohortsRepository = {
           acquisition_growth_rate = ?, monthly_churn_rate = ?, retention_floor = ?, 
           monthly_expansion_rate = ?, ai_adoption_rate = ?, base_arpu = ?,
           arpu_uplift = ?, arpu_uplift_percent = ?, churn_reduction = ?, acquisition_uplift = ?,
+          gross_margin = ?, adoption_ramp_months = ?,
           updated_at = ?
       WHERE id = ?
     `).run(
@@ -190,6 +205,8 @@ export const cohortsRepository = {
       arpu_uplift_percent,
       churn_reduction,
       acquisition_uplift,
+      gross_margin,
+      adoption_ramp_months,
       now,
       id
     );

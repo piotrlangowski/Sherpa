@@ -1,7 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { onMount, tick } from 'svelte';
-  import { formatCurrency, formatPercent, formatMonths, formatNumber } from '$lib/utils/format';
+  import { formatCurrency, formatPercent, formatMonths, formatNumber, formatIrr, formatPI } from '$lib/utils/format';
   import Button from '$lib/components/ui/button/button.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
@@ -305,11 +305,15 @@
     return { cashflow, cumulative, users };
   });
 
-  function renderChart() {
+  let activeEffectId = 0;
+
+  function renderChart(currentRunId: number) {
     if (!chartElement) return;
 
     tick().then(() => {
+      if (currentRunId !== activeEffectId) return;
       import('echarts').then((echarts) => {
+        if (currentRunId !== activeEffectId) return;
         if (!isMounted || !chartElement) return;
         
         const options = chartOptions as any;
@@ -336,19 +340,39 @@
 
   $effect(() => {
     const _options = chartOptions; // Synchronous read registers dependency
+    const currentRunId = ++activeEffectId;
     if (activeTab || timeline || mode.current) {
-      renderChart();
+      renderChart(currentRunId);
     }
+    return () => {
+      cleanupChart();
+    };
   });
 
   onMount(() => {
     isMounted = true;
-    renderChart();
+    renderChart(++activeEffectId);
     return () => {
       isMounted = false;
       cleanupChart();
     };
   });
+
+  function formatPaybackRange(upper: number | null | undefined, lower: number | null | undefined): string {
+    if (upper === null || upper === undefined) {
+      return 'Not within horizon';
+    }
+    if (upper === 0 && (lower === 0 || lower === null || lower === undefined)) {
+      if (lower === 0) return 'Immediate';
+      return `Immediate – ${lower === null || lower === undefined ? '∞' : formatMonths(lower)}`;
+    }
+    const upperStr = upper === 0 ? 'Immediate' : formatMonths(upper);
+    const lowerStr = (lower === null || lower === undefined) ? '∞' : formatMonths(lower);
+    if (upper === lower) {
+      return upperStr;
+    }
+    return `${upperStr} – ${lowerStr}`;
+  }
 </script>
 
 <div class="space-y-6">
@@ -425,9 +449,13 @@
         <!-- NPV -->
         <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between">
           <div>
-            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Incremental NPV</span>
-            <CardTitle class="text-xl font-black mt-2 block {results.npv >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
-              {formatCurrency(results.npv, appState.currency, 0)}
+            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Incremental NPV Range</span>
+            <CardTitle class="text-base font-black mt-2 block {results.npv >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
+              {#if results.npv_lower !== undefined && results.npv_lower !== results.npv}
+                {formatCurrency(results.npv_lower, appState.currency, 0)} – {formatCurrency(results.npv, appState.currency, 0)}
+              {:else}
+                {formatCurrency(results.npv, appState.currency, 0)}
+              {/if}
             </CardTitle>
           </div>
           <div class="text-[10px] text-muted-foreground/80 mt-1">Discounted lifetime net value</div>
@@ -436,22 +464,26 @@
         <!-- IRR -->
         <Card class="glass border glass-glow [--glow-color:var(--primary)] select-none p-4 flex flex-col justify-between">
           <div>
-            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">IRR on AI Investment</span>
-            <span class="text-xl font-black mt-2 block {results.irr_annual !== null && results.irr_annual >= scenario.discount_rate ? 'text-emerald-600 dark:text-emerald-400' : results.irr_annual !== null ? 'text-amber-400' : 'text-muted-foreground'}">
-              {results.irr_annual !== null ? formatPercent(results.irr_annual) : 'N/A'}
+            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Nominal Guarded IRR</span>
+            <span class="text-xl font-black mt-2 block {results.irr_status === 'ok' && results.irr_annual_nominal !== null && results.irr_annual_nominal !== undefined && results.irr_annual_nominal >= scenario.discount_rate ? 'text-emerald-600 dark:text-emerald-400' : results.irr_status === 'ok' ? 'text-amber-400' : 'text-muted-foreground'}">
+              {formatIrr(results)}
             </span>
           </div>
           <div class="text-[10px] text-muted-foreground/80 mt-1">
-            Hurdle rate: {formatPercent(scenario.discount_rate)}
+            {#if results.irr_status && results.irr_status !== 'ok'}
+              Status: <span class="capitalize font-medium text-amber-500">{results.irr_status.replace(/_/g, ' ')}</span>
+            {:else}
+              Hurdle rate: {formatPercent(scenario.discount_rate)}
+            {/if}
           </div>
         </Card>
 
         <!-- Payback Period -->
         <Card class="glass border glass-glow [--glow-color:var(--color-cyan-500)] select-none p-4 flex flex-col justify-between">
           <div>
-            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Payback Period</span>
-            <span class="text-xl font-black text-cyan-600 dark:text-cyan-400 mt-2 block">
-              {results.payback_months === 0 ? 'Immediate' : results.payback_months === null ? 'Not within horizon' : formatMonths(results.payback_months)}
+            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Payback Period Range</span>
+            <span class="text-sm font-black text-cyan-600 dark:text-cyan-400 mt-2 block">
+              {formatPaybackRange(results.payback_months, results.payback_months_lower)}
             </span>
           </div>
           <div class="text-[10px] text-muted-foreground/80 mt-1">Months to recover investment</div>
@@ -468,15 +500,19 @@
           <div class="text-[10px] text-muted-foreground/80 mt-1">Capex + opex + token totals</div>
         </Card>
 
-        <!-- ROI% -->
+        <!-- Profitability Index (PI) -->
         <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between col-span-2 lg:col-span-1">
           <div>
-            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Return on Investment</span>
-            <span class="text-xl font-black mt-2 block {results.roi_percent >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
-              {formatPercent(results.roi_percent)}
+            <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Profitability Index (PI) Range</span>
+            <span class="text-sm font-black mt-2 block {results.profitability_index >= 1.0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
+              {#if results.profitability_index_lower !== undefined && results.profitability_index_lower !== results.profitability_index}
+                {formatPI(results.profitability_index_lower)} – {formatPI(results.profitability_index)}
+              {:else}
+                {formatPI(results.profitability_index)}
+              {/if}
             </span>
           </div>
-          <div class="text-[10px] text-muted-foreground/80 mt-1">Net gain relative to total costs</div>
+          <div class="text-[10px] text-muted-foreground/80 mt-1">Present Value of benefits divided by Present Value of costs (mnożnik inwestycji)</div>
         </Card>
       </div>
 
@@ -678,7 +714,7 @@
         >
           <div class="flex items-center space-x-2">
             <Info class="h-4 w-4 text-primary" />
-            <span>How this is calculated (Cohort ROI Methodology)</span>
+            <span>How this is calculated (Cohort PI Methodology)</span>
           </div>
           <span class="text-xs text-muted-foreground font-semibold">{isExplainerOpen ? 'Hide' : 'Show Details'}</span>
         </button>
@@ -687,23 +723,34 @@
           <div class="p-4 border-t border-border space-y-4 text-xs leading-relaxed text-muted-foreground bg-background/5">
             <p>
               Sherpa uses a counterfactual <strong>cohort-based adopter/non-adopter split</strong> model.
-              Instead of applying a blended average to the entire group, the target population is partitioned into two distinct sub-cohorts at the start.
+              Instead of applying a blended average to the entire group, the target population is partitioned into two distinct sub-cohorts.
             </p>
+            <p>
+              To provide CFO-grade realism, Sherpa displays NPV, Payback, and Profitability Index (PI) as a range:
+            </p>
+            <ul class="list-disc list-inside pl-2 space-y-1">
+              <li><strong>Lower Bound:</strong> Price/ARPU uplift effect only. Customer counts (churn, acquisition) follow the baseline projection.</li>
+              <li><strong>Upper Bound:</strong> Full retention + acquisition + price effect (the standard model).</li>
+            </ul>
 
             {#each resolvedConfigs || [] as cc}
-              {@const a = cc.ai_adoption_rate || 0}
+              {@const targetA = cc.ai_adoption_rate || 0}
+              {@const rampMonths = cc.adoption_ramp_months || 0}
+              {@const a0 = rampMonths === 0 ? targetA : Math.min(1, 1 / rampMonths) * targetA}
+              {@const grossMargin = cc.gross_margin !== undefined ? cc.gross_margin : 1.0}
+              
+              {@const startAdopters = Math.round(cc.current_users * a0)}
+              {@const startNonAdopters = Math.round(cc.current_users * (1 - a0))}
+              
               {@const acqUplift = cc.acquisition_uplift || 0}
               {@const churnRed = cc.churn_reduction || 0}
               {@const arpuUp = cc.arpu_uplift || 0}
               {@const arpuUpPct = cc.arpu_uplift_percent || 0}
-              
-              {@const startAdopters = Math.round(cc.current_users * a)}
-              {@const startNonAdopters = Math.round(cc.current_users * (1 - a))}
-              
+
               {@const baseAcq = cc.monthly_acquisition || 0}
               {@const withAiAcq = baseAcq * (1 + acqUplift)}
-              {@const adopterAcq = withAiAcq * a}
-              {@const nonAdopterAcq = withAiAcq * (1 - a)}
+              {@const adopterAcq = withAiAcq * targetA}
+              {@const nonAdopterAcq = withAiAcq * (1 - targetA)}
               
               {@const baseChurn = cc.monthly_churn_rate || 0}
               {@const adopterChurn = baseChurn * (1 - churnRed)}
@@ -713,21 +760,34 @@
               
               {@const m0AdopterRev = startAdopters * adopterArpu}
               {@const m0NonAdopterRev = startNonAdopters * baseArpu}
+              {@const m0WithAi = m0AdopterRev + m0NonAdopterRev}
               {@const m0BaseRev = cc.current_users * baseArpu}
-              {@const m0Net = m0AdopterRev + m0NonAdopterRev - m0BaseRev}
+              {@const m0Net = m0WithAi - m0BaseRev}
+              {@const m0NetMargin = m0Net * grossMargin}
 
               <div class="bg-muted/30 border border-border/50 rounded-lg p-3 space-y-3">
                 <h4 class="font-bold text-foreground text-sm flex items-center justify-between">
                   <span>Cohort: {cc.name}</span>
-                  <Badge variant="secondary" class="text-[10px]">ai_adoption_rate: {formatPercent(a)}</Badge>
+                  <div class="flex items-center space-x-1.5">
+                    {#if rampMonths > 0}
+                      <Badge variant="secondary" class="text-[10px] bg-amber-500/10 text-amber-500 border-amber-500/20">Ramp: {rampMonths} mos</Badge>
+                    {/if}
+                    <Badge variant="secondary" class="text-[10px]">Gross Margin: {formatPercent(grossMargin)}</Badge>
+                    <Badge variant="secondary" class="text-[10px]">Target Adoption: {formatPercent(targetA)}</Badge>
+                  </div>
                 </h4>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div class="space-y-1.5">
-                    <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">Sub-Cohort Partitioning</span>
+                    <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">Sub-Cohort Partitioning (Month 0)</span>
                     <ul class="list-disc list-inside space-y-1">
-                      <li><strong>AI Adopters ({formatPercent(a)}):</strong> Starts with <span class="text-foreground font-bold">{formatNumber(startAdopters)}</span> customers.</li>
-                      <li><strong>Non-Adopters ({formatPercent(1 - a)}):</strong> Starts with <span class="text-foreground font-bold">{formatNumber(startNonAdopters)}</span> customers.</li>
+                      <li><strong>AI Adopters ({formatPercent(a0)}):</strong> Starts with <span class="text-foreground font-bold">{formatNumber(startAdopters)}</span> customers.</li>
+                      <li><strong>Non-Adopters ({formatPercent(1 - a0)}):</strong> Starts with <span class="text-foreground font-bold">{formatNumber(startNonAdopters)}</span> customers.</li>
+                      {#if rampMonths > 0}
+                        <li class="list-none pl-4 text-[10px] text-amber-500">
+                          (Target {formatPercent(targetA)} scaled by Month 0 adoption ramp: 1/{rampMonths} = {formatPercent(1/rampMonths, 0)})
+                        </li>
+                      {/if}
                     </ul>
                   </div>
 
@@ -758,12 +818,14 @@
                 </div>
 
                 <div class="border-t border-border/40 pt-2.5 mt-2 bg-muted/20 p-2 rounded">
-                  <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider mb-1">Month 0 Revenue Hand-Check</span>
-                  <div class="grid grid-cols-1 sm:grid-cols-4 gap-2 text-[11px]">
-                    <div>Adopters MRR: <span class="font-mono font-bold text-foreground">{formatCurrency(m0AdopterRev, appState.currency, 0)}</span></div>
-                    <div>Non-Adopters MRR: <span class="font-mono font-bold text-foreground">{formatCurrency(m0NonAdopterRev, appState.currency, 0)}</span></div>
-                    <div>Baseline MRR: <span class="font-mono font-bold text-foreground">{formatCurrency(m0BaseRev, appState.currency, 0)}</span></div>
-                    <div class="text-emerald-600 dark:text-emerald-400 font-bold">Net Incremental MRR: <span class="font-mono">{formatCurrency(m0Net, appState.currency, 0)}</span></div>
+                  <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider mb-1">Month 0 Revenue & Margin Hand-Check</span>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2 text-[11px]">
+                    <div>Adopters: <span class="font-mono font-bold text-foreground">{formatCurrency(m0AdopterRev, appState.currency, 0)}</span></div>
+                    <div>Non-Adopters: <span class="font-mono font-bold text-foreground">{formatCurrency(m0NonAdopterRev, appState.currency, 0)}</span></div>
+                    <div>With-AI: <span class="font-mono font-bold text-foreground">{formatCurrency(m0WithAi, appState.currency, 0)}</span></div>
+                    <div>Baseline: <span class="font-mono font-bold text-foreground">{formatCurrency(m0BaseRev, appState.currency, 0)}</span></div>
+                    <div class="text-foreground font-semibold">Gross Incremental: <span class="font-mono font-bold">{formatCurrency(m0Net, appState.currency, 0)}</span></div>
+                    <div class="text-emerald-600 dark:text-emerald-400 font-bold">Net Margin (x{formatPercent(grossMargin, 0)}): <span class="font-mono">{formatCurrency(m0NetMargin, appState.currency, 0)}</span></div>
                   </div>
                 </div>
               </div>

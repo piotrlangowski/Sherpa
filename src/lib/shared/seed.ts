@@ -38,8 +38,8 @@ export function seedDatabase(db: DatabaseConnection): void {
         id, total_users, default_arpu, default_monthly_churn_rate, default_monthly_acquisition,
         default_acquisition_growth_rate, default_ai_adoption_rate, default_retention_floor,
         default_expansion_rate, default_arpu_uplift, default_arpu_uplift_percent,
-        default_churn_reduction, default_acquisition_uplift, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        default_churn_reduction, default_acquisition_uplift, default_gross_margin, default_adoption_ramp_months, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       'singleton',
       10000,
@@ -54,6 +54,8 @@ export function seedDatabase(db: DatabaseConnection): void {
       0.00,
       0.20,
       0.10,
+      1.0,
+      0,
       new Date().toISOString()
     );
 
@@ -191,8 +193,8 @@ export function seedDatabase(db: DatabaseConnection): void {
 
     // 9. Cohorts
     const insertCohort = db.prepare(`
-      INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const coSMBHelpdesk = uuidv4();
@@ -212,6 +214,8 @@ export function seedDatabase(db: DatabaseConnection): void {
       0, 
       0.20, 
       0.10, 
+      0.60, 
+      0, 
       now, 
       now
     );

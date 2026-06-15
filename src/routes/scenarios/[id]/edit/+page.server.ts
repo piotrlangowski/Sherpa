@@ -52,6 +52,7 @@ export const actions: Actions = {
     const discountRate = parseFloat(formData.get('discountRate') as string || '10') / 100;
     const scopeType = formData.get('scopeType') as 'all_clients' | 'verticals' | 'cohorts';
     const revenueSource = (formData.get('revenueSource') as 'cohort' | 'monetization' | 'both') || 'cohort';
+    const capexContingencyPct = parseFloat(formData.get('capexContingencyPct') as string || '0');
 
     let verticalIds: string[] = [];
     if (scopeType === 'verticals') {
@@ -110,6 +111,7 @@ export const actions: Actions = {
         discount_rate: discountRate,
         scope_type: scopeType,
         revenue_source: revenueSource,
+        capex_contingency_pct: capexContingencyPct,
         vertical_ids: verticalIds,
         cohort_config_ids: cohortConfigIds,
         scope_overrides: scopeOverrides,

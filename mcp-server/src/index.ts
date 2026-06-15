@@ -789,12 +789,14 @@ server.tool(
     arpu_uplift_percent: z.number().min(0).max(1).optional().describe("Percentage increase in ARPU for users adopting AI (e.g. 0.10 for 10%). Weighted by adoption rate."),
     churn_reduction: z.number().min(0).max(1).optional().describe("Percentage reduction of monthly churn for users adopting AI (e.g. 0.15 for 15%). Weighted by adoption rate."),
     acquisition_uplift: z.number().min(0).max(5).optional().describe("Percentage increase in new customer acquisition (e.g. 0.10 for 10%). Applied directly, NOT weighted by adoption."),
+    gross_margin: z.number().min(0).max(1).optional().describe("Cohort gross margin percentage (e.g. 0.80 for 80% margin). Defaults to 1.0."),
+    adoption_ramp_months: z.number().int().nonnegative().optional().describe("Number of months over which AI adoption ramps up linearly. Defaults to 0."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
   async (args) => {
     try {
       if (args.action === "list") {
-        const cohorts = db.prepare("SELECT id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift FROM cohort_configs ORDER BY name ASC").all() as any[];
+        const cohorts = db.prepare("SELECT id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months FROM cohort_configs ORDER BY name ASC").all() as any[];
         return { content: [{ type: "text", text: JSON.stringify(cohorts, null, 2) }] };
       }
       if (args.action === "create") {
@@ -813,13 +815,14 @@ server.tool(
           INSERT INTO cohort_configs (
             id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate,
             monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu,
-            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           id, args.name, args.vertical_id || null, args.current_users, args.monthly_acquisition, args.acquisition_growth_rate ?? 0,
           args.monthly_churn_rate ?? 0.05, args.retention_floor ?? 0.60, args.monthly_expansion_rate ?? 0.02, args.ai_adoption_rate ?? 0.30, args.base_arpu ?? 100,
           args.arpu_uplift ?? 0, args.arpu_uplift_percent ?? 0, args.churn_reduction ?? 0, args.acquisition_uplift ?? 0,
+          args.gross_margin ?? 1.0, args.adoption_ramp_months ?? 0,
           now, now
         );
         return { content: [{ type: "text", text: `Cohort '${args.name}' created with ID: ${id}` }] };
@@ -846,6 +849,8 @@ server.tool(
         const arpu_uplift_percent = args.arpu_uplift_percent !== undefined ? args.arpu_uplift_percent : current.arpu_uplift_percent;
         const churn_reduction = args.churn_reduction !== undefined ? args.churn_reduction : current.churn_reduction;
         const acquisition_uplift = args.acquisition_uplift !== undefined ? args.acquisition_uplift : current.acquisition_uplift;
+        const gross_margin = args.gross_margin !== undefined ? args.gross_margin : current.gross_margin;
+        const adoption_ramp_months = args.adoption_ramp_months !== undefined ? args.adoption_ramp_months : current.adoption_ramp_months;
         const now = new Date().toISOString();
 
         db.prepare(`
@@ -854,6 +859,7 @@ server.tool(
               acquisition_growth_rate = ?, monthly_churn_rate = ?, retention_floor = ?,
               monthly_expansion_rate = ?, ai_adoption_rate = ?, base_arpu = ?,
               arpu_uplift = ?, arpu_uplift_percent = ?, churn_reduction = ?, acquisition_uplift = ?,
+              gross_margin = ?, adoption_ramp_months = ?,
               updated_at = ?
           WHERE id = ?
         `).run(
@@ -861,6 +867,7 @@ server.tool(
           acquisition_growth_rate, monthly_churn_rate, retention_floor,
           monthly_expansion_rate, ai_adoption_rate, base_arpu,
           arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+          gross_margin, adoption_ramp_months,
           now, args.id
         );
         return { content: [{ type: "text", text: `Cohort '${name}' updated successfully.` }] };
@@ -1423,6 +1430,42 @@ server.tool(
   }
 );
 
+function formatIrrMcp(irr: any): string {
+  if (!irr || irr.status !== 'ok' || irr.annualNominal === null) return 'n/d';
+  return (irr.annualNominal * 100).toFixed(1) + '%';
+}
+
+function saveScenarioResults(scenarioId: string, results: any, resultsId?: string) {
+  const now = new Date().toISOString();
+  if (resultsId) {
+    db.prepare(`
+      INSERT OR REPLACE INTO scenario_results (
+        id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index,
+        payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
+        monthly_cashflows, monthly_mrr, monthly_customers, calculated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      resultsId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
+      results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
+      JSON.stringify(results.timeline.map((t: any) => t.netCashFlow)), JSON.stringify(results.timeline.map((t: any) => t.revenue)), JSON.stringify(results.timeline.map((t: any) => t.customers)), now
+    );
+  } else {
+    db.prepare(`
+      INSERT OR REPLACE INTO scenario_results (
+        id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index,
+        payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
+        monthly_cashflows, monthly_mrr, monthly_customers, calculated_at
+      )
+      VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      scenarioId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
+      results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
+      JSON.stringify(results.timeline.map((t: any) => t.netCashFlow)), JSON.stringify(results.timeline.map((t: any) => t.revenue)), JSON.stringify(results.timeline.map((t: any) => t.customers)), now
+    );
+  }
+}
+
 server.tool(
   "scenario_action",
   "List, create, retrieve, update, or delete SaaS ROI scenarios, or execute scenario projections (calculating NPV/IRR, performing sensitivity analysis, comparing scenarios, and parsing natural language descriptions). Scenarios target a scope_type ('all_clients', 'verticals', 'cohorts') resolving parameters via a global->vertical->cohort override cascade. The revenue_source ('cohort', 'monetization', 'both') dictates what revenue is counted. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true.",
@@ -1436,6 +1479,7 @@ server.tool(
     discount_rate: z.number().min(0).max(1).optional().describe("Annual discount rate as a decimal (default: 0.10 for 10%)."),
     scope_type: z.enum(["all_clients", "verticals", "cohorts"]).optional().describe("Scope type (default: cohorts)."),
     revenue_source: z.enum(["cohort", "monetization", "both"]).optional().describe("Where the scenario draws its revenue from (default: cohort)."),
+    capex_contingency_pct: z.number().min(0).max(1).optional().describe("CAPEX contingency buffer percentage (e.g. 0.20 for 20% contingency). Defaults to 0."),
     cohort_config: z.object({
       name: z.string(),
       current_users: z.number(),
@@ -1450,6 +1494,8 @@ server.tool(
       arpu_uplift_percent: z.number().default(0),
       churn_reduction: z.number().default(0),
       acquisition_uplift: z.number().default(0),
+      gross_margin: z.number().default(1.0),
+      adoption_ramp_months: z.number().default(0),
       vertical_id: z.string().nullable().optional()
     }).optional().describe("Embedded cohort configuration. Required for 'create' action."),
     services: z.array(z.object({ id: z.string(), rollout_month: z.number().default(0) })).optional().describe("AI services to attach, with rollout month offsets."),
@@ -1463,8 +1509,9 @@ server.tool(
     try {
       if (args.action === "list") {
         const scenarios = db.prepare(`
-          SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source,
-                 r.payback_months, r.npv, r.irr_annual, r.tco, r.roi_percent
+          SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct,
+                 r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index,
+                 r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status
           FROM scenarios s
           LEFT JOIN scenario_results r ON s.id = r.scenario_id
           ORDER BY s.updated_at DESC
@@ -1509,15 +1556,15 @@ server.tool(
         db.transaction(() => {
           const cc = args.cohort_config!;
           db.prepare(`
-            INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate ?? 0, cc.monthly_churn_rate ?? 0.05, cc.retention_floor ?? 0.60, cc.monthly_expansion_rate ?? 0.02, cc.ai_adoption_rate ?? 0.30, cc.base_arpu ?? 100, cc.arpu_uplift ?? 0, cc.arpu_uplift_percent ?? 0, cc.churn_reduction ?? 0, cc.acquisition_uplift ?? 0, now, now);
+            INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate ?? 0, cc.monthly_churn_rate ?? 0.05, cc.retention_floor ?? 0.60, cc.monthly_expansion_rate ?? 0.02, cc.ai_adoption_rate ?? 0.30, cc.base_arpu ?? 100, cc.arpu_uplift ?? 0, cc.arpu_uplift_percent ?? 0, cc.churn_reduction ?? 0, cc.acquisition_uplift ?? 0, cc.gross_margin ?? 1.0, cc.adoption_ramp_months ?? 0, now, now);
 
           const revSource = args.revenue_source || 'cohort';
           db.prepare(`
-            INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?, ?)
-          `).run(scenarioId, args.name, args.description || null, args.projection_months ?? 36, args.discount_rate ?? 0.10, revSource, now, now);
+            INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?, ?, ?)
+          `).run(scenarioId, args.name, args.description || null, args.projection_months ?? 36, args.discount_rate ?? 0.10, revSource, args.capex_contingency_pct ?? 0, now, now);
 
           db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`)
             .run(scenarioId, cohortId);
@@ -1562,18 +1609,12 @@ server.tool(
         const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
         const resultsId = crypto.randomUUID();
 
-        db.prepare(`
-          INSERT OR REPLACE INTO scenario_results (id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          resultsId, scenarioId, results.paybackMonths, results.npv, results.irrAnnual, results.tco, results.roiPercent,
-          JSON.stringify(results.timeline.map(t => t.netCashFlow)), JSON.stringify(results.timeline.map(t => t.revenue)), JSON.stringify(results.timeline.map(t => t.customers)), now
-        );
+        saveScenarioResults(scenarioId, results, resultsId);
 
         return {
           content: [{ 
             type: "text", 
-            text: `Scenario '${args.name}' created with ID: ${scenarioId}. Projections calculated (NPV: ${results.npv.toLocaleString()} ${currency}, IRR: ${results.irrAnnual !== null ? (results.irrAnnual * 100).toFixed(1) + '%' : 'N/A'}).` 
+            text: `Scenario '${args.name}' created with ID: ${scenarioId}. Projections calculated (NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}, IRR: ${formatIrrMcp(results.irr)}).` 
           }]
         };
       }
@@ -1593,13 +1634,14 @@ server.tool(
           const discount_rate = args.discount_rate !== undefined ? args.discount_rate : current.discount_rate;
           const scope_type = args.scope_type !== undefined ? args.scope_type : current.scope_type;
           const revenue_source = args.revenue_source !== undefined ? args.revenue_source : current.revenue_source;
+          const capex_contingency_pct = args.capex_contingency_pct !== undefined ? args.capex_contingency_pct : current.capex_contingency_pct;
           const now = new Date().toISOString();
 
           db.prepare(`
             UPDATE scenarios
-            SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, updated_at = ?
+            SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, updated_at = ?
             WHERE id = ?
-          `).run(name, description, projection_months, discount_rate, scope_type, revenue_source, now, args.id);
+          `).run(name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, now, args.id);
         })();
 
         // Re-calculate projections after modification
@@ -1616,13 +1658,7 @@ server.tool(
         const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
         const now = new Date().toISOString();
 
-        db.prepare(`
-          INSERT OR REPLACE INTO scenario_results (id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at)
-          VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          args.id, args.id, results.paybackMonths, results.npv, results.irrAnnual, results.tco, results.roiPercent,
-          JSON.stringify(results.timeline.map(t => t.netCashFlow)), JSON.stringify(results.timeline.map(t => t.revenue)), JSON.stringify(results.timeline.map(t => t.customers)), now
-        );
+        saveScenarioResults(args.id, results);
 
         return { content: [{ type: "text", text: `Scenario '${fullScenario.name}' updated successfully and ROI re-projected.` }] };
       }
@@ -1666,17 +1702,11 @@ server.tool(
         );
         const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
         const now = new Date().toISOString();
-        db.prepare(`
-          INSERT OR REPLACE INTO scenario_results (id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at)
-          VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          args.id, args.id, results.paybackMonths, results.npv, results.irrAnnual, results.tco, results.roiPercent,
-          JSON.stringify(results.timeline.map(t => t.netCashFlow)), JSON.stringify(results.timeline.map(t => t.revenue)), JSON.stringify(results.timeline.map(t => t.customers)), now
-        );
+        saveScenarioResults(args.id, results);
         return {
           content: [{
             type: "text",
-            text: `ROI Results calculated successfully:\n- NPV: ${results.npv.toLocaleString()} ${currency}\n- IRR (Annualized): ${results.irrAnnual !== null ? (results.irrAnnual * 100).toFixed(2) + '%' : 'N/A'}\n- Payback Period: ${results.paybackMonths !== null ? results.paybackMonths + ' months' : 'Never'}\n- TCO: ${results.tco.toLocaleString()} ${currency}\n- ROI%: ${(results.roiPercent * 100).toFixed(1)}%`
+            text: `ROI Results calculated successfully:\n- NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}\n- IRR (Guarded Annualized): ${formatIrrMcp(results.irr)}\n- Payback Period Range: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n- TCO: ${results.tco.toLocaleString()} ${currency}\n- PI Range: ${results.piLower.toFixed(2)}x – ${results.piUpper.toFixed(2)}x`
           }]
         };
       }
@@ -1736,20 +1766,20 @@ server.tool(
         }
 
         // Sort by NPV descending
-        scenarios.sort((a, b) => b.results.npv - a.results.npv);
+        scenarios.sort((a, b) => b.results.npvUpper - a.results.npvUpper);
 
         let md = `### Scenario Comparison & Opportunity Cost analysis\n\n`;
-        md += `| Scenario Name | NPV | IRR | Payback | TCO | ROI% |\n`;
+        md += `| Scenario Name | NPV Range | IRR | Payback Range | TCO | PI Range |\n`;
         md += `|---|---|---|---|---|---|\n`;
         for (const s of scenarios) {
-          md += `| ${s.scenario.name} | **${s.results.npv.toLocaleString()} ${currency}** | ${s.results.irrAnnual !== null ? (s.results.irrAnnual * 100).toFixed(1) + '%' : 'N/A'} | ${s.results.paybackMonths !== null ? s.results.paybackMonths + ' mo' : 'Never'} | ${s.results.tco.toLocaleString()} ${currency} | ${(s.results.roiPercent * 100).toFixed(1)}% |\n`;
+          md += `| ${s.scenario.name} | **${s.results.npvLower.toLocaleString()} – ${s.results.npvUpper.toLocaleString()} ${currency}** | ${formatIrrMcp(s.results.irr)} | ${s.results.paybackUpper !== null ? s.results.paybackUpper + ' mo' : 'Never'} – ${s.results.paybackLower !== null ? s.results.paybackLower + ' mo' : 'Never'} | ${s.results.tco.toLocaleString()} ${currency} | ${s.results.piLower.toFixed(2)}x – ${s.results.piUpper.toFixed(2)}x |\n`;
         }
         md += `\n#### Opportunity Cost Breakdown:\n`;
         const best = scenarios[0];
         for (let i = 1; i < scenarios.length; i++) {
           const comparison = scenarios[i];
-          const deltaNpv = best.results.npv - comparison.results.npv;
-          md += `- Choosing **${comparison.scenario.name}** instead of **${best.scenario.name}** carries an NPV opportunity cost of **${deltaNpv.toLocaleString()} ${currency}**.\n`;
+          const deltaNpv = best.results.npvUpper - comparison.results.npvUpper;
+          md += `- Choosing **${comparison.scenario.name}** instead of **${best.scenario.name}** carries an NPV opportunity cost of **${deltaNpv.toLocaleString()} ${currency}** (based on upper bound comparison).\n`;
         }
         return { content: [{ type: "text", text: md }] };
       }
@@ -1856,13 +1886,7 @@ server.tool(
         const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
         const resultsId = crypto.randomUUID();
 
-        db.prepare(`
-          INSERT OR REPLACE INTO scenario_results (id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          resultsId, scenarioId, results.paybackMonths, results.npv, results.irrAnnual, results.tco, results.roiPercent,
-          JSON.stringify(results.timeline.map(t => t.netCashFlow)), JSON.stringify(results.timeline.map(t => t.revenue)), JSON.stringify(results.timeline.map(t => t.customers)), now
-        );
+        saveScenarioResults(scenarioId, results, resultsId);
 
         let responseText = `### Successfully parsed natural language description & created scenario: **${scenarioName}**\n\n`;
         responseText += `#### Extracted Cohort Settings:\n`;
@@ -1886,9 +1910,9 @@ server.tool(
         }
 
         responseText += `#### Simulated ROI Summary:\n`;
-        responseText += `- **NPV**: ${results.npv.toLocaleString()} ${currency}\n`;
-        responseText += `- **IRR**: ${results.irrAnnual !== null ? (results.irrAnnual * 100).toFixed(1) + '%' : 'N/A'}\n`;
-        responseText += `- **Payback period**: ${results.paybackMonths !== null ? results.paybackMonths + ' months' : 'Never'}\n`;
+        responseText += `- **NPV Range**: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}\n`;
+        responseText += `- **IRR**: ${formatIrrMcp(results.irr)}\n`;
+        responseText += `- **Payback period range**: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n`;
         responseText += `- **TCO**: ${results.tco.toLocaleString()} ${currency}\n`;
         responseText += `\n*Scenario ID: \`${scenarioId}\`. View this scenario inside the SvelteKit dashboard.*`;
 
@@ -1927,7 +1951,8 @@ server.resource(
       }
 
       const row = db.prepare(`
-        SELECT id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at
+        SELECT id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
+               payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status
         FROM scenario_results
         WHERE scenario_id = ?
       `).get(scenarioId) as any;
@@ -1949,7 +1974,13 @@ server.resource(
         npv: row.npv,
         irr_annual: row.irr_annual,
         tco: row.tco,
-        roi_percent: row.roi_percent,
+        profitability_index: row.profitability_index,
+        payback_months_lower: row.payback_months_lower,
+        npv_lower: row.npv_lower,
+        profitability_index_lower: row.profitability_index_lower,
+        irr_monthly: row.irr_monthly,
+        irr_annual_nominal: row.irr_annual_nominal,
+        irr_status: row.irr_status,
         monthly_cashflows: JSON.parse(row.monthly_cashflows || '[]'),
         monthly_mrr: JSON.parse(row.monthly_mrr || '[]'),
         monthly_customers: JSON.parse(row.monthly_customers || '[]'),
@@ -1983,7 +2014,8 @@ server.resource(
     try {
       const rows = db.prepare(`
         SELECT s.id, s.name, s.projection_months, s.discount_rate,
-               r.payback_months, r.npv, r.irr_annual, r.tco, r.roi_percent
+               r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index,
+               r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status
         FROM scenarios s
         LEFT JOIN scenario_results r ON s.id = r.scenario_id
         ORDER BY s.name ASC
@@ -1998,7 +2030,13 @@ server.resource(
         irr_annual: r.irr_annual ?? null,
         payback_period_months: r.payback_months ?? null,
         tco: r.tco ?? null,
-        roi_percent: r.roi_percent ?? null
+        profitability_index: r.profitability_index ?? null,
+        payback_period_months_lower: r.payback_months_lower ?? null,
+        npv_lower: r.npv_lower ?? null,
+        profitability_index_lower: r.profitability_index_lower ?? null,
+        irr_monthly: r.irr_monthly ?? null,
+        irr_annual_nominal: r.irr_annual_nominal ?? null,
+        irr_status: r.irr_status ?? null
       }));
 
       return {

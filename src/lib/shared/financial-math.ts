@@ -20,7 +20,8 @@ import type {
   SensitivityAnalysisResult,
   MonetizationConfig,
   CreditSettings,
-  MonetizationRevenueResult
+  MonetizationRevenueResult,
+  IrrResult
 } from './types.js';
 
 /**
@@ -61,6 +62,8 @@ export function applyScopeOverrides(cohorts: CohortConfig[], overrides: ScopeOve
     if (override.arpu_uplift_percent !== null && override.arpu_uplift_percent !== undefined) c.arpu_uplift_percent = override.arpu_uplift_percent;
     if (override.churn_reduction !== null && override.churn_reduction !== undefined) c.churn_reduction = override.churn_reduction;
     if (override.acquisition_uplift !== null && override.acquisition_uplift !== undefined) c.acquisition_uplift = override.acquisition_uplift;
+    if (override.gross_margin !== null && override.gross_margin !== undefined) c.gross_margin = override.gross_margin;
+    if (override.adoption_ramp_months !== null && override.adoption_ramp_months !== undefined) c.adoption_ramp_months = override.adoption_ramp_months;
     return c;
   };
 
@@ -260,16 +263,21 @@ export function calculatePaybackPeriod(cashFlows: number[], annualDiscountRate: 
  * Uses Newton-Raphson method with Bisection fallback.
  * Returns annualized IRR: (1 + r_monthly)^12 - 1
  */
-export function calculateIRR(cashFlows: number[]): number | null {
-  // Check if we have at least one positive and one negative cash flow
-  let hasPositive = false;
-  let hasNegative = false;
-  for (const cf of cashFlows) {
-    if (cf > 0) hasPositive = true;
-    if (cf < 0) hasNegative = true;
+export function countSignChanges(stream: number[]): number {
+  let count = 0;
+  let prevSign = 0;
+  for (const val of stream) {
+    if (Math.abs(val) < 1e-10) continue;
+    const sign = val > 0 ? 1 : -1;
+    if (prevSign !== 0 && sign !== prevSign) {
+      count++;
+    }
+    prevSign = sign;
   }
-  if (!hasPositive || !hasNegative) return null;
+  return count;
+}
 
+export function solveMonthlyIRR(cashFlows: number[]): number | null {
   // 1. Newton-Raphson Method
   let r = 0.01; // initial guess (1% monthly rate)
   const maxIterations = 100;
@@ -297,10 +305,8 @@ export function calculateIRR(cashFlows: number[]): number | null {
         checkVal += cashFlows[t] / Math.pow(1 + nextR, t);
       }
       if (Math.abs(checkVal) < 1e-5) {
-        // Annualize: (1 + r_monthly)^12 - 1
-        const annualizedIrr = Math.pow(1 + nextR, 12) - 1;
-        if (!isNaN(annualizedIrr) && isFinite(annualizedIrr)) {
-          return parseFloat(annualizedIrr.toFixed(4));
+        if (!isNaN(nextR) && isFinite(nextR)) {
+          return nextR;
         }
       }
     }
@@ -321,9 +327,8 @@ export function calculateIRR(cashFlows: number[]): number | null {
     }
 
     if (Math.abs(fVal) < tolerance) {
-      const annualizedIrr = Math.pow(1 + mid, 12) - 1;
-      if (!isNaN(annualizedIrr) && isFinite(annualizedIrr)) {
-        return parseFloat(annualizedIrr.toFixed(4));
+      if (!isNaN(mid) && isFinite(mid)) {
+        return mid;
       }
     }
 
@@ -341,6 +346,48 @@ export function calculateIRR(cashFlows: number[]): number | null {
   }
 
   return null;
+}
+
+export function calculateIRRGuarded(cashFlows: number[], paybackMonths: number | null): IrrResult {
+  let hasPositive = false;
+  let hasNegative = false;
+  for (const cf of cashFlows) {
+    if (cf > 0) hasPositive = true;
+    if (cf < 0) hasNegative = true;
+  }
+  if (!hasPositive || !hasNegative) {
+    return { monthly: null, annualNominal: null, status: 'undefined_no_sign_change', displayable: false };
+  }
+
+  const cumulativeCf: number[] = [];
+  let sum = 0;
+  for (const cf of cashFlows) {
+    sum += cf;
+    cumulativeCf.push(sum);
+  }
+  
+  if (countSignChanges(cumulativeCf) > 1) {
+    return { monthly: null, annualNominal: null, status: 'ambiguous_multiple_roots', displayable: false };
+  }
+
+  const monthly = solveMonthlyIRR(cashFlows);
+  if (monthly === null || monthly > 1.0) {
+    return { monthly: null, annualNominal: null, status: 'non_converged', displayable: false };
+  }
+
+  const annualNominal = parseFloat((monthly * 12).toFixed(4));
+  
+  if (paybackMonths !== null && paybackMonths < 12) {
+    return { monthly, annualNominal, status: 'unstable_short_payback', displayable: false };
+  }
+
+  return { monthly, annualNominal, status: 'ok', displayable: true };
+}
+
+export function calculateIRR(cashFlows: number[]): number | null {
+  const monthly = solveMonthlyIRR(cashFlows);
+  if (monthly === null) return null;
+  return parseFloat((Math.pow(1 + monthly, 12) - 1).toFixed(4));
 }
 
 /**
@@ -515,25 +562,38 @@ export function calculateScenario(
     throw new Error(`Scenario '${scenario.name}' has no cohort configurations.`);
   }
 
-  // 1. Generate baseline (without AI) and with-AI cohort timelines using adopter/non-adopter split
-  const baselineResults = scenario.scope_cohorts.map(cc => {
-    const { adopter, nonAdopter } = splitCohortForAi({
+  // 1. Generate baseline, full-adoption, and uplift-only cohort timelines
+  const cohortProjections = scenario.scope_cohorts.map(cc => {
+    const baselineModel = buildCohortModel({
       ...cc,
+      ai_adoption_rate: 0,
       churn_reduction: 0,
       acquisition_uplift: 0,
-      arpu_uplift_percent: 0,
-      arpu_uplift: 0
-    });
+      arpu_uplift: 0,
+      arpu_uplift_percent: 0
+    }, projectionMonths);
+
+    const fullAdoptModel = buildCohortModel({
+      ...cc,
+      ai_adoption_rate: 1.0,
+      monthly_acquisition: cc.monthly_acquisition * (1 + (cc.acquisition_uplift || 0)),
+      monthly_churn_rate: cc.monthly_churn_rate * (1 - (cc.churn_reduction || 0)),
+      base_arpu: cc.base_arpu * (1 + (cc.arpu_uplift_percent || 0)) + (cc.arpu_uplift || 0)
+    }, projectionMonths);
+
+    const upliftOnlyModel = buildCohortModel({
+      ...cc,
+      ai_adoption_rate: 1.0,
+      base_arpu: cc.base_arpu * (1 + (cc.arpu_uplift_percent || 0)) + (cc.arpu_uplift || 0)
+    }, projectionMonths);
+
     return {
-      adopterModel: buildCohortModel(adopter, projectionMonths),
-      nonAdopterModel: buildCohortModel(nonAdopter, projectionMonths)
-    };
-  });
-  const splitResults = scenario.scope_cohorts.map(cc => {
-    const { adopter, nonAdopter } = splitCohortForAi(cc);
-    return {
-      adopterModel: buildCohortModel(adopter, projectionMonths),
-      nonAdopterModel: buildCohortModel(nonAdopter, projectionMonths)
+      baselineModel,
+      fullAdoptModel,
+      upliftOnlyModel,
+      grossMargin: cc.gross_margin !== undefined ? cc.gross_margin : 1.0,
+      adoptionRate: cc.ai_adoption_rate || 0,
+      rampMonths: cc.adoption_ramp_months || 0
     };
   });
 
@@ -545,6 +605,8 @@ export function calculateScenario(
 
   const timeline: MonthlyBreakdown[] = [];
   let cumulativeCashFlow = 0;
+  const cashFlowsLower: number[] = [];
+  let totalRevenueLowerSum = 0;
 
   // 3. Loop through projection months
   for (let t = 0; t < projectionMonths; t++) {
@@ -553,40 +615,49 @@ export function calculateScenario(
     let grossRevenue = 0;
     let baselineRevenue = 0;
     let baselineCustomers = 0;
+    let upliftOnlyRevenue = 0;
+
+    let upperMarginSum = 0;
+    let lowerMarginSum = 0;
 
     // Aggregate over all cohort models for month t
     for (let i = 0; i < scenario.scope_cohorts.length; i++) {
-      const baseRes = baselineResults[i];
-      const { adopterModel, nonAdopterModel } = splitResults[i];
+      const proj = cohortProjections[i];
+      const target = proj.adoptionRate;
+      const rampMonths = proj.rampMonths;
+      
+      const a = rampMonths === 0 ? target : Math.min(1, (t + 1) / rampMonths) * target;
+      
+      const baseMonth = proj.baselineModel.timeline[t];
+      const fullMonth = proj.fullAdoptModel.timeline[t];
+      const upliftOnlyMonth = proj.upliftOnlyModel.timeline[t];
 
-      const baseAdopterMonth = baseRes.adopterModel.timeline[t];
-      const baseNonAdopterMonth = baseRes.nonAdopterModel.timeline[t];
-      const adopterMonth = adopterModel.timeline[t];
-      const nonAdopterMonth = nonAdopterModel.timeline[t];
+      if (fullMonth && baseMonth) {
+        const cohortCustomers = a * fullMonth.activeCustomers + (1 - a) * baseMonth.activeCustomers;
+        const cohortAiUsers = a * fullMonth.activeCustomers;
+        const cohortGrossRev = a * fullMonth.mrr + (1 - a) * baseMonth.mrr;
 
-      if (adopterMonth) {
-        activeCustomers += adopterMonth.activeCustomers;
-        activeAiUsers += adopterMonth.activeCustomers; // exact adopters
-        grossRevenue += adopterMonth.mrr;
+        activeCustomers += cohortCustomers;
+        activeAiUsers += cohortAiUsers;
+        grossRevenue += cohortGrossRev;
+
+        const incrementalUpper = cohortGrossRev - baseMonth.mrr;
+        upperMarginSum += proj.grossMargin * incrementalUpper;
       }
-      if (nonAdopterMonth) {
-        activeCustomers += nonAdopterMonth.activeCustomers;
-        grossRevenue += nonAdopterMonth.mrr;
+      if (upliftOnlyMonth && baseMonth) {
+        const cohortUpliftOnlyRev = a * upliftOnlyMonth.mrr + (1 - a) * baseMonth.mrr;
+        upliftOnlyRevenue += cohortUpliftOnlyRev;
+
+        const incrementalLower = cohortUpliftOnlyRev - baseMonth.mrr;
+        lowerMarginSum += proj.grossMargin * incrementalLower;
       }
-      if (baseAdopterMonth) {
-        baselineCustomers += baseAdopterMonth.activeCustomers;
-        baselineRevenue += baseAdopterMonth.mrr;
-      }
-      if (baseNonAdopterMonth) {
-        baselineCustomers += baseNonAdopterMonth.activeCustomers;
-        baselineRevenue += baseNonAdopterMonth.mrr;
+      if (baseMonth) {
+        baselineCustomers += baseMonth.activeCustomers;
+        baselineRevenue += baseMonth.mrr;
       }
     }
 
-    // Cohort ΔRevenue — incremental MRR uplift from AI adoption.
-    const cohortRevenue = grossRevenue - baselineRevenue;
-
-    // AI monetization revenue — direct sales of AI features, when enabled for this scenario.
+    // AI monetization revenue
     let monetization: MonetizationRevenueResult = {
       totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0
     };
@@ -595,17 +666,23 @@ export function calculateScenario(
       monetization = calculateMonetizationRevenue(activeAiUsers, activeServices, creditSettings, providersMap);
     }
 
-    let revenue: number;
+    let upperRevenue: number;
+    let lowerRevenue: number;
     switch (revenueSource) {
       case 'monetization':
-        revenue = monetization.totalRevenue;
+        upperRevenue = monetization.totalRevenue;
+        lowerRevenue = monetization.totalRevenue;
         break;
       case 'both':
-        revenue = cohortRevenue + monetization.totalRevenue;
+        upperRevenue = upperMarginSum + monetization.totalRevenue;
+        lowerRevenue = lowerMarginSum + monetization.totalRevenue;
         break;
       default:
-        revenue = cohortRevenue;
+        upperRevenue = upperMarginSum;
+        lowerRevenue = lowerMarginSum;
     }
+
+    totalRevenueLowerSum += lowerRevenue;
 
     let opex = 0;
     let capex = 0;
@@ -615,7 +692,6 @@ export function calculateScenario(
     if (scenario.services) {
       for (const service of scenario.services) {
         const rolloutMonth = service.rollout_month ?? 0;
-        // Only active if month is at or after rollout month
         if (t >= rolloutMonth) {
           let serviceTokenCost = 0;
           if (service.provider_id && providersMap.has(service.provider_id)) {
@@ -623,7 +699,6 @@ export function calculateScenario(
             const inputPrice = provider.input_price / 1000000;
             const outputPrice = provider.output_price / 1000000;
 
-            // Monthly service execution token cost
             serviceTokenCost = activeAiUsers *
               (service.avg_requests_per_user_month || 0) *
               ((service.avg_input_tokens || 0) * inputPrice + (service.avg_output_tokens || 0) * outputPrice);
@@ -650,7 +725,7 @@ export function calculateScenario(
 
         if (isApplicable) {
           if (item.category === 'capex') {
-            capex += item.amount;
+            capex += item.amount * (1 + (scenario.capex_contingency_pct || 0));
           } else {
             opex += item.amount;
           }
@@ -658,14 +733,14 @@ export function calculateScenario(
       }
     }
 
-    // Direct token costs count as opex infrastructure
     const totalCosts = opex + capex + tokenCosts;
-    const netCashFlow = revenue - totalCosts;
+    const netCashFlow = upperRevenue - totalCosts;
+    const netCashFlowLower = lowerRevenue - totalCosts;
     cumulativeCashFlow += netCashFlow;
 
     timeline.push({
       month: t,
-      revenue: parseFloat(revenue.toFixed(2)),
+      revenue: parseFloat(upperRevenue.toFixed(2)),
       customers: activeCustomers,
       aiUsers: activeAiUsers,
       opex: parseFloat(opex.toFixed(2)),
@@ -683,27 +758,38 @@ export function calculateScenario(
       hybridBaseRevenue: parseFloat(monetization.hybridBaseRevenue.toFixed(2)),
       overchargeRevenue: parseFloat(monetization.overchargeRevenue.toFixed(2))
     });
+
+    cashFlowsLower.push(parseFloat(netCashFlowLower.toFixed(2)));
   }
 
   // 4. Calculate aggregate KPIs
-  const cashFlows = timeline.map(m => m.netCashFlow);
-  const paybackMonths = calculatePaybackPeriod(cashFlows, annualDiscountRate);
-  const npv = calculateNPV(cashFlows, annualDiscountRate);
-  const irrAnnual = calculateIRR(cashFlows);
+  const cashFlowsUpper = timeline.map(m => m.netCashFlow);
+  const paybackUpper = calculatePaybackPeriod(cashFlowsUpper, annualDiscountRate);
+  const npvUpper = calculateNPV(cashFlowsUpper, annualDiscountRate);
+
+  const paybackLower = calculatePaybackPeriod(cashFlowsLower, annualDiscountRate);
+  const npvLower = calculateNPV(cashFlowsLower, annualDiscountRate);
+
   const tco = calculateTCO(timeline);
 
-  const totalRevenue = timeline.reduce((acc, curr) => acc + curr.revenue, 0);
-  const totalCost = tco;
-  // ROI = (Total Revenue - Total Cost) / Total Cost
-  const roiPercent = totalCost > 0 ? parseFloat(((totalRevenue - totalCost) / totalCost).toFixed(4)) : 0;
+  const rMonthly = Math.pow(1 + annualDiscountRate, 1 / 12) - 1;
+  const pvCosts = timeline.reduce((acc, curr) => acc + curr.totalCosts / Math.pow(1 + rMonthly, curr.month), 0);
+
+  const piUpper = pvCosts > 0 ? parseFloat((npvUpper / pvCosts + 1).toFixed(4)) : 0;
+  const piLower = pvCosts > 0 ? parseFloat((npvLower / pvCosts + 1).toFixed(4)) : 0;
+
+  const irr = calculateIRRGuarded(cashFlowsUpper, paybackUpper);
 
   return {
     timeline,
-    paybackMonths,
-    npv,
-    irrAnnual,
-    tco,
-    roiPercent
+    paybackUpper,
+    paybackLower,
+    npvUpper,
+    npvLower,
+    piUpper,
+    piLower,
+    irr,
+    tco
   };
 }
 
@@ -744,7 +830,7 @@ export function runSensitivityAnalysis(
     (scenario.services ?? []).some(s => s.monetization && s.monetization.monetization_type !== 'none');
 
   const baseResult = calculateScenario(scenario, allProviders, creditSettings);
-  const baseNpv = baseResult.npv;
+  const baseNpv = baseResult.npvUpper;
 
   const results: SensitivityParamResult[] = [];
 
@@ -771,13 +857,13 @@ export function runSensitivityAnalysis(
       key: 'churn_reduction',
       lowValueText: varLabelLow,
       highValueText: varLabelHigh,
-      lowNpv: resLow.npv,
-      highNpv: resHigh.npv,
-      lowIrr: resLow.irrAnnual,
-      highIrr: resHigh.irrAnnual,
-      lowPayback: resLow.paybackMonths,
-      highPayback: resHigh.paybackMonths,
-      impactRange: Math.abs(resHigh.npv - resLow.npv)
+      lowNpv: resLow.npvUpper,
+      highNpv: resHigh.npvUpper,
+      lowIrr: resLow.irr.annualNominal,
+      highIrr: resHigh.irr.annualNominal,
+      lowPayback: resLow.paybackUpper,
+      highPayback: resHigh.paybackUpper,
+      impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
     });
   }
 
@@ -800,13 +886,13 @@ export function runSensitivityAnalysis(
       key: 'acquisition_uplift',
       lowValueText: varLabelLow,
       highValueText: varLabelHigh,
-      lowNpv: resLow.npv,
-      highNpv: resHigh.npv,
-      lowIrr: resLow.irrAnnual,
-      highIrr: resHigh.irrAnnual,
-      lowPayback: resLow.paybackMonths,
-      highPayback: resHigh.paybackMonths,
-      impactRange: Math.abs(resHigh.npv - resLow.npv)
+      lowNpv: resLow.npvUpper,
+      highNpv: resHigh.npvUpper,
+      lowIrr: resLow.irr.annualNominal,
+      highIrr: resHigh.irr.annualNominal,
+      lowPayback: resLow.paybackUpper,
+      highPayback: resHigh.paybackUpper,
+      impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
     });
   }
 
@@ -831,13 +917,13 @@ export function runSensitivityAnalysis(
       key: 'arpu_uplift',
       lowValueText: varLabelLow,
       highValueText: varLabelHigh,
-      lowNpv: resLow.npv,
-      highNpv: resHigh.npv,
-      lowIrr: resLow.irrAnnual,
-      highIrr: resHigh.irrAnnual,
-      lowPayback: resLow.paybackMonths,
-      highPayback: resHigh.paybackMonths,
-      impactRange: Math.abs(resHigh.npv - resLow.npv)
+      lowNpv: resLow.npvUpper,
+      highNpv: resHigh.npvUpper,
+      lowIrr: resLow.irr.annualNominal,
+      highIrr: resHigh.irr.annualNominal,
+      lowPayback: resLow.paybackUpper,
+      highPayback: resHigh.paybackUpper,
+      impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
     });
   }
 
@@ -860,13 +946,13 @@ export function runSensitivityAnalysis(
       key: 'adoption',
       lowValueText: varLabelLow,
       highValueText: varLabelHigh,
-      lowNpv: resLow.npv,
-      highNpv: resHigh.npv,
-      lowIrr: resLow.irrAnnual,
-      highIrr: resHigh.irrAnnual,
-      lowPayback: resLow.paybackMonths,
-      highPayback: resHigh.paybackMonths,
-      impactRange: Math.abs(resHigh.npv - resLow.npv)
+      lowNpv: resLow.npvUpper,
+      highNpv: resHigh.npvUpper,
+      lowIrr: resLow.irr.annualNominal,
+      highIrr: resHigh.irr.annualNominal,
+      lowPayback: resLow.paybackUpper,
+      highPayback: resHigh.paybackUpper,
+      impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
     });
   }
 
@@ -889,13 +975,13 @@ export function runSensitivityAnalysis(
       key: 'discount_rate',
       lowValueText: `${(lowVal * 100).toFixed(1)}%`,
       highValueText: `${(highVal * 100).toFixed(1)}%`,
-      lowNpv: resLow.npv,
-      highNpv: resHigh.npv,
-      lowIrr: resLow.irrAnnual,
-      highIrr: resHigh.irrAnnual,
-      lowPayback: resLow.paybackMonths,
-      highPayback: resHigh.paybackMonths,
-      impactRange: Math.abs(resLow.npv - resHigh.npv)
+      lowNpv: resLow.npvUpper,
+      highNpv: resHigh.npvUpper,
+      lowIrr: resLow.irr.annualNominal,
+      highIrr: resHigh.irr.annualNominal,
+      lowPayback: resLow.paybackUpper,
+      highPayback: resHigh.paybackUpper,
+      impactRange: Math.abs(resLow.npvUpper - resHigh.npvUpper)
     });
   }
 
@@ -918,13 +1004,13 @@ export function runSensitivityAnalysis(
       key: 'fixed_costs',
       lowValueText: `-${(variationPercent * 100).toFixed(0)}%`,
       highValueText: `+${(variationPercent * 100).toFixed(0)}%`,
-      lowNpv: resLow.npv,
-      highNpv: resHigh.npv,
-      lowIrr: resLow.irrAnnual,
-      highIrr: resHigh.irrAnnual,
-      lowPayback: resLow.paybackMonths,
-      highPayback: resHigh.paybackMonths,
-      impactRange: Math.abs(resLow.npv - resHigh.npv)
+      lowNpv: resLow.npvUpper,
+      highNpv: resHigh.npvUpper,
+      lowIrr: resLow.irr.annualNominal,
+      highIrr: resHigh.irr.annualNominal,
+      lowPayback: resLow.paybackUpper,
+      highPayback: resHigh.paybackUpper,
+      impactRange: Math.abs(resLow.npvUpper - resHigh.npvUpper)
     });
   }
 
@@ -955,13 +1041,13 @@ export function runSensitivityAnalysis(
       key: 'token_costs',
       lowValueText: `-${(variationPercent * 100).toFixed(0)}%`,
       highValueText: `+${(variationPercent * 100).toFixed(0)}%`,
-      lowNpv: resLow.npv,
-      highNpv: resHigh.npv,
-      lowIrr: resLow.irrAnnual,
-      highIrr: resHigh.irrAnnual,
-      lowPayback: resLow.paybackMonths,
-      highPayback: resHigh.paybackMonths,
-      impactRange: Math.abs(resLow.npv - resHigh.npv)
+      lowNpv: resLow.npvUpper,
+      highNpv: resHigh.npvUpper,
+      lowIrr: resLow.irr.annualNominal,
+      highIrr: resHigh.irr.annualNominal,
+      lowPayback: resLow.paybackUpper,
+      highPayback: resHigh.paybackUpper,
+      impactRange: Math.abs(resLow.npvUpper - resHigh.npvUpper)
     });
   }
 
@@ -988,13 +1074,13 @@ export function runSensitivityAnalysis(
         key: 'price_per_credit',
         lowValueText: varLabelLow,
         highValueText: varLabelHigh,
-        lowNpv: resLow.npv,
-        highNpv: resHigh.npv,
-        lowIrr: resLow.irrAnnual,
-        highIrr: resHigh.irrAnnual,
-        lowPayback: resLow.paybackMonths,
-        highPayback: resHigh.paybackMonths,
-        impactRange: Math.abs(resHigh.npv - resLow.npv)
+        lowNpv: resLow.npvUpper,
+        highNpv: resHigh.npvUpper,
+        lowIrr: resLow.irr.annualNominal,
+        highIrr: resHigh.irr.annualNominal,
+        lowPayback: resLow.paybackUpper,
+        highPayback: resHigh.paybackUpper,
+        impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
       });
     }
 
@@ -1021,13 +1107,13 @@ export function runSensitivityAnalysis(
         key: 'monetization_fees',
         lowValueText: varLabelLow,
         highValueText: varLabelHigh,
-        lowNpv: resLow.npv,
-        highNpv: resHigh.npv,
-        lowIrr: resLow.irrAnnual,
-        highIrr: resHigh.irrAnnual,
-        lowPayback: resLow.paybackMonths,
-        highPayback: resHigh.paybackMonths,
-        impactRange: Math.abs(resHigh.npv - resLow.npv)
+        lowNpv: resLow.npvUpper,
+        highNpv: resHigh.npvUpper,
+        lowIrr: resLow.irr.annualNominal,
+        highIrr: resHigh.irr.annualNominal,
+        lowPayback: resLow.paybackUpper,
+        highPayback: resHigh.paybackUpper,
+        impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
       });
     }
 
@@ -1050,13 +1136,13 @@ export function runSensitivityAnalysis(
         key: 'overcharge_user_pct',
         lowValueText: varLabelLow,
         highValueText: varLabelHigh,
-        lowNpv: resLow.npv,
-        highNpv: resHigh.npv,
-        lowIrr: resLow.irrAnnual,
-        highIrr: resHigh.irrAnnual,
-        lowPayback: resLow.paybackMonths,
-        highPayback: resHigh.paybackMonths,
-        impactRange: Math.abs(resHigh.npv - resLow.npv)
+        lowNpv: resLow.npvUpper,
+        highNpv: resHigh.npvUpper,
+        lowIrr: resLow.irr.annualNominal,
+        highIrr: resHigh.irr.annualNominal,
+        lowPayback: resLow.paybackUpper,
+        highPayback: resHigh.paybackUpper,
+        impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
       });
     }
   }
@@ -1067,8 +1153,8 @@ export function runSensitivityAnalysis(
   return {
     scenarioId: scenario.id,
     baseNpv,
-    baseIrr: baseResult.irrAnnual,
-    basePayback: baseResult.paybackMonths,
+    baseIrr: baseResult.irr.annualNominal,
+    basePayback: baseResult.paybackUpper,
     results
   };
 }

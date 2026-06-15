@@ -93,6 +93,8 @@ export interface ClientBase {
   default_arpu_uplift_percent: number;
   default_churn_reduction: number;
   default_acquisition_uplift: number;
+  default_gross_margin?: number;
+  default_adoption_ramp_months?: number;
   updated_at: string;
 }
 
@@ -228,6 +230,8 @@ export interface CohortConfig {
   arpu_uplift_percent?: number;
   churn_reduction?: number;
   acquisition_uplift?: number;
+  gross_margin?: number;
+  adoption_ramp_months?: number;
   created_at?: string;
   updated_at?: string;
   
@@ -250,6 +254,8 @@ export interface ScopeOverride {
   arpu_uplift_percent?: number | null;
   churn_reduction?: number | null;
   acquisition_uplift?: number | null;
+  gross_margin?: number | null;
+  adoption_ramp_months?: number | null;
 }
 
 export interface Scenario {
@@ -260,9 +266,10 @@ export interface Scenario {
   discount_rate: number;
   scope_type: ScopeType;
   revenue_source?: RevenueSource;
+  capex_contingency_pct?: number;
   created_at?: string;
   updated_at?: string;
-
+  
   scope_verticals?: Vertical[];
   scope_cohorts?: CohortConfig[];
   scope_overrides?: ScopeOverride[];
@@ -275,7 +282,13 @@ export interface Scenario {
     npv: number;
     irr_annual: number | null;
     tco: number;
-    roi_percent: number;
+    profitability_index: number;
+    payback_months_lower?: number | null;
+    npv_lower?: number;
+    profitability_index_lower?: number;
+    irr_monthly?: number | null;
+    irr_annual_nominal?: number | null;
+    irr_status?: string;
   };
 }
 
@@ -286,11 +299,17 @@ export interface ScenarioResult {
   npv: number;
   irr_annual: number | null;
   tco: number;
-  roi_percent: number;
+  profitability_index: number;
   monthly_cashflows: number[];
   monthly_mrr: number[];
   monthly_customers: number[];
   calculated_at: string;
+  payback_months_lower?: number | null;
+  npv_lower?: number;
+  profitability_index_lower?: number;
+  irr_monthly?: number | null;
+  irr_annual_nominal?: number | null;
+  irr_status?: string;
 }
 
 export interface CohortTimelineResult {
@@ -331,13 +350,25 @@ export interface MonthlyBreakdown {
   overchargeRevenue: number;
 }
 
+export type IrrStatus = 'ok' | 'unstable_short_payback' | 'ambiguous_multiple_roots' | 'undefined_no_sign_change' | 'non_converged';
+
+export interface IrrResult {
+  monthly: number | null;
+  annualNominal: number | null;
+  status: IrrStatus;
+  displayable: boolean;
+}
+
 export interface CalculationResult {
   timeline: MonthlyBreakdown[];
-  paybackMonths: number | null;
-  npv: number;
-  irrAnnual: number | null;
+  paybackUpper: number | null;
+  paybackLower: number | null;
+  npvUpper: number;
+  npvLower: number;
+  piUpper: number;
+  piLower: number;
+  irr: IrrResult;
   tco: number;
-  roiPercent: number;
 }
 
 export interface SensitivityParamResult {

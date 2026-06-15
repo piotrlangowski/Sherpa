@@ -14,11 +14,17 @@ export const load: PageServerLoad = async () => {
     try {
       const result = runAndSaveScenario(scenario.id);
       scenario.results = {
-        payback_months: result.paybackMonths,
-        npv: result.npv,
-        irr_annual: result.irrAnnual,
+        payback_months: result.paybackUpper,
+        npv: result.npvUpper,
+        irr_annual: result.irr.annualNominal,
         tco: result.tco,
-        roi_percent: result.roiPercent
+        profitability_index: result.piUpper,
+        payback_months_lower: result.paybackLower,
+        npv_lower: result.npvLower,
+        profitability_index_lower: result.piLower,
+        irr_monthly: result.irr.monthly,
+        irr_annual_nominal: result.irr.annualNominal,
+        irr_status: result.irr.status
       };
     } catch {
       // Leave results undefined; the UI shows a "pending" hint for scenarios that

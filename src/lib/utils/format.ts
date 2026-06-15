@@ -67,3 +67,23 @@ export function formatMonths(value: number | null): string {
   
   return `${formatNumber(value, 1)} mos`;
 }
+
+export function formatIrr(irr: any): string {
+  if (!irr) return 'n/d';
+  
+  const status = irr.status || irr.irr_status;
+  const annualNominal = irr.annualNominal !== undefined ? irr.annualNominal : irr.irr_annual_nominal;
+  const displayable = irr.displayable !== undefined ? irr.displayable : (status === 'ok');
+
+  if (displayable && annualNominal !== null && annualNominal !== undefined) {
+    return formatPercent(annualNominal);
+  }
+
+  return 'n/d';
+}
+
+export function formatPI(value: number | null | undefined): string {
+  if (value === null || value === undefined) return 'N/A';
+  return `${value.toFixed(2)}x`;
+}
+

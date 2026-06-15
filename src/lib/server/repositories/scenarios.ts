@@ -6,7 +6,9 @@ export const scenariosRepository = {
   getAll(): Scenario[] {
     const rows = db.prepare(`
       SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.created_at, s.updated_at,
-             r.payback_months, r.npv, r.irr_annual, r.tco, r.roi_percent, r.calculated_at
+             s.capex_contingency_pct,
+             r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index, r.calculated_at,
+             r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status
       FROM scenarios s
       LEFT JOIN scenario_results r ON s.id = r.scenario_id
       ORDER BY s.updated_at DESC
@@ -78,6 +80,7 @@ export const scenariosRepository = {
         discount_rate: r.discount_rate,
         scope_type: r.scope_type as ScopeType,
         revenue_source: (r.revenue_source as RevenueSource) || 'cohort',
+        capex_contingency_pct: r.capex_contingency_pct || 0,
         created_at: r.created_at,
         updated_at: r.updated_at,
         scope_verticals: vrtMap[r.id] || [],
@@ -96,7 +99,13 @@ export const scenariosRepository = {
           npv: r.npv,
           irr_annual: r.irr_annual,
           tco: r.tco,
-          roi_percent: r.roi_percent,
+          profitability_index: r.profitability_index,
+          payback_months_lower: r.payback_months_lower,
+          npv_lower: r.npv_lower,
+          profitability_index_lower: r.profitability_index_lower,
+          irr_monthly: r.irr_monthly,
+          irr_annual_nominal: r.irr_annual_nominal,
+          irr_status: r.irr_status,
           monthly_cashflows: [],
           monthly_mrr: [],
           monthly_customers: [],
@@ -108,7 +117,7 @@ export const scenariosRepository = {
 
   getById(id: string): Scenario | null {
     const r = db.prepare(`
-      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.created_at, s.updated_at
+      SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct, s.created_at, s.updated_at
       FROM scenarios s
       WHERE s.id = ?
     `).get(id) as any;
@@ -129,6 +138,7 @@ export const scenariosRepository = {
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor, 
              c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
              c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.gross_margin, c.adoption_ramp_months,
              c.created_at, c.updated_at,
              v.name as vertical_name
       FROM cohort_configs c
@@ -141,7 +151,8 @@ export const scenariosRepository = {
     const overrideRows = db.prepare(`
       SELECT id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
              acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
-             arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
+             arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+             gross_margin, adoption_ramp_months
       FROM scenario_scope_overrides
       WHERE scenario_id = ?
     `).all(id) as any[];
@@ -190,6 +201,7 @@ export const scenariosRepository = {
       discount_rate: r.discount_rate,
       scope_type: r.scope_type as ScopeType,
       revenue_source: (r.revenue_source as RevenueSource) || 'cohort',
+      capex_contingency_pct: r.capex_contingency_pct || 0,
       created_at: r.created_at,
       updated_at: r.updated_at,
       scope_verticals: verticalRows,
@@ -217,9 +229,9 @@ export const scenariosRepository = {
 
     db.transaction(() => {
       db.prepare(`
-        INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, data.revenue_source || 'cohort', now, now);
+        INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, data.revenue_source || 'cohort', data.capex_contingency_pct ?? 0, now, now);
 
       if (data.vertical_ids && data.vertical_ids.length > 0) {
         const insertLink = db.prepare("INSERT INTO scenario_verticals (scenario_id, vertical_id) VALUES (?, ?)");
@@ -236,8 +248,9 @@ export const scenariosRepository = {
           INSERT INTO scenario_scope_overrides (
             id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
             acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
-            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+            gross_margin, adoption_ramp_months
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const ov of data.scope_overrides) {
           insertOverride.run(
@@ -246,7 +259,8 @@ export const scenariosRepository = {
             ov.acquisition_growth_rate ?? null, ov.ai_adoption_rate ?? null,
             ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null,
             ov.arpu_uplift ?? null, ov.arpu_uplift_percent ?? null,
-            ov.churn_reduction ?? null, ov.acquisition_uplift ?? null
+            ov.churn_reduction ?? null, ov.acquisition_uplift ?? null,
+            ov.gross_margin ?? null, ov.adoption_ramp_months ?? null
           );
         }
       }
@@ -297,11 +311,12 @@ export const scenariosRepository = {
     const now = new Date().toISOString();
 
     db.transaction(() => {
+      const capex_contingency_pct = data.capex_contingency_pct !== undefined ? data.capex_contingency_pct : current.capex_contingency_pct;
       db.prepare(`
         UPDATE scenarios
-        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, updated_at = ?
+        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, description || null, projection_months, discount_rate, scope_type, revenue_source, now, id);
+      `).run(name, description || null, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, now, id);
 
       if (data.vertical_ids !== undefined) {
         db.prepare("DELETE FROM scenario_verticals WHERE scenario_id = ?").run(id);
@@ -321,8 +336,9 @@ export const scenariosRepository = {
           INSERT INTO scenario_scope_overrides (
             id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
             acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
-            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+            gross_margin, adoption_ramp_months
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const ov of data.scope_overrides) {
           insertOverride.run(
@@ -331,7 +347,8 @@ export const scenariosRepository = {
             ov.acquisition_growth_rate ?? null, ov.ai_adoption_rate ?? null,
             ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null,
             ov.arpu_uplift ?? null, ov.arpu_uplift_percent ?? null,
-            ov.churn_reduction ?? null, ov.acquisition_uplift ?? null
+            ov.churn_reduction ?? null, ov.acquisition_uplift ?? null,
+            ov.gross_margin ?? null, ov.adoption_ramp_months ?? null
           );
         }
       }
@@ -382,7 +399,8 @@ export const scenariosRepository = {
 
   getResults(scenarioId: string): ScenarioResult | null {
     const r = db.prepare(`
-      SELECT id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at
+      SELECT id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
+             payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status
       FROM scenario_results
       WHERE scenario_id = ?
     `).get(scenarioId) as any;
@@ -395,11 +413,17 @@ export const scenariosRepository = {
       npv: r.npv,
       irr_annual: r.irr_annual,
       tco: r.tco,
-      roi_percent: r.roi_percent,
+      profitability_index: r.profitability_index,
       monthly_cashflows: JSON.parse(r.monthly_cashflows || '[]'),
       monthly_mrr: JSON.parse(r.monthly_mrr || '[]'),
       monthly_customers: JSON.parse(r.monthly_customers || '[]'),
-      calculated_at: r.calculated_at
+      calculated_at: r.calculated_at,
+      payback_months_lower: r.payback_months_lower,
+      npv_lower: r.npv_lower,
+      profitability_index_lower: r.profitability_index_lower,
+      irr_monthly: r.irr_monthly,
+      irr_annual_nominal: r.irr_annual_nominal,
+      irr_status: r.irr_status
     };
   },
 
@@ -408,8 +432,11 @@ export const scenariosRepository = {
     const now = new Date().toISOString();
 
     db.prepare(`
-      INSERT OR REPLACE INTO scenario_results (id, scenario_id, payback_months, npv, irr_annual, tco, roi_percent, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO scenario_results (
+        id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index, 
+        monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
+        payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       results.scenario_id,
@@ -417,11 +444,17 @@ export const scenariosRepository = {
       results.npv,
       results.irr_annual,
       results.tco,
-      results.roi_percent,
+      results.profitability_index,
       JSON.stringify(results.monthly_cashflows),
       JSON.stringify(results.monthly_mrr),
       JSON.stringify(results.monthly_customers),
-      now
+      now,
+      results.payback_months_lower,
+      results.npv_lower,
+      results.profitability_index_lower,
+      results.irr_monthly,
+      results.irr_annual_nominal,
+      results.irr_status
     );
   },
 

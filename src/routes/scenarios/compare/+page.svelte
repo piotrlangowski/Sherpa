@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { mode } from 'mode-watcher';
-  import { formatCurrency, formatPercent, formatNumber, formatMonths, getCurrencySymbol } from '$lib/utils/format';
+  import { formatCurrency, formatPercent, formatNumber, formatMonths, getCurrencySymbol, formatPI, formatIrr } from '$lib/utils/format';
   import { appState } from '$lib/stores/app.svelte';
   import { CURRENCIES } from '$lib/utils/constants';
   import Button from '$lib/components/ui/button/button.svelte';
@@ -80,8 +80,8 @@
     let minTcoId = '';
     let minTco = Infinity;
 
-    let maxRoiId = '';
-    let maxRoi = -Infinity;
+    let maxPiId = '';
+    let maxPi = -Infinity;
 
     selectedScenarios.forEach(s => {
       const res = s.results!;
@@ -90,8 +90,8 @@
         maxNpv = res.npv;
         maxNpvId = s.id;
       }
-      if (res.irr_annual !== null && res.irr_annual > maxIrr) {
-        maxIrr = res.irr_annual;
+      if (res.irr_annual_nominal !== null && res.irr_annual_nominal !== undefined && res.irr_status === 'ok' && res.irr_annual_nominal > maxIrr) {
+        maxIrr = res.irr_annual_nominal;
         maxIrrId = s.id;
       }
       if (res.payback_months !== null && res.payback_months < minPayback) {
@@ -102,13 +102,13 @@
         minTco = res.tco;
         minTcoId = s.id;
       }
-      if (res.roi_percent > maxRoi) {
-        maxRoi = res.roi_percent;
-        maxRoiId = s.id;
+      if (res.profitability_index > maxPi) {
+        maxPi = res.profitability_index;
+        maxPiId = s.id;
       }
     });
 
-    return { maxNpvId, maxIrrId, minPaybackId, minTcoId, maxRoiId };
+    return { maxNpvId, maxIrrId, minPaybackId, minTcoId, maxPiId };
   });
 
   // Checkbox toggling handler
@@ -233,11 +233,15 @@
     };
   });
 
-  function renderChart() {
+  let activeEffectId = 0;
+
+  function renderChart(currentRunId: number) {
     if (!chartElement || typeof window === 'undefined' || selectedScenarios.length === 0) return;
 
     tick().then(() => {
+      if (currentRunId !== activeEffectId) return;
       import('echarts').then((echarts) => {
+        if (currentRunId !== activeEffectId) return;
         if (!isMounted || !chartElement) return;
 
         if (chartInstance) {
@@ -256,14 +260,21 @@
   }
 
   $effect(() => {
-    if ((chartOption && chartElement && selectedScenarios.length > 0) || mode.current) {
-      renderChart();
+    const _option = chartOption;
+    const currentRunId = ++activeEffectId;
+    if ((_option && chartElement && selectedScenarios.length > 0) || mode.current) {
+      renderChart(currentRunId);
+    } else {
+      cleanupChart();
     }
+    return () => {
+      cleanupChart();
+    };
   });
 
   onMount(() => {
     isMounted = true;
-    renderChart();
+    renderChart(++activeEffectId);
     return () => {
       isMounted = false;
       cleanupChart();
@@ -398,7 +409,7 @@
                     <th class="p-3 text-right">IRR (AI Investment)</th>
                     <th class="p-3 text-right">Payback Period</th>
                     <th class="p-3 text-right">TCO</th>
-                    <th class="p-3 text-right">ROI (%)</th>
+                    <th class="p-3 text-right">PI (x)</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-border/60">
@@ -423,22 +434,22 @@
                       
                       <!-- IRR -->
                       <td class="p-3 text-right font-mono font-bold {bestMetrics.maxIrrId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
-                        {res.irr_annual !== null ? formatPercent(res.irr_annual) : 'N/A'}
+                        {formatIrr(res)}
                       </td>
-
+ 
                       <!-- Payback -->
                       <td class="p-3 text-right font-mono font-bold {bestMetrics.minPaybackId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
                         {res.payback_months === 0 ? 'Immediate' : res.payback_months === null ? 'Not within horizon' : formatMonths(res.payback_months)}
                       </td>
-
+ 
                       <!-- TCO -->
                       <td class="p-3 text-right font-mono font-bold {bestMetrics.minTcoId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
                         {formatCurrency(res.tco, appState.currency, 0)}
                       </td>
-
+ 
                       <!-- ROI -->
-                      <td class="p-3 text-right font-mono font-bold {bestMetrics.maxRoiId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
-                        {formatPercent(res.roi_percent)}
+                      <td class="p-3 text-right font-mono font-bold {bestMetrics.maxPiId === s.id && selectedScenarios.length >= 2 ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : ''}">
+                        {formatPI(res.profitability_index)}
                       </td>
                     </tr>
                   {/each}
@@ -499,10 +510,10 @@
                       </strong>
                     </div>
 
-                    {#if rBetter.irr_annual !== null && rWorse.irr_annual !== null}
+                    {#if rBetter.irr_status === 'ok' && rWorse.irr_status === 'ok' && rBetter.irr_annual_nominal !== null && rBetter.irr_annual_nominal !== undefined && rWorse.irr_annual_nominal !== null && rWorse.irr_annual_nominal !== undefined}
                       <div class="flex justify-between items-center text-muted-foreground">
                         <span>Hurdle Rate Cushion (Delta IRR):</span>
-                        <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">+{formatPercent(rBetter.irr_annual - rWorse.irr_annual)}</strong>
+                        <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">+{formatPercent(rBetter.irr_annual_nominal - rWorse.irr_annual_nominal)}</strong>
                       </div>
                     {/if}
                     

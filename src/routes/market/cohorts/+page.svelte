@@ -93,6 +93,8 @@
   let arpuUpliftPercent = $state(10);
   let churnReduction = $state(15);
   let acquisitionUplift = $state(10);
+  let grossMargin = $state(100);
+  let adoptionRampMonths = $state(0);
 
   const openCreateDialog = () => {
     dialogMode = 'create';
@@ -111,6 +113,8 @@
     arpuUpliftPercent = 10;
     churnReduction = 15;
     acquisitionUplift = 10;
+    grossMargin = 100;
+    adoptionRampMonths = 0;
     showDialog = true;
   };
 
@@ -131,6 +135,8 @@
     arpuUpliftPercent = Math.round((cohort.arpu_uplift_percent || 0) * 1000) / 10;
     churnReduction = Math.round((cohort.churn_reduction || 0) * 1000) / 10;
     acquisitionUplift = Math.round((cohort.acquisition_uplift || 0) * 1000) / 10;
+    grossMargin = Math.round((cohort.gross_margin !== undefined ? cohort.gross_margin : 1.0) * 1000) / 10;
+    adoptionRampMonths = cohort.adoption_ramp_months || 0;
     showDialog = true;
   };
 
@@ -600,6 +606,32 @@
       step={0.1}
       badge={{ text: `+${acquisitionUplift}%`, tone: 'positive' }}
       help="Percentage increase in new-customer acquisition"
+    />
+  </FormSection>
+
+  <FormSection title="Methodology Realism Settings">
+    <NumberField
+      id="grossMargin"
+      name="grossMargin"
+      bind:value={grossMargin}
+      label="Gross Margin"
+      suffix="%"
+      min={0}
+      max={100}
+      step={0.1}
+      badge={{ text: `${grossMargin}%`, tone: 'neutral' }}
+      help="Cohort gross margin percentage, used to compute incremental contribution margin"
+    />
+    <NumberField
+      id="adoptionRampMonths"
+      name="adoptionRampMonths"
+      bind:value={adoptionRampMonths}
+      label="Adoption Ramp Period"
+      suffix="mos"
+      min={0}
+      max={60}
+      step={1}
+      help="Number of months over which AI adoption ramps up linearly to target rate"
     />
   </FormSection>
 </FormDialog>

@@ -29,6 +29,8 @@ export const actions: Actions = {
     const arpuUpliftPercent = parseFloat(formData.get('arpuUpliftPercent') as string || '0') / 100;
     const churnReduction = parseFloat(formData.get('churnReduction') as string || '0') / 100;
     const acquisitionUplift = parseFloat(formData.get('acquisitionUplift') as string || '0') / 100;
+    const grossMargin = parseFloat(formData.get('grossMargin') as string || '100') / 100;
+    const adoptionRampMonths = parseInt(formData.get('adoptionRampMonths') as string || '0', 10);
 
     if (!name) {
       return fail(400, { error: 'Cohort name is required' });
@@ -49,7 +51,9 @@ export const actions: Actions = {
         arpu_uplift: arpuUplift,
         arpu_uplift_percent: arpuUpliftPercent,
         churn_reduction: churnReduction,
-        acquisition_uplift: acquisitionUplift
+        acquisition_uplift: acquisitionUplift,
+        gross_margin: grossMargin,
+        adoption_ramp_months: adoptionRampMonths
       });
       return { success: true };
     } catch (err: any) {
@@ -74,6 +78,8 @@ export const actions: Actions = {
     const arpuUpliftPercent = parseFloat(formData.get('arpuUpliftPercent') as string || '0') / 100;
     const churnReduction = parseFloat(formData.get('churnReduction') as string || '0') / 100;
     const acquisitionUplift = parseFloat(formData.get('acquisitionUplift') as string || '0') / 100;
+    const grossMargin = parseFloat(formData.get('grossMargin') as string || '100') / 100;
+    const adoptionRampMonths = parseInt(formData.get('adoptionRampMonths') as string || '0', 10);
 
     if (!id || !name) {
       return fail(400, { error: 'ID and Cohort name are required' });
@@ -94,7 +100,9 @@ export const actions: Actions = {
         arpu_uplift: arpuUplift,
         arpu_uplift_percent: arpuUpliftPercent,
         churn_reduction: churnReduction,
-        acquisition_uplift: acquisitionUplift
+        acquisition_uplift: acquisitionUplift,
+        gross_margin: grossMargin,
+        adoption_ramp_months: adoptionRampMonths
       });
       return { success: true };
     } catch (err: any) {
