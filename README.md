@@ -21,11 +21,17 @@ By this name I wanted to convey two things:
 
 **Work your way**
 Work as a Claude Desktop App user connecting to a permanent data source that **lives only on your computer, locally, private**
+- use Claude to ingest Sherpa with your client base info, pricing structure and usage
+- use Claude to update Sherpa with those data
+- use Sherpas data in Claude to build workflows, documents and presentations
+- use Claude to help you with navigating ROI methodologies implemented in Sherpa
 
-<img width="1178" height="831" alt="image" src="https://github.com/user-attachments/assets/0e0ee317-2801-4df9-ae88-8f7c28ea7773" />
+<img width="1139" height="846" alt="image" src="https://github.com/user-attachments/assets/d89f6338-117d-4b9a-8fc4-77b2af9c8366" />
 
 
 or as a separate App with its own UI that launches from Claude with a command: **open Sherpa's dashobard**
+- visually compare different scenarios
+- tinker with catalogs
 
 <img width="1407" height="796" alt="image" src="https://github.com/user-attachments/assets/62d1c7a6-4935-4773-85f0-ca0c8085d5f3" />
 
