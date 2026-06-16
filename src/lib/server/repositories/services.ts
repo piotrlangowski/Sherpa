@@ -187,9 +187,12 @@ export const servicesRepository = {
       db.prepare("DELETE FROM pack_services WHERE service_id = ?").run(id);
       db.prepare("DELETE FROM plan_services WHERE service_id = ?").run(id);
       db.prepare("DELETE FROM service_dependencies WHERE source_id = ? OR target_id = ?").run(id, id);
+      // Clean scenario overrides of the cost items that cascade-delete with this service.
+      db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'cost' AND entity_id IN (SELECT id FROM cost_items WHERE service_id = ?)").run(id);
       db.prepare("DELETE FROM cost_items WHERE service_id = ?").run(id);
       db.prepare("DELETE FROM scenario_services WHERE service_id = ?").run(id);
       db.prepare("DELETE FROM monetization_configs WHERE entity_type = 'service' AND entity_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'service' AND entity_id = ?").run(id);
       db.prepare("DELETE FROM services WHERE id = ?").run(id);
     })();
   }

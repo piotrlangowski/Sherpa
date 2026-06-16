@@ -1,4 +1,4 @@
-import type { Scenario, ScenarioResult, CohortConfig, ScopeOverride, CreditSettings, MonetizationConfig, Settings } from '../../types';
+import type { Scenario, ScenarioResult, CohortConfig, ScopeOverride, CreditSettings, MonetizationConfig, Settings, Provider, EntityOverride } from '../../types';
 import {
   calculateNPV,
   calculatePaybackPeriod,
@@ -12,6 +12,7 @@ import { providersRepository } from '../repositories/providers';
 import { cohortsRepository } from '../repositories/cohorts';
 import { settingsRepository } from '../repositories/settings';
 import { monetizationRepository } from '../repositories/monetization';
+import { entityOverridesRepository } from '../repositories/entity-overrides';
 import db from '../db';
 
 import { normalizeScenarioCurrency } from '../../shared/currency.js';
@@ -140,6 +141,54 @@ export function attachMonetization(scenario: Scenario): Scenario {
 export { calculateNPV, calculatePaybackPeriod, calculateIRR, calculateTCO };
 export type { CalculationResult, MonthlyBreakdown };
 
+/**
+ * Applies a scenario's per-entity overrides on top of the catalog values.
+ * Returns overridden copies of the scenario's services and costs, plus a
+ * scenario-specific providers list (the global list with this scenario's
+ * provider-price overrides applied). Only non-null override fields win.
+ *
+ * Mirrors `attachMonetization` — pure transformation, no result mutation.
+ * NOTE: providers must be overridden HERE, before `normalizeScenarioCurrency`,
+ * so the currency conversion runs on the overridden prices.
+ */
+export function applyEntityOverrides(
+  scenario: Scenario,
+  allProviders: Provider[]
+): { services: Scenario['services']; costs: Scenario['costs']; plans: Scenario['plans']; providers: Provider[] } {
+  const overrides = scenario.id
+    ? entityOverridesRepository.getScenarioOverrideMap(scenario.id)
+    : new Map<string, EntityOverride>();
+
+  const withOverride = <T extends object>(target: T, key: string, fields: (keyof EntityOverride)[]): T => {
+    const ov = overrides.get(key);
+    if (!ov) return target;
+    const out: any = { ...target };
+    for (const f of fields) {
+      const v = ov[f];
+      if (v !== null && v !== undefined) out[f] = v;
+    }
+    return out;
+  };
+
+  const services = (scenario.services ?? []).map(s =>
+    withOverride(s, `service:${s.id}`, ['avg_input_tokens', 'avg_output_tokens', 'avg_requests_per_user_month', 'fixed_cost_per_month'])
+  ) as Scenario['services'];
+
+  const costs = (scenario.costs ?? []).map(c =>
+    withOverride(c, `cost:${c.id}`, ['amount', 'frequency'])
+  ) as Scenario['costs'];
+
+  const plans = (scenario.plans ?? []).map(p =>
+    withOverride(p, `plan:${p.id}`, ['base_price'])
+  ) as Scenario['plans'];
+
+  const providers = allProviders.map(p =>
+    withOverride(p, `provider:${p.id}`, ['input_price', 'output_price'])
+  );
+
+  return { services, costs, plans, providers };
+}
+
 export function resolveScenarioCohorts(scenario: Scenario): CohortConfig[] {
   let resolvedCohorts: CohortConfig[] = [];
 
@@ -159,15 +208,23 @@ export function calculateScenario(scenario: Scenario): CalculationResult {
   const allProviders = providersRepository.getAll();
   const resolvedConfigs = resolveScenarioCohorts(scenario);
 
+  // Resolve effective monetization first, then apply per-scenario entity overrides
+  // (service tokens, cost amounts, plan base_price, provider prices) on top.
+  const monetized = attachMonetization(scenario);
+  const { services, costs, plans, providers } = applyEntityOverrides(monetized, allProviders);
+
   const runtimeScenario = {
-    ...attachMonetization(scenario),
-    scope_cohorts: resolvedConfigs
+    ...monetized,
+    scope_cohorts: resolvedConfigs,
+    services,
+    costs,
+    plans
   };
 
   const settings = settingsRepository.get();
   const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
     runtimeScenario,
-    allProviders,
+    providers,
     settings.currency,
     settings.exchange_rates
   );

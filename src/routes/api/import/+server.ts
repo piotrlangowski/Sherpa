@@ -13,8 +13,9 @@ import { costsRepository } from '$lib/server/repositories/costs';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
 import { monetizationRepository } from '$lib/server/repositories/monetization';
+import { entityOverridesRepository } from '$lib/server/repositories/entity-overrides';
 import { MonetizationConfigSchema } from '$lib/types/schemas';
-import type { MonetizationConfig } from '$lib/types';
+import type { MonetizationConfig, EntityOverride } from '$lib/types';
 
 // Zod schemas for snapshot validation
 const ProviderSchema = z.object({
@@ -60,9 +61,28 @@ const PlanSchema = z.object({
   description: z.string().nullable().optional(),
   base_price: z.number(),
   rollout_month: z.number().optional(),
+  seats: z.number().optional(),
   services: z.array(z.union([z.string(), z.object({ id: z.string(), name: z.string() })])).optional(),
   packs: z.array(z.union([z.string(), z.object({ id: z.string(), name: z.string() })])).optional(),
   monetization: MonetizationConfigSchema.optional()
+});
+
+/** Per-scenario entity override entry in a snapshot. Keyed by entity NAME (+ provider model) for portability. */
+const EntityOverrideEntrySchema = z.object({
+  entity_type: z.enum(['service', 'cost', 'provider', 'plan']),
+  entity_name: z.string(),
+  entity_model_name: z.string().optional(),
+  override: z.object({
+    avg_input_tokens: z.number().nullable().optional(),
+    avg_output_tokens: z.number().nullable().optional(),
+    avg_requests_per_user_month: z.number().nullable().optional(),
+    fixed_cost_per_month: z.number().nullable().optional(),
+    amount: z.number().nullable().optional(),
+    frequency: z.enum(['one_time', 'monthly', 'yearly']).nullable().optional(),
+    input_price: z.number().nullable().optional(),
+    output_price: z.number().nullable().optional(),
+    base_price: z.number().nullable().optional()
+  })
 });
 
 const CostItemSchema = z.object({
@@ -132,7 +152,8 @@ const ScenarioSchema = z.object({
     entity_type: z.enum(['service', 'pack', 'plan']),
     entity_name: z.string(),
     config: MonetizationConfigSchema
-  })).optional()
+  })).optional(),
+  entity_overrides: z.array(EntityOverrideEntrySchema).optional()
 });
 
 const SnapshotSchema = z.object({
@@ -379,7 +400,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
       // 6. Import Plans
       const planIdMap = new Map<string, string>(); // plan name -> database ID
-      const planRollouts: { id: string; rollout_month: number }[] = [];
+      const planRollouts: { id: string; rollout_month: number; seats: number }[] = [];
       if (scenario.plans) {
         for (const pl of scenario.plans) {
           const existingPl = db.prepare('SELECT id FROM plans WHERE name = ?')
@@ -421,12 +442,13 @@ export const POST: RequestHandler = async ({ request }) => {
           }
 
           planIdMap.set(pl.name, plId);
-          planRollouts.push({ id: plId, rollout_month: pl.rollout_month ?? 0 });
+          planRollouts.push({ id: plId, rollout_month: pl.rollout_month ?? 0, seats: pl.seats ?? 0 });
         }
       }
 
       // 7. Import Cost Items
       const costIds: string[] = [];
+      const costIdMap = new Map<string, string>(); // cost name -> database ID
       if (scenario.costs) {
         for (const c of scenario.costs) {
           const existingC = db.prepare('SELECT id FROM cost_items WHERE name = ?')
@@ -449,6 +471,7 @@ export const POST: RequestHandler = async ({ request }) => {
             cId = createdC.id;
           }
           costIds.push(cId);
+          costIdMap.set(c.name, cId);
         }
       }
 
@@ -520,6 +543,21 @@ export const POST: RequestHandler = async ({ request }) => {
             planIdMap.get(ov.entity_name);
           if (mappedId) {
             monetizationRepository.upsert(ov.entity_type, mappedId, ov.config as MonetizationConfig, newScenarioId);
+          }
+        }
+      }
+
+      // Recreate scenario-level entity overrides (entity name → newly created id).
+      // Providers match by name + model_name (the same key used when importing providers above).
+      if (scenario.entity_overrides) {
+        for (const eo of scenario.entity_overrides) {
+          let mappedId: string | undefined;
+          if (eo.entity_type === 'service') mappedId = serviceIdMap.get(eo.entity_name);
+          else if (eo.entity_type === 'plan') mappedId = planIdMap.get(eo.entity_name);
+          else if (eo.entity_type === 'cost') mappedId = costIdMap.get(eo.entity_name);
+          else if (eo.entity_type === 'provider') mappedId = providerIdMap.get(`${eo.entity_name}::${eo.entity_model_name ?? ''}`);
+          if (mappedId && newScenarioId) {
+            entityOverridesRepository.upsert(newScenarioId, eo.entity_type, mappedId, eo.override as EntityOverride);
           }
         }
       }

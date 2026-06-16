@@ -6,8 +6,10 @@ import { servicesRepository } from '$lib/server/repositories/services';
 import { packsRepository } from '$lib/server/repositories/packs';
 import { plansRepository } from '$lib/server/repositories/plans';
 import { costsRepository } from '$lib/server/repositories/costs';
+import { providersRepository } from '$lib/server/repositories/providers';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
 import { monetizationRepository } from '$lib/server/repositories/monetization';
+import { entityOverridesRepository } from '$lib/server/repositories/entity-overrides';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
 import { error, fail, redirect } from '@sveltejs/kit';
 
@@ -24,10 +26,16 @@ export const load: PageServerLoad = async ({ params }) => {
   const packs = packsRepository.getAll();
   const plans = plansRepository.getAll();
   const costs = costsRepository.getAll();
+  const providers = providersRepository.getAll();
 
   // Monetization: catalog configs (all) + this scenario's overrides, keyed `${type}:${id}`.
   const monetizationCatalog = Object.fromEntries(monetizationRepository.getCatalogMap());
   const monetizationOverrides = Object.fromEntries(monetizationRepository.getScenarioOverrideMap(params.id));
+
+  // Per-entity financial overrides for this scenario, keyed `${entity_type}:${entity_id}`.
+  const entityOverrides = Object.fromEntries(
+    entityOverridesRepository.getScenarioOverrides(params.id).map(r => [`${r.entity_type}:${r.entity_id}`, r])
+  );
 
   return {
     scenario,
@@ -38,8 +46,10 @@ export const load: PageServerLoad = async ({ params }) => {
     packs,
     plans,
     costs,
+    providers,
     monetizationCatalog,
-    monetizationOverrides
+    monetizationOverrides,
+    entityOverrides
   };
 };
 
@@ -88,11 +98,12 @@ export const actions: Actions = {
       return { id, rollout_month: rolloutMonth };
     });
 
-    // Parse rollout schedules for Plans
+    // Parse rollout schedules + seats for Plans
     const planIds = formData.getAll('planIds') as string[];
     const plans = planIds.map(id => {
       const rolloutMonth = parseInt(formData.get(`rollout_month_plan_${id}`) as string || '0', 10);
-      return { id, rollout_month: rolloutMonth };
+      const seats = parseInt(formData.get(`seats_plan_${id}`) as string || '0', 10);
+      return { id, rollout_month: rolloutMonth, seats };
     });
 
     if (!name) {

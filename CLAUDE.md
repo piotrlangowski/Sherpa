@@ -29,7 +29,7 @@ npx vitest run --coverage                         # coverage (measures src/lib/s
 Test files are colocated as `*.test.ts`. Only two suites exist today (`src/lib/shared/financial-math.test.ts`, `src/lib/server/services/importer.test.ts`); the pure math module is the primary thing under test.
 
 **MCP server** (separate npm project under `mcp-server/`):
-Exposes 12 consolidated entity-action tools covering full database CRUD operations for all entities (settings, providers, verticals, cohorts, fixed costs, feature packs, pricing plans, scenarios, and monetization models) with action parameters and Human-in-the-Loop confirmations, plus dashboard open/close controls.
+Exposes 14 consolidated entity-action tools covering full database CRUD operations for all entities (settings, providers, verticals, cohorts, fixed costs, feature packs, pricing plans, scenarios, scenario cohort overrides, per-scenario entity financial overrides, and monetization models) with action parameters and Human-in-the-Loop confirmations, plus dashboard open/close controls.
 
 ```bash
 cd mcp-server && npm install && npm run build     # tsc → mcp-server/build/

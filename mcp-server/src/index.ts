@@ -88,6 +88,30 @@ function getProviders(): Provider[] {
   `).all() as any[];
 }
 
+/**
+ * Apply a scenario's per-scenario provider-price overrides on top of the global
+ * provider list (mirrors `applyEntityOverrides` in the SvelteKit financial-engine).
+ * Must run BEFORE normalizeScenarioCurrency so the conversion uses the overridden prices.
+ */
+function applyProviderOverrides(scenarioId: string, providers: Provider[]): Provider[] {
+  const rows = db.prepare(`
+    SELECT entity_id, input_price, output_price
+    FROM scenario_entity_overrides
+    WHERE scenario_id = ? AND entity_type = 'provider'
+  `).all(scenarioId) as any[];
+  if (rows.length === 0) return providers;
+  const map = new Map<string, any>(rows.map((r) => [r.entity_id, r]));
+  return providers.map((p) => {
+    const ov = map.get(p.id);
+    if (!ov) return p;
+    return {
+      ...p,
+      input_price: ov.input_price ?? p.input_price,
+      output_price: ov.output_price ?? p.output_price
+    };
+  });
+}
+
 // Helper: Query default credit settings from settings table
 function getCreditSettings(): CreditSettings {
   const rows = db.prepare("SELECT key, value FROM settings WHERE key LIKE 'default_%'").all() as { key: string; value: string }[];
@@ -341,9 +365,9 @@ function getFullScenario(scenarioId: string): Scenario | null {
     ORDER BY sp.rollout_month ASC
   `).all(scenarioId) as any[];
 
-  // Load plans in scenario
+  // Load plans in scenario (base_price + seats drive the plan-subscription revenue line)
   s.plans = db.prepare(`
-    SELECT pl.id, pl.name, spl.rollout_month
+    SELECT pl.id, pl.name, pl.base_price, spl.rollout_month, spl.seats
     FROM plans pl
     JOIN scenario_plans spl ON pl.id = spl.plan_id
     WHERE spl.scenario_id = ?
@@ -357,6 +381,26 @@ function getFullScenario(scenarioId: string): Scenario | null {
     JOIN scenario_costs sc ON c.id = sc.cost_item_id
     WHERE sc.scenario_id = ?
   `).all(scenarioId) as any[];
+
+  // Apply per-scenario entity overrides (service tokens / cost amount+frequency / plan base_price).
+  // Provider-price overrides are applied separately via applyProviderOverrides at the calc sites.
+  const entityOvRows = db.prepare(`
+    SELECT entity_type, entity_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month,
+           fixed_cost_per_month, amount, frequency, base_price
+    FROM scenario_entity_overrides
+    WHERE scenario_id = ?
+  `).all(scenarioId) as any[];
+  if (entityOvRows.length > 0) {
+    const ovMap = new Map<string, any>(entityOvRows.map((r) => [`${r.entity_type}:${r.entity_id}`, r]));
+    const applyOv = (target: any, key: string, fields: string[]) => {
+      const ov = ovMap.get(key);
+      if (!ov) return;
+      for (const f of fields) if (ov[f] !== null && ov[f] !== undefined) target[f] = ov[f];
+    };
+    for (const svc of s.services) applyOv(svc, `service:${svc.id}`, ['avg_input_tokens', 'avg_output_tokens', 'avg_requests_per_user_month', 'fixed_cost_per_month']);
+    for (const c of s.costs) applyOv(c, `cost:${c.id}`, ['amount', 'frequency']);
+    for (const pl of s.plans) applyOv(pl, `plan:${pl.id}`, ['base_price']);
+  }
 
   // Attach effective monetization configs
   attachMonetization(s as Scenario);
@@ -672,6 +716,7 @@ server.tool(
             }]
           };
         }
+        db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'provider' AND entity_id = ?").run(args.id);
         db.prepare("DELETE FROM providers WHERE id = ?").run(args.id);
         return { content: [{ type: "text", text: `Provider with ID ${args.id} deleted successfully.` }] };
       }
@@ -991,6 +1036,7 @@ server.tool(
         const affectedScenarios = db.prepare("SELECT scenario_id FROM scenario_costs WHERE cost_item_id = ?").all(args.id) as { scenario_id: string }[];
         db.transaction(() => {
           db.prepare("DELETE FROM scenario_costs WHERE cost_item_id = ?").run(args.id);
+          db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'cost' AND entity_id = ?").run(args.id);
           db.prepare("DELETE FROM cost_items WHERE id = ?").run(args.id);
           if (affectedScenarios.length > 0) {
             const placeholders = affectedScenarios.map(() => '?').join(',');
@@ -1144,6 +1190,7 @@ server.tool(
             }]
           };
         }
+        db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'service' AND entity_id = ?").run(args.id);
         db.prepare("DELETE FROM services WHERE id = ?").run(args.id);
         return {
           content: [{ type: "text", text: `Service '${current.name}' (ID: ${args.id}) deleted successfully.` }]
@@ -1436,6 +1483,7 @@ server.tool(
             }]
           };
         }
+        db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'plan' AND entity_id = ?").run(args.id);
         db.prepare("DELETE FROM plans WHERE id = ?").run(args.id);
         return { content: [{ type: "text", text: `Plan '${current.name}' (ID: ${args.id}) deleted successfully.` }] };
       }
@@ -1514,10 +1562,11 @@ server.tool(
       gross_margin: z.number().default(1.0),
       adoption_ramp_months: z.number().default(0),
       vertical_id: z.string().nullable().optional()
-    }).optional().describe("Embedded cohort configuration. Required for 'create' action."),
+    }).optional().describe("Embedded cohort configuration. Use this to create a new cohort config at creation time."),
+    cohort_ids: z.array(z.string()).optional().describe("Array of existing cohort configuration UUIDs to link to the scenario. Use this to reuse an existing cohort config."),
     services: z.array(z.object({ id: z.string(), rollout_month: z.number().default(0) })).optional().describe("AI services to attach, with rollout month offsets."),
     packs: z.array(z.object({ id: z.string(), rollout_month: z.number().default(0) })).optional().describe("Feature packs to attach, with rollout month offsets."),
-    plans: z.array(z.object({ id: z.string(), rollout_month: z.number().default(0) })).optional().describe("Pricing plans to attach, with rollout month offsets."),
+    plans: z.array(z.object({ id: z.string(), rollout_month: z.number().default(0), seats: z.number().default(0) })).optional().describe("Pricing plans to attach, with rollout month offsets and 'seats' (subscriber count). Seats × the plan's base_price contributes subscription revenue when revenue_source is 'monetization' or 'both'."),
     cost_ids: z.array(z.string()).optional().describe("Array of fixed cost item UUIDs to link to the scenario."),
     variation_percent: z.number().optional().describe("Sensitivity analysis variation percent (default: 0.10 for 10% variation)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
@@ -1563,28 +1612,37 @@ server.tool(
         if (!args.name) {
           throw new z.ZodError([{ code: "custom", path: ["name"], message: "Nazwa jest wymagana przy tworzeniu scenariusza." }]);
         }
-        if (!args.cohort_config) {
-          throw new z.ZodError([{ code: "custom", path: ["cohort_config"], message: "Konfiguracja kohorty (cohort_config) jest wymagana przy tworzeniu scenariusza." }]);
+        if (!args.cohort_config && (!args.cohort_ids || args.cohort_ids.length === 0)) {
+          throw new z.ZodError([{ code: "custom", path: ["cohort_config"], message: "Musisz podać konfigurację kohorty (cohort_config) lub identyfikatory istniejących kohort (cohort_ids) przy tworzeniu scenariusza." }]);
         }
         const scenarioId = crypto.randomUUID();
-        const cohortId = crypto.randomUUID();
         const now = new Date().toISOString();
 
         db.transaction(() => {
-          const cc = args.cohort_config!;
-          db.prepare(`
-            INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate ?? 0, cc.monthly_churn_rate ?? 0.05, cc.retention_floor ?? 0.60, cc.monthly_expansion_rate ?? 0.02, cc.ai_adoption_rate ?? 0.30, cc.base_arpu ?? 100, cc.arpu_uplift ?? 0, cc.arpu_uplift_percent ?? 0, cc.churn_reduction ?? 0, cc.acquisition_uplift ?? 0, cc.gross_margin ?? 1.0, cc.adoption_ramp_months ?? 0, now, now);
+          if (args.cohort_config) {
+            const cohortId = crypto.randomUUID();
+            const cc = args.cohort_config;
+            db.prepare(`
+              INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate ?? 0, cc.monthly_churn_rate ?? 0.05, cc.retention_floor ?? 0.60, cc.monthly_expansion_rate ?? 0.02, cc.ai_adoption_rate ?? 0.30, cc.base_arpu ?? 100, cc.arpu_uplift ?? 0, cc.arpu_uplift_percent ?? 0, cc.churn_reduction ?? 0, cc.acquisition_uplift ?? 0, cc.gross_margin ?? 1.0, cc.adoption_ramp_months ?? 0, now, now);
+
+            db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`)
+              .run(scenarioId, cohortId);
+          }
+
+          if (args.cohort_ids) {
+            const insertCohortLink = db.prepare("INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)");
+            for (const cId of args.cohort_ids) {
+              insertCohortLink.run(scenarioId, cId);
+            }
+          }
 
           const revSource = args.revenue_source || 'cohort';
           db.prepare(`
             INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?, ?, ?)
           `).run(scenarioId, args.name, args.description || null, args.projection_months ?? 36, args.discount_rate ?? 0.10, revSource, args.capex_contingency_pct ?? 0, now, now);
-
-          db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`)
-            .run(scenarioId, cohortId);
 
           if (args.services) {
             const insertServ = db.prepare("INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)");
@@ -1599,9 +1657,9 @@ server.tool(
             }
           }
           if (args.plans) {
-            const insertPlan = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month) VALUES (?, ?, ?)");
+            const insertPlan = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month, seats) VALUES (?, ?, ?, ?)");
             for (const pl of args.plans) {
-              insertPlan.run(scenarioId, pl.id, pl.rollout_month);
+              insertPlan.run(scenarioId, pl.id, pl.rollout_month, pl.seats ?? 0);
             }
           }
           if (args.cost_ids) {
@@ -1614,7 +1672,7 @@ server.tool(
 
         // Calculate and cache results
         const fullScenario = getFullScenario(scenarioId)!;
-        const providers = getProviders();
+        const providers = applyProviderOverrides(scenarioId, getProviders());
         const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
@@ -1628,10 +1686,13 @@ server.tool(
 
         saveScenarioResults(scenarioId, results, resultsId);
 
+        const linkedCohortsStr = fullScenario.scope_cohorts ? fullScenario.scope_cohorts.map((c: any) => `'${c.name}' (${c.id})`).join(', ') : 'none';
+        const linkedCostsStr = fullScenario.costs ? fullScenario.costs.map((c: any) => `'${c.name}' (${c.id})`).join(', ') : 'none';
+
         return {
           content: [{ 
             type: "text", 
-            text: `Scenario '${args.name}' created with ID: ${scenarioId}. Projections calculated (NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}, IRR: ${formatIrrMcp(results.irr)}).` 
+            text: `Scenario '${args.name}' created with ID: ${scenarioId}. Projections calculated (NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}, IRR: ${formatIrrMcp(results.irr)}).\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}` 
           }]
         };
       }
@@ -1676,9 +1737,9 @@ server.tool(
           }
           if (args.plans !== undefined) {
             db.prepare("DELETE FROM scenario_plans WHERE scenario_id = ?").run(args.id);
-            const insertPlan = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month) VALUES (?, ?, ?)");
+            const insertPlan = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month, seats) VALUES (?, ?, ?, ?)");
             for (const pl of args.plans) {
-              insertPlan.run(args.id, pl.id, pl.rollout_month);
+              insertPlan.run(args.id, pl.id, pl.rollout_month, pl.seats ?? 0);
             }
           }
           if (args.cost_ids !== undefined) {
@@ -1688,11 +1749,18 @@ server.tool(
               insertCost.run(args.id, cId);
             }
           }
+          if (args.cohort_ids !== undefined) {
+            db.prepare("DELETE FROM scenario_cohorts WHERE scenario_id = ?").run(args.id);
+            const insertCohortLink = db.prepare("INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)");
+            for (const cId of args.cohort_ids) {
+              insertCohortLink.run(args.id, cId);
+            }
+          }
         })();
 
         // Re-calculate projections after modification
         const fullScenario = getFullScenario(args.id)!;
-        const providers = getProviders();
+        const providers = applyProviderOverrides(args.id, getProviders());
         const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
@@ -1705,14 +1773,10 @@ server.tool(
 
         saveScenarioResults(args.id, results);
 
-        // Echo the resulting linked cost set so the caller can confirm the final state
-        // (update uses replace-semantics for cost_ids, so silent drops are possible otherwise).
-        const linkedCostNames = (fullScenario.costs ?? []).map((c: any) => c.name);
-        const costSummary = linkedCostNames.length > 0
-          ? `Linked cost items (${linkedCostNames.length}): ${linkedCostNames.join(', ')}.`
-          : 'No cost items are linked to this scenario.';
+        const linkedCohortsStr = fullScenario.scope_cohorts ? fullScenario.scope_cohorts.map((c: any) => `'${c.name}' (${c.id})`).join(', ') : 'none';
+        const linkedCostsStr = fullScenario.costs ? fullScenario.costs.map((c: any) => `'${c.name}' (${c.id})`).join(', ') : 'none';
 
-        return { content: [{ type: "text", text: `Scenario '${fullScenario.name}' updated successfully and ROI re-projected. ${costSummary}` }] };
+        return { content: [{ type: "text", text: `Scenario '${fullScenario.name}' updated successfully and ROI re-projected.\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}` }] };
       }
 
       if (args.action === "delete") {
@@ -1743,7 +1807,7 @@ server.tool(
         if (!scenario) {
           return { content: [{ type: "text", text: `Scenario '${args.id}' not found` }], isError: true };
         }
-        const providers = getProviders();
+        const providers = applyProviderOverrides(args.id, getProviders());
         const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
@@ -1771,7 +1835,7 @@ server.tool(
         if (!scenario) {
           return { content: [{ type: "text", text: `Scenario '${args.id}' not found` }], isError: true };
         }
-        const providers = getProviders();
+        const providers = applyProviderOverrides(args.id, getProviders());
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
           scenario,
@@ -1809,7 +1873,7 @@ server.tool(
           }
           const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
             scenario,
-            providers,
+            applyProviderOverrides(id, providers),
             currency,
             exchangeRates
           );
@@ -1926,7 +1990,7 @@ server.tool(
 
         // Run and cache ROI results
         const fullScenario = getFullScenario(scenarioId)!;
-        const providers = getProviders();
+        const providers = applyProviderOverrides(scenarioId, getProviders());
         const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
@@ -2361,6 +2425,242 @@ server.tool(
       throw new Error(`Nieobsługiwana akcja: ${args.action}`);
     } catch (err: any) {
       return formatSemanticError(err, "monetization_action");
+    }
+  }
+);
+
+// 12. Scenario Scope Overrides management tool
+server.tool(
+  "scenario_override_action",
+  "Manage scenario-specific cohort behavioral parameter overrides (scenario_scope_overrides). Allows overriding parameter values (e.g. churn, ARPU, acquisition, adoption, uplifts) at different scope levels: all_clients (global), vertical, or cohort. Support actions: 'list' (list overrides for a scenario), 'get' (retrieve an override), 'set' (upsert/save override), and 'delete' (remove override). Modifying overrides will invalidate the scenario's results cache.",
+  {
+    action: z.enum(["list", "get", "set", "delete"]).describe("Action to perform."),
+    scenario_id: z.string().describe("Scenario UUID for which this override applies. Required for all actions."),
+    target_type: z.enum(["all_clients", "vertical", "cohort"]).optional().describe("Override scope level. Required for get, set, and delete."),
+    target_id: z.string().nullable().optional().describe("Cohort UUID or Vertical UUID this override targets. Must be null/omitted for 'all_clients'."),
+    
+    // 13 Overridable fields (optional/nullable)
+    monthly_churn_rate: z.number().nullable().optional().describe("Overridden monthly churn rate as a decimal (e.g. 0.05)."),
+    monthly_acquisition: z.number().nullable().optional().describe("Overridden monthly acquisition count."),
+    acquisition_growth_rate: z.number().nullable().optional().describe("Overridden monthly acquisition growth rate as a decimal (e.g. 0.02)."),
+    ai_adoption_rate: z.number().nullable().optional().describe("Overridden AI adoption rate as a decimal (e.g. 0.30)."),
+    retention_floor: z.number().nullable().optional().describe("Overridden retention floor as a decimal (e.g. 0.60)."),
+    expansion_rate: z.number().nullable().optional().describe("Overridden monthly expansion rate as a decimal (e.g. 0.02) - maps to expansion_rate column."),
+    arpu_override: z.number().nullable().optional().describe("Overridden base ARPU value - maps to arpu_override column."),
+    arpu_uplift: z.number().nullable().optional().describe("Overridden ARPU uplift (flat)."),
+    arpu_uplift_percent: z.number().nullable().optional().describe("Overridden ARPU uplift percentage as a decimal (e.g. 0.15 for 15%)."),
+    churn_reduction: z.number().nullable().optional().describe("Overridden churn reduction as a decimal (e.g. 0.10 for 10% reduction)."),
+    acquisition_uplift: z.number().nullable().optional().describe("Overridden acquisition uplift as a decimal (e.g. 0.05 for 5%)."),
+    gross_margin: z.number().nullable().optional().describe("Overridden gross margin as a decimal (e.g. 0.90 for 90%)."),
+    adoption_ramp_months: z.number().nullable().optional().describe("Overridden adoption ramp in months.")
+  },
+  async (args) => {
+    try {
+      if (!args.scenario_id) {
+        throw new z.ZodError([{ code: "custom", path: ["scenario_id"], message: "scenario_id jest wymagany." }]);
+      }
+      
+      const scenarioId = args.scenario_id;
+
+      if (args.action === "list") {
+        const rows = db.prepare(`
+          SELECT * FROM scenario_scope_overrides
+          WHERE scenario_id = ?
+        `).all(scenarioId) as any[];
+        return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
+      }
+
+      if (!args.target_type) {
+        throw new z.ZodError([{ code: "custom", path: ["target_type"], message: "target_type jest wymagany dla get, set i delete." }]);
+      }
+
+      const targetType = args.target_type;
+      const targetId = args.target_id || null;
+
+      if (args.action === "get") {
+        const row = db.prepare(`
+          SELECT * FROM scenario_scope_overrides
+          WHERE scenario_id = ? AND target_type = ? AND COALESCE(target_id, '') = COALESCE(?, '')
+        `).get(scenarioId, targetType, targetId);
+
+        if (!row) {
+          return { content: [{ type: "text", text: JSON.stringify({}, null, 2) }] };
+        }
+        return { content: [{ type: "text", text: JSON.stringify(row, null, 2) }] };
+      }
+
+      if (args.action === "delete") {
+        db.transaction(() => {
+          db.prepare(`
+            DELETE FROM scenario_scope_overrides
+            WHERE scenario_id = ? AND target_type = ? AND COALESCE(target_id, '') = COALESCE(?, '')
+          `).run(scenarioId, targetType, targetId);
+          db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(scenarioId);
+        })();
+        return { content: [{ type: "text", text: `Override deleted successfully.` }] };
+      }
+
+      if (args.action === "set") {
+        db.transaction(() => {
+          const existing = db.prepare(`
+            SELECT id FROM scenario_scope_overrides
+            WHERE scenario_id = ? AND target_type = ? AND COALESCE(target_id, '') = COALESCE(?, '')
+          `).get(scenarioId, targetType, targetId) as { id: string } | undefined;
+
+          if (existing) {
+            const current = db.prepare("SELECT * FROM scenario_scope_overrides WHERE id = ?").get(existing.id) as any;
+            db.prepare(`
+              UPDATE scenario_scope_overrides SET
+                monthly_churn_rate = ?, monthly_acquisition = ?, acquisition_growth_rate = ?,
+                ai_adoption_rate = ?, retention_floor = ?, expansion_rate = ?,
+                arpu_override = ?, arpu_uplift = ?, arpu_uplift_percent = ?,
+                churn_reduction = ?, acquisition_uplift = ?, gross_margin = ?,
+                adoption_ramp_months = ?
+              WHERE id = ?
+            `).run(
+              args.monthly_churn_rate !== undefined ? args.monthly_churn_rate : current.monthly_churn_rate,
+              args.monthly_acquisition !== undefined ? args.monthly_acquisition : current.monthly_acquisition,
+              args.acquisition_growth_rate !== undefined ? args.acquisition_growth_rate : current.acquisition_growth_rate,
+              args.ai_adoption_rate !== undefined ? args.ai_adoption_rate : current.ai_adoption_rate,
+              args.retention_floor !== undefined ? args.retention_floor : current.retention_floor,
+              args.expansion_rate !== undefined ? args.expansion_rate : current.expansion_rate,
+              args.arpu_override !== undefined ? args.arpu_override : current.arpu_override,
+              args.arpu_uplift !== undefined ? args.arpu_uplift : current.arpu_uplift,
+              args.arpu_uplift_percent !== undefined ? args.arpu_uplift_percent : current.arpu_uplift_percent,
+              args.churn_reduction !== undefined ? args.churn_reduction : current.churn_reduction,
+              args.acquisition_uplift !== undefined ? args.acquisition_uplift : current.acquisition_uplift,
+              args.gross_margin !== undefined ? args.gross_margin : current.gross_margin,
+              args.adoption_ramp_months !== undefined ? args.adoption_ramp_months : current.adoption_ramp_months,
+              existing.id
+            );
+          } else {
+            const newId = crypto.randomUUID();
+            db.prepare(`
+              INSERT INTO scenario_scope_overrides (
+                id, scenario_id, target_type, target_id,
+                monthly_churn_rate, monthly_acquisition, acquisition_growth_rate,
+                ai_adoption_rate, retention_floor, expansion_rate,
+                arpu_override, arpu_uplift, arpu_uplift_percent,
+                churn_reduction, acquisition_uplift, gross_margin,
+                adoption_ramp_months
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              newId,
+              scenarioId,
+              targetType,
+              targetId,
+              args.monthly_churn_rate !== undefined ? args.monthly_churn_rate : null,
+              args.monthly_acquisition !== undefined ? args.monthly_acquisition : null,
+              args.acquisition_growth_rate !== undefined ? args.acquisition_growth_rate : null,
+              args.ai_adoption_rate !== undefined ? args.ai_adoption_rate : null,
+              args.retention_floor !== undefined ? args.retention_floor : null,
+              args.expansion_rate !== undefined ? args.expansion_rate : null,
+              args.arpu_override !== undefined ? args.arpu_override : null,
+              args.arpu_uplift !== undefined ? args.arpu_uplift : null,
+              args.arpu_uplift_percent !== undefined ? args.arpu_uplift_percent : null,
+              args.churn_reduction !== undefined ? args.churn_reduction : null,
+              args.acquisition_uplift !== undefined ? args.acquisition_uplift : null,
+              args.gross_margin !== undefined ? args.gross_margin : null,
+              args.adoption_ramp_months !== undefined ? args.adoption_ramp_months : null
+            );
+          }
+          db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(scenarioId);
+        })();
+        return { content: [{ type: "text", text: `Scenario override saved successfully.` }] };
+      }
+
+      throw new Error(`Nieobsługiwana akcja: ${args.action}`);
+    } catch (err: any) {
+      return formatSemanticError(err, "scenario_override_action");
+    }
+  }
+);
+
+server.tool(
+  "entity_override_action",
+  "Manage per-scenario overrides of a catalog entity's FINANCIAL parameters (scenario_entity_overrides) WITHOUT cloning the shared catalog. Polymorphic over entity_type: 'service' (avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month), 'cost' (amount, frequency), 'provider' (input_price, output_price), 'plan' (base_price). Use this to vary a service's token usage, a cost's amount, a provider's price, or a plan's base price in ONE scenario only — do NOT duplicate the catalog entity. Actions: 'list' (all overrides for a scenario), 'get', 'set' (upsert), 'delete'. Mutations invalidate the scenario's cached results. Only the fields relevant to entity_type are stored.",
+  {
+    action: z.enum(["list", "get", "set", "delete"]).describe("Action to perform."),
+    scenario_id: z.string().describe("Scenario UUID. Required for all actions."),
+    entity_type: z.enum(["service", "cost", "provider", "plan"]).optional().describe("Catalog entity kind. Required for get, set, and delete."),
+    entity_id: z.string().optional().describe("UUID of the catalog entity (service/cost/provider/plan). Required for get, set, and delete."),
+
+    // service overrides
+    avg_input_tokens: z.number().nullable().optional().describe("[service] Override avg input tokens per request."),
+    avg_output_tokens: z.number().nullable().optional().describe("[service] Override avg output tokens per request."),
+    avg_requests_per_user_month: z.number().nullable().optional().describe("[service] Override avg requests per AI user per month."),
+    fixed_cost_per_month: z.number().nullable().optional().describe("[service] Override the fixed monthly cost."),
+    // cost overrides
+    amount: z.number().nullable().optional().describe("[cost] Override the cost amount."),
+    frequency: z.enum(["one_time", "monthly", "yearly"]).nullable().optional().describe("[cost] Override the cost frequency."),
+    // provider overrides
+    input_price: z.number().nullable().optional().describe("[provider] Override input token price (per 1M tokens)."),
+    output_price: z.number().nullable().optional().describe("[provider] Override output token price (per 1M tokens)."),
+    // plan overrides
+    base_price: z.number().nullable().optional().describe("[plan] Override the plan base price.")
+  },
+  async (args) => {
+    try {
+      const scenarioId = args.scenario_id;
+      if (!scenarioId) {
+        throw new z.ZodError([{ code: "custom", path: ["scenario_id"], message: "scenario_id jest wymagany." }]);
+      }
+
+      const FIELDS = ["avg_input_tokens", "avg_output_tokens", "avg_requests_per_user_month", "fixed_cost_per_month", "amount", "frequency", "input_price", "output_price", "base_price"] as const;
+
+      if (args.action === "list") {
+        const rows = db.prepare(`SELECT * FROM scenario_entity_overrides WHERE scenario_id = ?`).all(scenarioId) as any[];
+        return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
+      }
+
+      if (!args.entity_type || !args.entity_id) {
+        throw new z.ZodError([{ code: "custom", path: ["entity_type"], message: "entity_type i entity_id są wymagane dla akcji get, set i delete." }]);
+      }
+      const entityType = args.entity_type;
+      const entityId = args.entity_id;
+
+      if (args.action === "get") {
+        const row = db.prepare(`SELECT * FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ?`).get(scenarioId, entityType, entityId);
+        return { content: [{ type: "text", text: JSON.stringify(row ?? {}, null, 2) }] };
+      }
+
+      if (args.action === "delete") {
+        db.transaction(() => {
+          db.prepare(`DELETE FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ?`).run(scenarioId, entityType, entityId);
+          db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(scenarioId);
+        })();
+        return { content: [{ type: "text", text: `Entity override deleted successfully for ${entityType} ${entityId}.` }] };
+      }
+
+      if (args.action === "set") {
+        // Mirror the web entityOverridesRepository: an all-empty override means "no override"
+        // → clear any stored row instead of persisting a vacuous all-NULL row. A partial set
+        // (>=1 field) keeps preserve-current-on-undefined semantics for the unspecified fields.
+        const allEmpty = FIELDS.every((f) => (args as any)[f] === null || (args as any)[f] === undefined);
+        db.transaction(() => {
+          const existing = db.prepare(`SELECT id FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ?`).get(scenarioId, entityType, entityId) as { id: string } | undefined;
+          if (allEmpty) {
+            if (existing) db.prepare("DELETE FROM scenario_entity_overrides WHERE id = ?").run(existing.id);
+          } else if (existing) {
+            const current = db.prepare("SELECT * FROM scenario_entity_overrides WHERE id = ?").get(existing.id) as any;
+            const setClause = FIELDS.map((f) => `${f} = ?`).join(", ");
+            const values = FIELDS.map((f) => ((args as any)[f] !== undefined ? (args as any)[f] : current[f]));
+            db.prepare(`UPDATE scenario_entity_overrides SET ${setClause} WHERE id = ?`).run(...values, existing.id);
+          } else {
+            const newId = crypto.randomUUID();
+            const cols = FIELDS.join(", ");
+            const placeholders = FIELDS.map(() => "?").join(", ");
+            const values = FIELDS.map((f) => ((args as any)[f] !== undefined ? (args as any)[f] : null));
+            db.prepare(`INSERT INTO scenario_entity_overrides (id, scenario_id, entity_type, entity_id, ${cols}) VALUES (?, ?, ?, ?, ${placeholders})`).run(newId, scenarioId, entityType, entityId, ...values);
+          }
+          db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(scenarioId);
+        })();
+        return { content: [{ type: "text", text: allEmpty ? `No override fields provided — cleared any override for ${entityType} ${entityId}.` : `Entity override saved successfully for ${entityType} ${entityId}.` }] };
+      }
+
+      throw new Error(`Nieobsługiwana akcja: ${args.action}`);
+    } catch (err: any) {
+      return formatSemanticError(err, "entity_override_action");
     }
   }
 );

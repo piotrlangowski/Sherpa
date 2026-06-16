@@ -276,6 +276,37 @@ export interface ScopeOverride {
   } | null;
 }
 
+/** The catalog entities that support per-scenario financial overrides. */
+export type EntityOverrideType = 'service' | 'cost' | 'provider' | 'plan';
+
+/**
+ * A per-scenario override of a catalog entity's financial parameters.
+ * Persisted in the polymorphic `scenario_entity_overrides` table; only the
+ * fields relevant to `entity_type` are populated (the rest stay null).
+ * Mirrors the catalog-vs-scenario split used by `MonetizationConfig`.
+ */
+export interface EntityOverride {
+  // service
+  avg_input_tokens?: number | null;
+  avg_output_tokens?: number | null;
+  avg_requests_per_user_month?: number | null;
+  fixed_cost_per_month?: number | null;
+  // cost
+  amount?: number | null;
+  frequency?: CostFrequency | null;
+  // provider
+  input_price?: number | null;
+  output_price?: number | null;
+  // plan
+  base_price?: number | null;
+}
+
+/** An EntityOverride tagged with the entity it applies to (used by the editor + export). */
+export interface EntityOverrideRecord extends EntityOverride {
+  entity_type: EntityOverrideType;
+  entity_id: string;
+}
+
 export interface Scenario {
   id: string;
   name: string;
@@ -287,13 +318,13 @@ export interface Scenario {
   capex_contingency_pct?: number;
   created_at?: string;
   updated_at?: string;
-  
+
   scope_verticals?: Vertical[];
   scope_cohorts?: CohortConfig[];
   scope_overrides?: ScopeOverride[];
   services?: Array<Service & { rollout_month: number }>;
   packs?: Array<{ id: string; name: string; rollout_month: number }>;
-  plans?: Array<{ id: string; name: string; rollout_month: number }>;
+  plans?: Array<{ id: string; name: string; rollout_month: number; base_price?: number; seats?: number }>;
   costs?: CostItem[];
   results?: {
     payback_months: number | null;

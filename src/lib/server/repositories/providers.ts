@@ -98,6 +98,9 @@ export const providersRepository = {
   },
 
   delete(id: string): void {
-    db.prepare("DELETE FROM providers WHERE id = ?").run(id);
+    db.transaction(() => {
+      db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'provider' AND entity_id = ?").run(id);
+      db.prepare("DELETE FROM providers WHERE id = ?").run(id);
+    })();
   }
 };

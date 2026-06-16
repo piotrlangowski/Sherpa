@@ -662,21 +662,32 @@ export function calculateScenario(
     let monetization: MonetizationRevenueResult = {
       totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0
     };
+    let planSubscriptionRevenue = 0;
     if (revenueSource === 'monetization' || revenueSource === 'both') {
       const activeServices = (scenario.services ?? []).filter(s => t >= (s.rollout_month ?? 0));
       monetization = calculateMonetizationRevenue(activeAiUsers, activeServices, creditSettings, providersMap);
+
+      // Plan subscription revenue: base_price × seats per attached plan, active from its
+      // rollout_month. Treated like monetization revenue (added at full value; the associated
+      // AI usage costs are captured separately in tokenCosts). Seats default to 0, and this
+      // never fires under the default 'cohort' source, so cohort-only scenarios are unchanged.
+      for (const plan of scenario.plans ?? []) {
+        if (t >= (plan.rollout_month ?? 0)) {
+          planSubscriptionRevenue += (plan.base_price ?? 0) * (plan.seats ?? 0);
+        }
+      }
     }
 
     let upperRevenue: number;
     let lowerRevenue: number;
     switch (revenueSource) {
       case 'monetization':
-        upperRevenue = monetization.totalRevenue;
-        lowerRevenue = monetization.totalRevenue;
+        upperRevenue = monetization.totalRevenue + planSubscriptionRevenue;
+        lowerRevenue = monetization.totalRevenue + planSubscriptionRevenue;
         break;
       case 'both':
-        upperRevenue = upperMarginSum + monetization.totalRevenue;
-        lowerRevenue = lowerMarginSum + monetization.totalRevenue;
+        upperRevenue = upperMarginSum + monetization.totalRevenue + planSubscriptionRevenue;
+        lowerRevenue = lowerMarginSum + monetization.totalRevenue + planSubscriptionRevenue;
         break;
       default:
         upperRevenue = upperMarginSum;

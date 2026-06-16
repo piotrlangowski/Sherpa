@@ -47,27 +47,37 @@ The `revenue_source` parameter determines which revenue streams are accumulated 
   - `projection_months` (number, default: 36, max 120)
   - `discount_rate` (number, annual discount rate, default: 0.10)
   - `revenue_source` (enum: `"cohort"`, `"monetization"`, `"both"`, default: `"cohort"`)
-  - `cohort_config` (object, required during create):
+  - `cohort_config` (object, optional if `cohort_ids` is specified):
     - `name`, `current_users`, `monthly_acquisition` (required)
     - `acquisition_growth_rate`, `monthly_churn_rate`, `retention_floor`, `monthly_expansion_rate`, `ai_adoption_rate`, `base_arpu`, `arpu_uplift`, `arpu_uplift_percent`, `churn_reduction`, `acquisition_uplift`
     - `vertical_id`
+  - `cohort_ids` (array of strings, existing cohort configuration UUIDs)
   - `services` (array of objects: `[{ id: string, rollout_month?: number }]`)
   - `packs` (array of objects: `[{ id: string, rollout_month?: number }]`)
   - `plans` (array of objects: `[{ id: string, rollout_month?: number }]`)
   - `cost_ids` (array of strings, Capex/Opex cost UUIDs)
 
 ### 3. Scenario Update (`action: "update"`)
-- Use this to change `scope_type` to `'verticals'` or `'all_clients'`, link different plans, or modify scenario metrics.
+- Use this to change `scope_type` to `'verticals'` or `'all_clients'`, link different cohorts/plans, or modify scenario metrics.
 - **Arguments**:
   - `id` (string, required)
   - `name`, `description`, `projection_months`, `discount_rate`, `scope_type`, `revenue_source`
+  - `cohort_ids` (array of existing cohort configuration UUIDs)
   - `services` (array of `[{ id, rollout_month }]`)
   - `packs` (array of `[{ id, rollout_month }]`)
   - `plans` (array of `[{ id, rollout_month }]`)
   - `cost_ids` (array of cost UUIDs)
-- **Replace semantics (important)**: On `update`, each of `services`, `packs`, `plans`, and `cost_ids` **replaces the scenario's entire existing set** for that key — it does not append. Omit a key to leave that set unchanged; pass `[]` to clear it. To add one item to a scenario that already has some, first fetch the current list via `action: "get"` and pass the full set you want to keep, otherwise the others are silently dropped. The `update` response echoes the resulting linked cost items so you can confirm the final set.
+- **Replace semantics (important)**: On `update`, each of `cohort_ids`, `services`, `packs`, `plans`, and `cost_ids` **replaces the scenario's entire existing set** for that key — it does not append. Omit a key to leave that set unchanged; pass `[]` to clear it. To add one item to a scenario that already has some, first fetch the current list via `action: "get"` and pass the full set you want to keep, otherwise the others are silently dropped. The `update` response echoes the resulting linked cohorts and costs so you can confirm the final set.
 
-## 4. Cost Reuse Guidelines
-- **Always Reuse Matching Costs**: When a user wants to assign a cost to multiple scenarios, do NOT create a new cost item if an identical one already exists. Check the existing cost items catalog using `cost_item_action` with `action: "list"`.
-- **Linking Existing Costs**: Use the `cost_ids` array in `scenario_action.update` (or `create`) to link the existing cost item UUID(s) to the target scenarios.
+## 4. Entity Reuse & Overrides Guidelines
+- **Always Reuse Matching Entities**: When a user wants to assign a cost or cohort to multiple scenarios, do NOT create new cost items or cohort configs if identical ones already exist. Use `cost_item_action` `action: "list"` or `cohort_action` `action: "list"`.
+- **Linking Existing Entities**: Use the `cost_ids` or `cohort_ids` array in `scenario_action.create` or `scenario_action.update` to link the existing UUID(s).
+- **Varying Shared Cohorts Per Scenario**: To vary a shared cohort's behavioral parameters (e.g. `ai_adoption_rate`, `monthly_churn_rate`) on a per-scenario basis, use the **`scenario_override_action`** tool rather than duplicating the cohort.
+  - `scenario_override_action` supports: `list` (view overrides for a scenario), `get`, `set` (upsert override parameters), and `delete`.
+  - Override scope levels (`target_type`) can be `'all_clients'` (global scenario default), `'vertical'` (applies to cohorts in a vertical market), or `'cohort'` (applies to a specific cohort config).
+  - Overridden values are merged incrementally; `undefined` parameters in `set` calls preserve their current values in the database, while explicit `null` unsets them.
+  - Setting or deleting overrides automatically invalidates the scenario's results cache.
+- **Varying Shared Catalog Entities Per Scenario**: To vary a **service's** token usage / fixed cost, a **cost item's** amount or frequency, a **provider's** token prices, or a **plan's** base price for ONE scenario only, use the **`entity_override_action`** tool — do NOT clone the catalog entity.
+  - `entity_override_action` supports `list`, `get`, `set` (upsert), `delete`; required params `scenario_id`, `entity_type` (`service`|`cost`|`provider`|`plan`), `entity_id`, plus the type-specific override fields (service: `avg_input_tokens`/`avg_output_tokens`/`avg_requests_per_user_month`/`fixed_cost_per_month`; cost: `amount`/`frequency`; provider: `input_price`/`output_price`; plan: `base_price`).
+  - Setting or deleting an override invalidates the scenario's results cache. A plan's `base_price` only affects revenue when `revenue_source` is `monetization` or `both` and the plan was attached with `seats` > 0.
 - **General Costs**: If a cost is general and shared across scenarios, ensure its `service_id` is set to `null` (or omitted). `service_id` is merely a grouping tag and does not restrict linking.

@@ -14,6 +14,7 @@
   import Slider from '$lib/components/ui/slider/slider.svelte';
   import Badge from '$lib/components/ui/badge/badge.svelte';
   import ScenarioMonetizationOverrides from '$lib/components/catalog/ScenarioMonetizationOverrides.svelte';
+  import ScenarioEntityOverrides from '$lib/components/catalog/ScenarioEntityOverrides.svelte';
 
   // Lucide Icons
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -83,6 +84,7 @@
   let rolloutPacks = $state<Record<string, number>>({});
   let selectedPlans = $state<Record<string, boolean>>({});
   let rolloutPlans = $state<Record<string, number>>({});
+  let seatsPlans = $state<Record<string, number>>({});
 
   // Step 4: Cost Items
   let selectedCosts = $state<Record<string, boolean>>({});
@@ -163,10 +165,12 @@
 
       selectedPlans = {};
       rolloutPlans = {};
+      seatsPlans = {};
       if (s.plans) {
         for (const pl of s.plans) {
           selectedPlans[pl.id] = true;
           rolloutPlans[pl.id] = pl.rollout_month;
+          seatsPlans[pl.id] = pl.seats ?? 0;
         }
       }
 
@@ -421,6 +425,48 @@
     return rows;
   });
   const monetizationKey = $derived(monetizationEntities.map((e) => `${e.type}:${e.id}`).join(','));
+
+  // Per-entity financial override rows (service tokens / provider prices / plan base_price / cost amount).
+  // Live override map: seeded from the server snapshot, then kept in sync as the override component
+  // saves/clears, so values survive a component remount (which happens when the selection set changes).
+  type EntityOvRow = { type: 'service' | 'cost' | 'provider' | 'plan'; id: string; name: string; catalog: any; override: any };
+  let liveEntityOverrides = $state<Record<string, any>>({ ...(data.entityOverrides ?? {}) });
+  function handleOverrideSaved(type: string, id: string, override: any) {
+    liveEntityOverrides[`${type}:${id}`] = override;
+  }
+  const offeringOverrideRows = $derived.by(() => {
+    const ovr: Record<string, any> = liveEntityOverrides;
+    const rows: EntityOvRow[] = [];
+    for (const s of data.services) if (selectedServices[s.id]) rows.push({
+      type: 'service', id: s.id, name: s.name,
+      catalog: { avg_input_tokens: s.avg_input_tokens, avg_output_tokens: s.avg_output_tokens, avg_requests_per_user_month: s.avg_requests_per_user_month, fixed_cost_per_month: s.fixed_cost_per_month },
+      override: ovr[`service:${s.id}`] ?? null
+    });
+    const providerIds = new Set<string>();
+    for (const s of data.services) if (selectedServices[s.id] && s.provider_id) providerIds.add(s.provider_id);
+    for (const p of data.providers) if (providerIds.has(p.id)) rows.push({
+      type: 'provider', id: p.id, name: `${p.name} · ${p.model_name}`,
+      catalog: { input_price: p.input_price, output_price: p.output_price },
+      override: ovr[`provider:${p.id}`] ?? null
+    });
+    for (const pl of data.plans) if (selectedPlans[pl.id]) rows.push({
+      type: 'plan', id: pl.id, name: pl.name,
+      catalog: { base_price: pl.base_price },
+      override: ovr[`plan:${pl.id}`] ?? null
+    });
+    return rows;
+  });
+  const offeringOverrideKey = $derived(offeringOverrideRows.map((e) => `${e.type}:${e.id}`).join(','));
+
+  const costOverrideRows = $derived.by(() => {
+    const ovr: Record<string, any> = liveEntityOverrides;
+    return data.costs.filter((c) => selectedCosts[c.id]).map((c) => ({
+      type: 'cost' as const, id: c.id, name: c.name,
+      catalog: { amount: c.amount, frequency: c.frequency },
+      override: ovr[`cost:${c.id}`] ?? null
+    }));
+  });
+  const costOverrideKey = $derived(costOverrideRows.map((e) => `${e.type}:${e.id}`).join(','));
 </script>
 
 <div class="max-w-4xl mx-auto space-y-6">
@@ -847,6 +893,12 @@
                         <Label class="text-xs text-muted-foreground shrink-0">Rollout Month:</Label>
                         <input type="number" name="rollout_month_plan_{plan.id}" min="0" max={projectionMonths} bind:value={rolloutPlans[plan.id]} class="w-16 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
                         <span class="text-[10px] text-muted-foreground">M{rolloutPlans[plan.id]}</span>
+                        {#if revenueSource !== 'cohort'}
+                          <Label class="text-xs text-muted-foreground shrink-0 ml-1">Seats:</Label>
+                          <input type="number" name="seats_plan_{plan.id}" min="0" bind:value={seatsPlans[plan.id]} title="Subscribers on this plan (drives base_price revenue)" class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
+                        {:else}
+                          <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
+                        {/if}
                       </div>
                     {/if}
                   </div>
@@ -925,6 +977,20 @@
               {/key}
             </div>
           {/if}
+
+          {#if offeringOverrideRows.length > 0}
+            <div class="mt-6">
+              {#key offeringOverrideKey}
+                <ScenarioEntityOverrides
+                  scenarioId={scenario.id}
+                  entities={offeringOverrideRows}
+                  onSaved={handleOverrideSaved}
+                  title="Service, provider & plan overrides"
+                  subtitle="Vary token usage, fixed costs, provider prices, or plan base price for THIS scenario only. Saves immediately; the shared catalog is untouched. Save the scenario first if you just changed the selection."
+                />
+              {/key}
+            </div>
+          {/if}
         </CardContent>
 
         <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">
@@ -960,6 +1026,20 @@
                   </div>
                 </label>
               {/each}
+            </div>
+          {/if}
+
+          {#if costOverrideRows.length > 0}
+            <div class="mt-6">
+              {#key costOverrideKey}
+                <ScenarioEntityOverrides
+                  scenarioId={scenario.id}
+                  entities={costOverrideRows}
+                  onSaved={handleOverrideSaved}
+                  title="Cost overrides"
+                  subtitle="Vary the amount or frequency of a cost for THIS scenario only. Saves immediately; the shared catalog is untouched."
+                />
+              {/key}
             </div>
           {/if}
         </CardContent>

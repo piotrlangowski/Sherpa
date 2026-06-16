@@ -81,11 +81,12 @@ export const actions: Actions = {
       return { id, rollout_month: rolloutMonth };
     });
 
-    // Parse rollout schedules for Plans
+    // Parse rollout schedules + seats for Plans
     const planIds = formData.getAll('planIds') as string[];
     const plans = planIds.map(id => {
       const rolloutMonth = parseInt(formData.get(`rollout_month_plan_${id}`) as string || '0', 10);
-      return { id, rollout_month: rolloutMonth };
+      const seats = parseInt(formData.get(`seats_plan_${id}`) as string || '0', 10);
+      return { id, rollout_month: rolloutMonth, seats };
     });
 
     if (!name) {

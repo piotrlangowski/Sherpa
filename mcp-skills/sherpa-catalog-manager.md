@@ -93,6 +93,13 @@ All catalog changes are executed via entity actions. Deletions always require `c
   - `churn_reduction` (number, percent reduction on adopting users)
   - `acquisition_uplift` (number, percent uplift on acquisition channel)
   - `confirm` (boolean, required for `delete`)
+- **Cohort Reuse Strategy**:
+  - A single cohort config can be linked to multiple scenarios via the many-to-many relationship using `scenario_action`.
+  - When the user asks to create scenarios using an existing cohort, do NOT create multiple duplicate cohort configs. Instead, use `cohort_action` with `action: "list"` to find the existing cohort UUID, and link it via the `cohort_ids` parameter in `scenario_action.create` or `scenario_action.update`.
+  - To vary a shared cohort's parameters (like `ai_adoption_rate`, `monthly_churn_rate`, etc.) per scenario, use the **`scenario_override_action`** tool. Do NOT clone the cohort itself. Overrides can target the cohort level, vertical market, or all clients globally for that scenario.
+- **Catalog Entity Reuse Strategy (services / costs / providers / plans)**:
+  - Do NOT duplicate a catalog entity to give it different numbers in another scenario. Link the shared entity, then use **`entity_override_action`** to override its financials for THAT scenario only: a service's token usage / fixed cost, a cost's `amount`/`frequency`, a provider's `input_price`/`output_price`, or a plan's `base_price`.
+
 
 ### 6. Capex/Opex Cost Items (`cost_item_action`)
 - **Action options**: `list`, `create`, `update`, `delete`.

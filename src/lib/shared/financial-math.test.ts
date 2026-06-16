@@ -367,6 +367,39 @@ describe('Financial Math Module Tests', () => {
         expect(both.revenue).toBeCloseTo(cohortOnly.revenue + both.monetizationRevenue, 2);
       });
     });
+
+    describe('plan subscription revenue (base_price × seats)', () => {
+      const cohort: CohortConfig = {
+        id: 'c1', name: 'Cohort', current_users: 1000, monthly_acquisition: 0,
+        acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 1,
+        monthly_expansion_rate: 0, ai_adoption_rate: 0.30, base_arpu: 100
+      };
+      const makeScenario = (revenue_source: Scenario['revenue_source'], seats: number): Scenario => ({
+        id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.10,
+        scope_type: 'cohorts', revenue_source, scope_cohorts: [cohort],
+        services: [],
+        plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats }],
+        costs: []
+      });
+
+      it('ignores plan base_price/seats under the default cohort source', () => {
+        const noSeats = calculateScenario(makeScenario('cohort', 0), []).npvUpper;
+        const withSeats = calculateScenario(makeScenario('cohort', 500), []).npvUpper;
+        expect(withSeats).toBeCloseTo(noSeats, 2);
+      });
+
+      it('adds base_price × seats to monthly revenue under the both source', () => {
+        const m0 = calculateScenario(makeScenario('both', 500), []).timeline[0];
+        const m0NoSeats = calculateScenario(makeScenario('both', 0), []).timeline[0];
+        expect(m0.revenue - m0NoSeats.revenue).toBeCloseTo(99 * 500, 2);
+      });
+
+      it('increases NPV when plan seats are added (both source)', () => {
+        const base = calculateScenario(makeScenario('both', 0), []).npvUpper;
+        const withPlan = calculateScenario(makeScenario('both', 500), []).npvUpper;
+        expect(withPlan).toBeGreaterThan(base);
+      });
+    });
   });
 
   describe('runSensitivityAnalysis', () => {

@@ -135,6 +135,7 @@ export const plansRepository = {
       db.prepare("DELETE FROM vertical_plans WHERE plan_id = ?").run(id);
       db.prepare("DELETE FROM scenario_plans WHERE plan_id = ?").run(id);
       db.prepare("DELETE FROM monetization_configs WHERE entity_type = 'plan' AND entity_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'plan' AND entity_id = ?").run(id);
       db.prepare("DELETE FROM plans WHERE id = ?").run(id);
     })();
   }

@@ -92,6 +92,7 @@ export const costsRepository = {
   delete(id: string): void {
     db.transaction(() => {
       db.prepare("DELETE FROM scenario_costs WHERE cost_item_id = ?").run(id);
+      db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'cost' AND entity_id = ?").run(id);
       db.prepare("DELETE FROM cost_items WHERE id = ?").run(id);
     })();
   }

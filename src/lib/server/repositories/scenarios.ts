@@ -34,7 +34,7 @@ export const scenariosRepository = {
     `).all(...scenarioIds) as any[];
 
     const planRows = db.prepare(`
-      SELECT spl.scenario_id, pl.id, pl.name, spl.rollout_month
+      SELECT spl.scenario_id, pl.id, pl.name, pl.base_price, spl.rollout_month, spl.seats
       FROM plans pl
       JOIN scenario_plans spl ON pl.id = spl.plan_id
       WHERE spl.scenario_id IN (${placeholders})
@@ -272,7 +272,7 @@ export const scenariosRepository = {
 
     // Load plans in scenario
     const planRows = db.prepare(`
-      SELECT pl.id, pl.name, spl.rollout_month
+      SELECT pl.id, pl.name, pl.base_price, spl.rollout_month, spl.seats
       FROM plans pl
       JOIN scenario_plans spl ON pl.id = spl.plan_id
       WHERE spl.scenario_id = ?
@@ -315,7 +315,7 @@ export const scenariosRepository = {
     scope_overrides?: Omit<ScopeOverride, 'id' | 'scenario_id'>[];
     services?: { id: string; rollout_month: number }[];
     packs?: { id: string; rollout_month: number }[];
-    plans?: { id: string; rollout_month: number }[];
+    plans?: { id: string; rollout_month: number; seats?: number }[];
     cost_ids?: string[];
   }): Scenario {
     const id = uuidv4();
@@ -370,8 +370,8 @@ export const scenariosRepository = {
       }
 
       if (data.plans && data.plans.length > 0) {
-        const insertPlanLink = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month) VALUES (?, ?, ?)");
-        for (const pl of data.plans) insertPlanLink.run(id, pl.id, pl.rollout_month);
+        const insertPlanLink = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month, seats) VALUES (?, ?, ?, ?)");
+        for (const pl of data.plans) insertPlanLink.run(id, pl.id, pl.rollout_month, pl.seats ?? 0);
       }
 
       if (data.cost_ids && data.cost_ids.length > 0) {
@@ -390,7 +390,7 @@ export const scenariosRepository = {
     scope_overrides?: Omit<ScopeOverride, 'id' | 'scenario_id'>[];
     services?: { id: string; rollout_month: number }[];
     packs?: { id: string; rollout_month: number }[];
-    plans?: { id: string; rollout_month: number }[];
+    plans?: { id: string; rollout_month: number; seats?: number }[];
     cost_ids?: string[];
   }): void {
     const current = this.getById(id);
@@ -461,8 +461,8 @@ export const scenariosRepository = {
 
       if (data.plans !== undefined) {
         db.prepare("DELETE FROM scenario_plans WHERE scenario_id = ?").run(id);
-        const insertPlanLink = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month) VALUES (?, ?, ?)");
-        for (const pl of data.plans) insertPlanLink.run(id, pl.id, pl.rollout_month);
+        const insertPlanLink = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month, seats) VALUES (?, ?, ?, ?)");
+        for (const pl of data.plans) insertPlanLink.run(id, pl.id, pl.rollout_month, pl.seats ?? 0);
       }
 
       if (data.cost_ids !== undefined) {

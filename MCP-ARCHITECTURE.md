@@ -26,7 +26,7 @@ graph TD
 
 The MCP server presents four interfaces to the consuming LLM host (e.g., Claude Desktop, Claude Chat, or the Antigravity developer CLI):
 
-1. **Tools (12)**: Structured JSON-RPC methods defined in `mcp-server/src/index.ts` using Zod schemas for input validation.
+1. **Tools (13)**: Structured JSON-RPC methods defined in `mcp-server/src/index.ts` using Zod schemas for input validation.
 2. **Resources (2)**: Read-only URIs using the `sherpa://` scheme to query cached calculation data.
 3. **Prompts**: Named system-instruction templates.
 4. **Instructions**: A global system prompt loaded during MCP initialization that provides context to the host (host-dependent, typically appended to system instructions).
@@ -91,7 +91,7 @@ When you modify the MCP boundary or catalog parameters, follow these strict sync
 
 ## 5. Catalog of Exposed Surfaces
 
-### Tools Inventory (12)
+### Tools Inventory (14)
 - **`settings_action`**: Global settings (currency, WACC, default projection length, credit pricing).
 - **`client_base_action`**: Default client base parameters and uplifts.
 - **`provider_action`**: AI model provider listings, token costs, and credit conversion.
@@ -104,6 +104,8 @@ When you modify the MCP boundary or catalog parameters, follow these strict sync
 - **`scenario_action`**: Lifecycle management, tornado analysis, scenario comparison, and projections.
 - **`dashboard_action`**: Open/close/deep-link to local SvelteKit web client.
 - **`monetization_action`**: Monetization configurations (addons, usage billing, hybrid structures).
+- **`scenario_override_action`**: Scenario-specific cohort behavioral parameter overrides (monthly_churn_rate, base_arpu, ai_adoption_rate, etc.).
+- **`entity_override_action`**: Per-scenario overrides of a catalog entity's financial parameters without cloning it — service tokens/fixed cost, cost amount/frequency, provider input/output prices, plan base_price (`scenario_entity_overrides`).
 
 ### Resources Inventory (2)
 - **`sherpa://dashboard/summary`**: Returns list of all scenarios, settings, and cached values.

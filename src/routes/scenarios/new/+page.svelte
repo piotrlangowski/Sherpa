@@ -134,6 +134,7 @@
   let rolloutPacks = $state<Record<string, number>>({});
   let selectedPlans = $state<Record<string, boolean>>({});
   let rolloutPlans = $state<Record<string, number>>({});
+  let seatsPlans = $state<Record<string, number>>({});
 
   $effect(() => {
     const services = data.services;
@@ -702,6 +703,12 @@
                         <Label class="text-xs text-muted-foreground shrink-0">Rollout Month:</Label>
                         <input type="number" name="rollout_month_plan_{plan.id}" min="0" max={projectionMonths} bind:value={rolloutPlans[plan.id]} class="w-16 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
                         <span class="text-[10px] text-muted-foreground">M{rolloutPlans[plan.id]}</span>
+                        {#if revenueSource !== 'cohort'}
+                          <Label class="text-xs text-muted-foreground shrink-0 ml-1">Seats:</Label>
+                          <input type="number" name="seats_plan_{plan.id}" min="0" bind:value={seatsPlans[plan.id]} title="Subscribers on this plan (drives base_price revenue)" class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
+                        {:else}
+                          <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
+                        {/if}
                       </div>
                     {/if}
                   </div>

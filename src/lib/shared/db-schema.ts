@@ -360,6 +360,34 @@ export function runMigrations(db: DatabaseConnection): void {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_monetization_configs_unique
       ON monetization_configs(entity_type, entity_id, COALESCE(scenario_id, ''))
     `).run();
+
+    // 14. Scenario Entity Overrides — per-scenario override of a catalog entity's
+    // financial parameters. Polymorphic over entity_type ('service' | 'cost' |
+    // 'provider' | 'plan'); only the columns relevant to the type are populated,
+    // the rest stay NULL. Mirrors the catalog-vs-scenario split of monetization_configs.
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS scenario_entity_overrides (
+        id           TEXT PRIMARY KEY,
+        scenario_id  TEXT NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
+        entity_type  TEXT NOT NULL,
+        entity_id    TEXT NOT NULL,
+        avg_input_tokens            INTEGER,  -- service
+        avg_output_tokens           INTEGER,  -- service
+        avg_requests_per_user_month INTEGER,  -- service
+        fixed_cost_per_month        REAL,     -- service
+        amount       REAL,                    -- cost
+        frequency    TEXT,                    -- cost
+        input_price  REAL,                    -- provider
+        output_price REAL,                    -- provider
+        base_price   REAL                     -- plan
+      )
+    `).run();
+
+    // scenario_id is NOT NULL here, so no COALESCE needed (unlike monetization_configs).
+    db.prepare(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_scenario_entity_overrides_unique
+      ON scenario_entity_overrides(scenario_id, entity_type, entity_id)
+    `).run();
   })();
 
   // --- Data migrations (run outside main transaction to be idempotent) ---
@@ -555,6 +583,17 @@ function runDataMigrations(db: DatabaseConnection): void {
   }
 
   if (resultsInvalidated8) {
+    db.prepare("DELETE FROM scenario_results").run();
+  }
+
+  // Migration 9: per-scenario entity overrides + plan seats.
+  // (scenario_entity_overrides is created idempotently in runMigrations above.)
+  // scenario_plans.seats drives the new plan-subscription revenue line; existing
+  // links default to 0 seats, so cached results stay correct, but invalidate once
+  // on first add so any recompute picks up the new engine path.
+  const scenarioPlansColumns = (db.prepare("PRAGMA table_info(scenario_plans)").all() as any[]).map(c => c.name);
+  if (!scenarioPlansColumns.includes('seats')) {
+    db.prepare("ALTER TABLE scenario_plans ADD COLUMN seats INTEGER DEFAULT 0").run();
     db.prepare("DELETE FROM scenario_results").run();
   }
 }
