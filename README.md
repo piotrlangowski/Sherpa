@@ -26,7 +26,8 @@ Work as a Claude Desktop App user connecting to a permanent data source that **l
 - use Sherpas data in Claude to build workflows, documents and presentations
 - use Claude to help you with navigating ROI methodologies implemented in Sherpa
 
-<img width="1420" height="798" alt="image" src="https://github.com/user-attachments/assets/426c5a58-ad3b-4c83-add0-8aff93ad4648" />
+<img width="1139" height="846" alt="image" src="https://github.com/user-attachments/assets/d89f6338-117d-4b9a-8fc4-77b2af9c8366" />
+
 
 or as a separate App with its own UI that launches from Claude with a command: **open Sherpa's dashobard**
 - visually compare different scenarios
