@@ -31,7 +31,11 @@ Sherpa is a local-first AI-feature ROI calculator for SaaS. It calculates Net Pr
   - `sherpa://scenarios/{id}/results`: Monthly cashflow, MRR, and customer arrays.
   - `sherpa://dashboard/summary`: High-level summary of all scenarios.
 
-## 5. Available Prompts
+## 5. Cost Reuse & Service Scope
+- **Avoid Duplicating Costs**: When a user wants to assign a cost (e.g., development/launch readiness/license) to multiple scenarios, do NOT create duplicate cost items. Instead, locate the existing cost item (using `cost_item_action` with `action: "list"`) and link its UUID via `cost_ids` array in `scenario_action.create` or `scenario_action.update`. Note: on `update`, `cost_ids` **replaces** the scenario's full cost set (it does not append), so include every cost item the scenario should keep — fetch the current set via `scenario_action` `action: "get"` first.
+- **Role of service_id**: The `service_id` field on a cost item is purely an organizational tag for grouping. It does NOT scope the cost to that service or scenario. General/shared costs should be created with `service_id` set to `null` (or omitted) and explicitly linked to the chosen scenarios.
+
+## 6. Available Prompts
 For deeper domain expertise, load one of the following prompts:
 - `sherpa-catalog-manager`: Managing services, packs, plans, models, and fixed costs.
 - `sherpa-scenario-manager`: Creating and structuring ROI scenarios.

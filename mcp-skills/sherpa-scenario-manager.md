@@ -65,3 +65,9 @@ The `revenue_source` parameter determines which revenue streams are accumulated 
   - `packs` (array of `[{ id, rollout_month }]`)
   - `plans` (array of `[{ id, rollout_month }]`)
   - `cost_ids` (array of cost UUIDs)
+- **Replace semantics (important)**: On `update`, each of `services`, `packs`, `plans`, and `cost_ids` **replaces the scenario's entire existing set** for that key — it does not append. Omit a key to leave that set unchanged; pass `[]` to clear it. To add one item to a scenario that already has some, first fetch the current list via `action: "get"` and pass the full set you want to keep, otherwise the others are silently dropped. The `update` response echoes the resulting linked cost items so you can confirm the final set.
+
+## 4. Cost Reuse Guidelines
+- **Always Reuse Matching Costs**: When a user wants to assign a cost to multiple scenarios, do NOT create a new cost item if an identical one already exists. Check the existing cost items catalog using `cost_item_action` with `action: "list"`.
+- **Linking Existing Costs**: Use the `cost_ids` array in `scenario_action.update` (or `create`) to link the existing cost item UUID(s) to the target scenarios.
+- **General Costs**: If a cost is general and shared across scenarios, ensure its `service_id` is set to `null` (or omitted). `service_id` is merely a grouping tag and does not restrict linking.

@@ -962,6 +962,14 @@ server.tool(
           SET name = ?, category = ?, subcategory = ?, amount = ?, frequency = ?, currency = ?, service_id = ?, updated_at = ?
           WHERE id = ?
         `).run(name, category, subcategory, amount, frequency, currency, service_id, now, args.id);
+
+        const affectedScenarios = db.prepare("SELECT scenario_id FROM scenario_costs WHERE cost_item_id = ?").all(args.id) as { scenario_id: string }[];
+        if (affectedScenarios.length > 0) {
+          const placeholders = affectedScenarios.map(() => '?').join(',');
+          const ids = affectedScenarios.map(s => s.scenario_id);
+          db.prepare(`DELETE FROM scenario_results WHERE scenario_id IN (${placeholders})`).run(...ids);
+        }
+
         return { content: [{ type: "text", text: `Cost item '${name}' updated successfully.` }] };
       }
       if (args.action === "delete") {
@@ -980,7 +988,16 @@ server.tool(
             }]
           };
         }
-        db.prepare("DELETE FROM cost_items WHERE id = ?").run(args.id);
+        const affectedScenarios = db.prepare("SELECT scenario_id FROM scenario_costs WHERE cost_item_id = ?").all(args.id) as { scenario_id: string }[];
+        db.transaction(() => {
+          db.prepare("DELETE FROM scenario_costs WHERE cost_item_id = ?").run(args.id);
+          db.prepare("DELETE FROM cost_items WHERE id = ?").run(args.id);
+          if (affectedScenarios.length > 0) {
+            const placeholders = affectedScenarios.map(() => '?').join(',');
+            const ids = affectedScenarios.map(s => s.scenario_id);
+            db.prepare(`DELETE FROM scenario_results WHERE scenario_id IN (${placeholders})`).run(...ids);
+          }
+        })();
         return { content: [{ type: "text", text: `Cost item with ID ${args.id} deleted successfully.` }] };
       }
       throw new Error(`Nieobsługiwana akcja: ${args.action}`);
@@ -1642,6 +1659,35 @@ server.tool(
             SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, updated_at = ?
             WHERE id = ?
           `).run(name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, now, args.id);
+
+          if (args.services !== undefined) {
+            db.prepare("DELETE FROM scenario_services WHERE scenario_id = ?").run(args.id);
+            const insertServ = db.prepare("INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)");
+            for (const s of args.services) {
+              insertServ.run(args.id, s.id, s.rollout_month);
+            }
+          }
+          if (args.packs !== undefined) {
+            db.prepare("DELETE FROM scenario_packs WHERE scenario_id = ?").run(args.id);
+            const insertPack = db.prepare("INSERT INTO scenario_packs (scenario_id, pack_id, rollout_month) VALUES (?, ?, ?)");
+            for (const p of args.packs) {
+              insertPack.run(args.id, p.id, p.rollout_month);
+            }
+          }
+          if (args.plans !== undefined) {
+            db.prepare("DELETE FROM scenario_plans WHERE scenario_id = ?").run(args.id);
+            const insertPlan = db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month) VALUES (?, ?, ?)");
+            for (const pl of args.plans) {
+              insertPlan.run(args.id, pl.id, pl.rollout_month);
+            }
+          }
+          if (args.cost_ids !== undefined) {
+            db.prepare("DELETE FROM scenario_costs WHERE scenario_id = ?").run(args.id);
+            const insertCost = db.prepare("INSERT INTO scenario_costs (scenario_id, cost_item_id) VALUES (?, ?)");
+            for (const cId of args.cost_ids) {
+              insertCost.run(args.id, cId);
+            }
+          }
         })();
 
         // Re-calculate projections after modification
@@ -1656,11 +1702,17 @@ server.tool(
           exchangeRates
         );
         const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
-        const now = new Date().toISOString();
 
         saveScenarioResults(args.id, results);
 
-        return { content: [{ type: "text", text: `Scenario '${fullScenario.name}' updated successfully and ROI re-projected.` }] };
+        // Echo the resulting linked cost set so the caller can confirm the final state
+        // (update uses replace-semantics for cost_ids, so silent drops are possible otherwise).
+        const linkedCostNames = (fullScenario.costs ?? []).map((c: any) => c.name);
+        const costSummary = linkedCostNames.length > 0
+          ? `Linked cost items (${linkedCostNames.length}): ${linkedCostNames.join(', ')}.`
+          : 'No cost items are linked to this scenario.';
+
+        return { content: [{ type: "text", text: `Scenario '${fullScenario.name}' updated successfully and ROI re-projected. ${costSummary}` }] };
       }
 
       if (args.action === "delete") {

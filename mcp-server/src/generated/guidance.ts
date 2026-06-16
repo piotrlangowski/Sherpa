@@ -27,7 +27,11 @@ Sherpa is a local-first AI-feature ROI calculator for SaaS. It calculates Net Pr
   - \`sherpa://scenarios/{id}/results\`: Monthly cashflow, MRR, and customer arrays.
   - \`sherpa://dashboard/summary\`: High-level summary of all scenarios.
 
-## 5. Available Prompts
+## 5. Cost Reuse & Service Scope
+- **Avoid Duplicating Costs**: When a user wants to assign a cost (e.g., development/launch readiness/license) to multiple scenarios, do NOT create duplicate cost items. Instead, locate the existing cost item (using \`cost_item_action\` with \`action: "list"\`) and link its UUID via \`cost_ids\` array in \`scenario_action.create\` or \`scenario_action.update\`. Note: on \`update\`, \`cost_ids\` **replaces** the scenario's full cost set (it does not append), so include every cost item the scenario should keep — fetch the current set via \`scenario_action\` \`action: "get"\` first.
+- **Role of service_id**: The \`service_id\` field on a cost item is purely an organizational tag for grouping. It does NOT scope the cost to that service or scenario. General/shared costs should be created with \`service_id\` set to \`null\` (or omitted) and explicitly linked to the chosen scenarios.
+
+## 6. Available Prompts
 For deeper domain expertise, load one of the following prompts:
 - \`sherpa-catalog-manager\`: Managing services, packs, plans, models, and fixed costs.
 - \`sherpa-scenario-manager\`: Creating and structuring ROI scenarios.
@@ -147,6 +151,11 @@ All catalog changes are executed via entity actions. Deletions always require \`
   - \`currency\` (enum: \`"USD"\`, \`"EUR"\`, \`"PLN"\`, \`"GBP"\`)
   - \`service_id\` (string, optional service link)
   - \`confirm\` (boolean, required for \`delete\`)
+- **Cost Reuse Strategy**:
+  - A single cost item can be linked to multiple scenarios via the many-to-many relationship using \`scenario_action\`.
+  - When the user asks to apply the same/general costs to multiple scenarios, do NOT create multiple near-duplicate cost items. Instead, use \`cost_item_action\` with \`action: "list"\` to see if an identical cost item already exists, and reuse it by linking its UUID via the \`cost_ids\` parameter in \`scenario_action.update\` or \`scenario_action.create\`.
+  - On \`scenario_action.update\`, the \`cost_ids\` array **replaces** the scenario's full cost set rather than appending, so pass every cost item the scenario should keep (fetch the current set via \`scenario_action\` \`action: "get"\` first) to avoid silently dropping the others.
+  - Omit or set \`service_id: null\` for general costs shared across scenarios. The \`service_id\` is merely a display-only tag; it does not scope or restrict the cost item from being linked to any scenario.
 
 ### 7. Verticals (\`vertical_action\`)
 - **Action options**: \`list\`, \`create\`, \`update\`, \`delete\`.
@@ -367,6 +376,12 @@ The \`revenue_source\` parameter determines which revenue streams are accumulate
   - \`services\` (array of \`[{ id, rollout_month }]\`)
   - \`packs\` (array of \`[{ id, rollout_month }]\`)
   - \`plans\` (array of \`[{ id, rollout_month }]\`)
-  - \`cost_ids\` (array of cost UUIDs)`
+  - \`cost_ids\` (array of cost UUIDs)
+- **Replace semantics (important)**: On \`update\`, each of \`services\`, \`packs\`, \`plans\`, and \`cost_ids\` **replaces the scenario's entire existing set** for that key — it does not append. Omit a key to leave that set unchanged; pass \`[]\` to clear it. To add one item to a scenario that already has some, first fetch the current list via \`action: "get"\` and pass the full set you want to keep, otherwise the others are silently dropped. The \`update\` response echoes the resulting linked cost items so you can confirm the final set.
+
+## 4. Cost Reuse Guidelines
+- **Always Reuse Matching Costs**: When a user wants to assign a cost to multiple scenarios, do NOT create a new cost item if an identical one already exists. Check the existing cost items catalog using \`cost_item_action\` with \`action: "list"\`.
+- **Linking Existing Costs**: Use the \`cost_ids\` array in \`scenario_action.update\` (or \`create\`) to link the existing cost item UUID(s) to the target scenarios.
+- **General Costs**: If a cost is general and shared across scenarios, ensure its \`service_id\` is set to \`null\` (or omitted). \`service_id\` is merely a grouping tag and does not restrict linking.`
   }
 ];

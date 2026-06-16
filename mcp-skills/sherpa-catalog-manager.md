@@ -106,6 +106,11 @@ All catalog changes are executed via entity actions. Deletions always require `c
   - `currency` (enum: `"USD"`, `"EUR"`, `"PLN"`, `"GBP"`)
   - `service_id` (string, optional service link)
   - `confirm` (boolean, required for `delete`)
+- **Cost Reuse Strategy**:
+  - A single cost item can be linked to multiple scenarios via the many-to-many relationship using `scenario_action`.
+  - When the user asks to apply the same/general costs to multiple scenarios, do NOT create multiple near-duplicate cost items. Instead, use `cost_item_action` with `action: "list"` to see if an identical cost item already exists, and reuse it by linking its UUID via the `cost_ids` parameter in `scenario_action.update` or `scenario_action.create`.
+  - On `scenario_action.update`, the `cost_ids` array **replaces** the scenario's full cost set rather than appending, so pass every cost item the scenario should keep (fetch the current set via `scenario_action` `action: "get"` first) to avoid silently dropping the others.
+  - Omit or set `service_id: null` for general costs shared across scenarios. The `service_id` is merely a display-only tag; it does not scope or restrict the cost item from being linked to any scenario.
 
 ### 7. Verticals (`vertical_action`)
 - **Action options**: `list`, `create`, `update`, `delete`.
