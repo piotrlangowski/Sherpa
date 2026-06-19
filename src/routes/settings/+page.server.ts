@@ -1,6 +1,6 @@
 import type { PageServerLoad, Actions } from './$types';
 import { settingsRepository } from '$lib/server/repositories/settings';
-import { fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async () => {
   const settings = settingsRepository.get();
@@ -77,11 +77,13 @@ export const actions: Actions = {
 
   resetWorkspace: async () => {
     try {
+      // Re-seeds the DB with setup_completed = '0', so the client can reveal the
+      // setup wizard. The reveal is driven on the client (invalidateAll → appState)
+      // rather than a server redirect, so the dialog can show progress + a
+      // confirmation step before the wizard takes over.
       await settingsRepository.reset();
-      // Redirect to home which triggers setup wizard reload
-      throw redirect(303, '/');
+      return { success: true };
     } catch (err) {
-      if (err instanceof Response) throw err; // rethrow SvelteKit redirect
       return fail(500, { error: 'Failed to reset workspace.' });
     }
   }

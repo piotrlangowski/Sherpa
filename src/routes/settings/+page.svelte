@@ -1,5 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
+  import { appState } from '$lib/stores/app.svelte';
   import { CURRENCIES } from '$lib/utils/constants';
   import { FormDialog } from '$lib/components/forms';
   import Button from '$lib/components/ui/button/button.svelte';
@@ -21,6 +23,7 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
+  import Check from '@lucide/svelte/icons/check';
 
   let { data, form } = $props();
 
@@ -67,7 +70,33 @@
 
   let showResetConfirm = $state(false);
   let isSaving = $state(false);
-  let isResetting = $state(false);
+
+  // Reset workspace flow is a small state machine driven entirely on the client:
+  // warning → resetting (progress) → done (confirmation) → setup wizard.
+  let resetPhase = $state<'warning' | 'resetting' | 'done'>('warning');
+  let resetError = $state<string | null>(null);
+
+  function openResetDialog() {
+    resetPhase = 'warning';
+    resetError = null;
+    showResetConfirm = true;
+  }
+
+  async function revealWizard() {
+    try {
+      // Refresh layout data so the wizard mounts with freshly seeded defaults:
+      // reset() re-seeds setup_completed = 0 → appState.setupCompleted = false via
+      // the layout $effect → the layout swaps AppShell for the SetupWizard.
+      await invalidateAll();
+    } catch {
+      window.location.assign('/');
+      return;
+    }
+    // Fallback: if the reactive reveal didn't flip the flag, hard-reload to home.
+    setTimeout(() => {
+      if (appState.setupCompleted) window.location.assign('/');
+    }, 500);
+  }
 </script>
 
 <div class="max-w-3xl space-y-6">
@@ -263,7 +292,7 @@
           </p>
         </div>
         
-        <Button variant="destructive" onclick={() => showResetConfirm = true}>
+        <Button variant="destructive" onclick={openResetDialog}>
           <RefreshCw class="h-4 w-4 mr-2" />
           Reset Workspace
         </Button>
@@ -276,39 +305,101 @@
 <FormDialog
   bind:open={showResetConfirm}
   size="sm"
-  destructive
-  icon={AlertTriangle}
-  title="Are you absolutely sure?"
-  description="This operation is permanent and irreversible."
+  destructive={resetPhase === 'warning'}
+  icon={resetPhase === 'done' ? Check : resetPhase === 'resetting' ? RefreshCw : AlertTriangle}
+  title={resetPhase === 'done'
+    ? 'Workspace reset complete'
+    : resetPhase === 'resetting'
+      ? 'Resetting workspace…'
+      : 'Are you absolutely sure?'}
+  description={resetPhase === 'done'
+    ? 'Launching the setup wizard…'
+    : resetPhase === 'resetting'
+      ? 'Wiping your data and re-seeding the sample dataset.'
+      : 'This operation is permanent and irreversible.'}
 >
-  <p class="text-sm">You are about to reset the entire database. This will:</p>
-  <ul class="list-disc list-inside space-y-1 text-sm text-muted-foreground pl-1">
-    <li>Delete all your custom AI Services & Feature Packs</li>
-    <li>Remove all Pricing Plans & Market Verticals</li>
-    <li>Wipe all Cohort configurations</li>
-    <li>Wipe all Scenarios & Projections</li>
-    <li>Re-seed with "Beacon Helpdesk" sample database</li>
-  </ul>
+  {#if resetPhase === 'warning'}
+    {#if resetError}
+      <Alert variant="destructive">
+        <AlertTitle>Reset failed</AlertTitle>
+        <AlertDescription>{resetError}</AlertDescription>
+      </Alert>
+    {/if}
+    <p class="text-sm">You are about to reset the entire database. This will:</p>
+    <ul class="list-disc list-inside space-y-1 text-sm text-muted-foreground pl-1">
+      <li>Delete all your custom AI Services & Feature Packs</li>
+      <li>Remove all Pricing Plans & Market Verticals</li>
+      <li>Wipe all Cohort configurations</li>
+      <li>Wipe all Scenarios & Projections</li>
+      <li>Re-seed with "Beacon Helpdesk" sample database</li>
+    </ul>
+  {:else if resetPhase === 'resetting'}
+    <div class="flex flex-col items-center justify-center gap-4 py-4">
+      <RefreshCw class="h-8 w-8 text-primary animate-spin" />
+      <!-- Indeterminate progress: the reset is a single atomic transaction. -->
+      <div class="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted">
+        <div class="reset-bar h-full w-1/3 rounded-full bg-primary"></div>
+      </div>
+      <p class="text-xs text-muted-foreground">Resetting workspace to sample data…</p>
+    </div>
+  {:else}
+    <div class="flex flex-col items-center justify-center gap-3 py-4">
+      <div
+        class="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+      >
+        <Check class="h-6 w-6" />
+      </div>
+      <p class="text-sm font-medium">Your workspace has been reset.</p>
+      <p class="text-xs text-muted-foreground">Opening the setup wizard…</p>
+    </div>
+  {/if}
 
   {#snippet footer()}
-    <Button variant="outline" onclick={() => (showResetConfirm = false)} disabled={isResetting}>
-      Cancel
-    </Button>
-    <form
-      method="POST"
-      action="?/resetWorkspace"
-      use:enhance={() => {
-        isResetting = true;
-        return async ({ update }) => {
-          await update();
-          isResetting = false;
-          showResetConfirm = false;
-        };
-      }}
-    >
-      <Button type="submit" variant="destructive" disabled={isResetting}>
-        {#if isResetting}Resetting...{:else}Yes, Reset Workspace{/if}
-      </Button>
-    </form>
+    {#if resetPhase === 'warning'}
+      <Button variant="outline" onclick={() => (showResetConfirm = false)}>Cancel</Button>
+      <form
+        method="POST"
+        action="?/resetWorkspace"
+        use:enhance={() => {
+          resetPhase = 'resetting';
+          resetError = null;
+          const startedAt = Date.now();
+          return async ({ result }) => {
+            // Keep the progress step on screen long enough to be perceivable.
+            const elapsed = Date.now() - startedAt;
+            if (elapsed < 500) await new Promise((r) => setTimeout(r, 500 - elapsed));
+
+            if (result.type === 'success') {
+              resetPhase = 'done';
+              // Let the confirmation register before the wizard takes the screen.
+              await new Promise((r) => setTimeout(r, 800));
+              await revealWizard();
+            } else {
+              resetError =
+                (result.type === 'failure' &&
+                  (result.data as { error?: string } | undefined)?.error) ||
+                'Failed to reset workspace.';
+              resetPhase = 'warning';
+            }
+          };
+        }}
+      >
+        <Button type="submit" variant="destructive">Yes, Reset Workspace</Button>
+      </form>
+    {/if}
   {/snippet}
 </FormDialog>
+
+<style>
+  @keyframes reset-progress {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(300%);
+    }
+  }
+  .reset-bar {
+    animation: reset-progress 1.1s ease-in-out infinite;
+  }
+</style>

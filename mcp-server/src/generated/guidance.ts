@@ -8,6 +8,7 @@ Sherpa is a local-first AI-feature ROI calculator for SaaS. It calculates Net Pr
 - **Entity-Action Pattern**: All CRUD operations use consolidated entity tools (e.g. \`service_action\`, \`scenario_action\`).
 - **Required Parameters**: Every tool call MUST specify the \`action\` parameter (e.g. \`"list"\`, \`"get"\`, \`"create"\`, \`"update"\`, \`"delete"\`).
 - **Safe Deletion**: Deletions (\`action: "delete"\`) are destructive and require setting the parameter \`confirm: true\`.
+- **Workspace Onboarding State**: Read \`settings_action\` (\`action: "get"\`) and check \`onboarding_required\`. When it is \`true\`, the workspace is fresh or was just reset and has **not** completed the setup wizard — the catalog, scenarios, and KPIs are placeholder "Beacon Helpdesk" seed data. In that case, tell the user the workspace still needs onboarding and help them set the basics (company name, currency, discount rate via \`settings_action\` \`update\`, or the in-app wizard) before treating any results as real.
 
 ## 2. ROI & Financial Methodology
 - **Incremental Value Model**: All KPIs are computed on *incremental* cash flows (With AI minus Without AI counterfactual baseline).

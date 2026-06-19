@@ -441,7 +441,7 @@ function formatSemanticError(err: unknown, context: string): { content: { type: 
 // 1. Settings CRUD
 server.tool(
   "settings_action",
-  "Read or update global workspace settings (currency, discount rate, company name). Use this tool to inspect current settings or modify defaults like projection horizon, exchange rates, and the home currency. Always specify the 'action' parameter ('get' or 'update'). Do not call this tool unless you need to view or modify workspace configuration settings.",
+  "Read or update global workspace settings (currency, discount rate, company name). Use this tool to inspect current settings or modify defaults like projection horizon, exchange rates, and the home currency. The 'get' action also returns 'onboarding_required' (and a normalized 'setup_completed' boolean): when 'onboarding_required' is true the workspace is fresh or was reset and has not completed the setup wizard. Always specify the 'action' parameter ('get' or 'update'). Do not call this tool unless you need to view or modify workspace configuration settings.",
   {
     action: z.enum(["get", "update"]).describe("The action to perform: 'get' to read current settings, 'update' to modify them."),
     company_name: z.string().optional().describe("Company name to display on reports."),
@@ -466,8 +466,17 @@ server.tool(
         for (const row of rows) {
           settings[row.key] = row.value;
         }
+        // Normalized onboarding signal so the host can detect a workspace that has
+        // not completed (or was reset before completing) the setup wizard. A fresh
+        // reset re-seeds setup_completed = '0'; the wizard sets it to '1' on finish.
+        const setupCompleted = settings["setup_completed"] === "1";
+        const response = {
+          ...settings,
+          setup_completed: setupCompleted,
+          onboarding_required: !setupCompleted
+        };
         return {
-          content: [{ type: "text", text: JSON.stringify(settings, null, 2) }]
+          content: [{ type: "text", text: JSON.stringify(response, null, 2) }]
         };
       } else {
         db.transaction(() => {
