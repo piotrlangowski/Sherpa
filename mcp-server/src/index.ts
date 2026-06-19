@@ -349,7 +349,15 @@ function getFullScenario(scenarioId: string): Scenario | null {
   s.services = db.prepare(`
     SELECT s.id, s.name, s.description, s.status, s.provider_id,
            s.avg_input_tokens, s.avg_output_tokens, s.avg_requests_per_user_month,
-           s.fixed_cost_per_month, s.fixed_cost_currency, ss.rollout_month
+           s.fixed_cost_per_month, s.fixed_cost_currency,
+           s.service_type, s.interaction_driver_type, s.monthly_volume,
+           s.volume_growth_rate, s.interactions_per_customer_month,
+           s.fully_loaded_cost_per_fte_month, s.productive_hours_per_fte_month,
+           s.average_handle_time_seconds, s.baseline_fte,
+           s.staffing_realization_lag_months, s.containment_rate,
+           s.containment_start_rate, s.containment_ramp_months,
+           s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift,
+           ss.rollout_month
     FROM services s
     JOIN scenario_services ss ON s.id = ss.service_id
     WHERE ss.scenario_id = ?
@@ -386,7 +394,9 @@ function getFullScenario(scenarioId: string): Scenario | null {
   // Provider-price overrides are applied separately via applyProviderOverrides at the calc sites.
   const entityOvRows = db.prepare(`
     SELECT entity_type, entity_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month,
-           fixed_cost_per_month, amount, frequency, base_price
+           fixed_cost_per_month, amount, frequency, base_price,
+           monthly_volume, interactions_per_customer_month, containment_rate, average_handle_time_seconds,
+           fully_loaded_cost_per_fte_month, baseline_fte, churn_rate_uplift
     FROM scenario_entity_overrides
     WHERE scenario_id = ?
   `).all(scenarioId) as any[];
@@ -397,7 +407,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
       if (!ov) return;
       for (const f of fields) if (ov[f] !== null && ov[f] !== undefined) target[f] = ov[f];
     };
-    for (const svc of s.services) applyOv(svc, `service:${svc.id}`, ['avg_input_tokens', 'avg_output_tokens', 'avg_requests_per_user_month', 'fixed_cost_per_month']);
+    for (const svc of s.services) applyOv(svc, `service:${svc.id}`, ['avg_input_tokens', 'avg_output_tokens', 'avg_requests_per_user_month', 'fixed_cost_per_month', 'monthly_volume', 'interactions_per_customer_month', 'containment_rate', 'average_handle_time_seconds', 'fully_loaded_cost_per_fte_month', 'baseline_fte', 'churn_rate_uplift']);
     for (const c of s.costs) applyOv(c, `cost:${c.id}`, ['amount', 'frequency']);
     for (const pl of s.plans) applyOv(pl, `plan:${pl.id}`, ['base_price']);
   }
@@ -1069,6 +1079,22 @@ server.tool(
     avg_requests_per_user_month: z.number().optional().describe("Expected average number of service calls made by a single user per month (e.g. 50)."),
     fixed_cost_per_month: z.number().nullable().optional().describe("Fixed monthly charge associated with this service (excluding token costs)."),
     fixed_cost_currency: z.enum(["USD", "EUR", "PLN", "GBP"]).optional().describe("Currency for fixed costs (default: USD)."),
+    service_type: z.enum(["copilot", "agent"]).optional().describe("Service archetype: 'copilot' or 'agent'."),
+    interaction_driver_type: z.enum(["flat", "per_customer"]).optional().describe("Interaction driver type: 'flat' or 'per_customer'."),
+    monthly_volume: z.number().optional().describe("Monthly volume for flat interactions."),
+    volume_growth_rate: z.number().optional().describe("Volume growth rate (flat interactions only)."),
+    interactions_per_customer_month: z.number().optional().describe("Interactions per customer per month."),
+    fully_loaded_cost_per_fte_month: z.number().optional().describe("Fully loaded cost per FTE per month."),
+    productive_hours_per_fte_month: z.number().optional().describe("Productive hours per FTE per month (default: 120)."),
+    average_handle_time_seconds: z.number().optional().describe("Average handle time in seconds."),
+    baseline_fte: z.number().optional().describe("Baseline FTE cap (0 = uncapped)."),
+    staffing_realization_lag_months: z.number().optional().describe("Staffing realization lag in months."),
+    containment_rate: z.number().optional().describe("Target containment rate."),
+    containment_start_rate: z.number().optional().describe("Starting containment rate for ramp."),
+    containment_ramp_months: z.number().optional().describe("Containment ramp duration in months."),
+    escalation_rate: z.number().optional().describe("Escalation rate floor."),
+    failed_deflection_penalty: z.number().optional().describe("Cost penalty for failed deflection."),
+    churn_rate_uplift: z.number().optional().describe("Uplift added to cohort churn rate."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
   async (args) => {
@@ -1078,6 +1104,13 @@ server.tool(
           SELECT s.id, s.name, s.description, s.status, s.provider_id, 
                  s.avg_input_tokens, s.avg_output_tokens, s.avg_requests_per_user_month,
                  s.fixed_cost_per_month, s.fixed_cost_currency,
+                 s.service_type, s.interaction_driver_type, s.monthly_volume,
+                 s.volume_growth_rate, s.interactions_per_customer_month,
+                 s.fully_loaded_cost_per_fte_month, s.productive_hours_per_fte_month,
+                 s.average_handle_time_seconds, s.baseline_fte,
+                 s.staffing_realization_lag_months, s.containment_rate,
+                 s.containment_start_rate, s.containment_ramp_months,
+                 s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift,
                  p.name as provider_name, p.model_name as provider_model_name
           FROM services s
           LEFT JOIN providers p ON s.provider_id = p.id
@@ -1122,8 +1155,14 @@ server.tool(
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
         db.prepare(`
-          INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, fixed_cost_currency, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO services (
+            id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, fixed_cost_currency,
+            service_type, interaction_driver_type, monthly_volume, volume_growth_rate, interactions_per_customer_month,
+            fully_loaded_cost_per_fte_month, productive_hours_per_fte_month, average_handle_time_seconds, baseline_fte,
+            staffing_realization_lag_months, containment_rate, containment_start_rate, containment_ramp_months,
+            escalation_rate, failed_deflection_penalty, churn_rate_uplift, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           id,
           args.name,
@@ -1135,6 +1174,22 @@ server.tool(
           args.avg_requests_per_user_month ?? 0,
           args.fixed_cost_per_month ?? null,
           args.fixed_cost_currency || "USD",
+          args.service_type || "copilot",
+          args.interaction_driver_type || "flat",
+          args.monthly_volume ?? 0,
+          args.volume_growth_rate ?? 0,
+          args.interactions_per_customer_month ?? 0,
+          args.fully_loaded_cost_per_fte_month ?? 0,
+          args.productive_hours_per_fte_month ?? 120,
+          args.average_handle_time_seconds ?? 0,
+          args.baseline_fte ?? 0,
+          args.staffing_realization_lag_months ?? 0,
+          args.containment_rate ?? 0,
+          args.containment_start_rate ?? 0,
+          args.containment_ramp_months ?? 0,
+          args.escalation_rate ?? 0,
+          args.failed_deflection_penalty ?? 0,
+          args.churn_rate_uplift ?? 0,
           now,
           now
         );
@@ -1161,13 +1216,41 @@ server.tool(
         const reqs = args.avg_requests_per_user_month !== undefined ? args.avg_requests_per_user_month : current.avg_requests_per_user_month;
         const fixed = args.fixed_cost_per_month !== undefined ? args.fixed_cost_per_month : current.fixed_cost_per_month;
         const fixedCurrency = args.fixed_cost_currency !== undefined ? args.fixed_cost_currency : current.fixed_cost_currency;
+
+        const service_type = args.service_type !== undefined ? args.service_type : current.service_type;
+        const interaction_driver_type = args.interaction_driver_type !== undefined ? args.interaction_driver_type : current.interaction_driver_type;
+        const monthly_volume = args.monthly_volume !== undefined ? args.monthly_volume : current.monthly_volume;
+        const volume_growth_rate = args.volume_growth_rate !== undefined ? args.volume_growth_rate : current.volume_growth_rate;
+        const interactions_per_customer_month = args.interactions_per_customer_month !== undefined ? args.interactions_per_customer_month : current.interactions_per_customer_month;
+        const fully_loaded_cost_per_fte_month = args.fully_loaded_cost_per_fte_month !== undefined ? args.fully_loaded_cost_per_fte_month : current.fully_loaded_cost_per_fte_month;
+        const productive_hours_per_fte_month = args.productive_hours_per_fte_month !== undefined ? args.productive_hours_per_fte_month : current.productive_hours_per_fte_month;
+        const average_handle_time_seconds = args.average_handle_time_seconds !== undefined ? args.average_handle_time_seconds : current.average_handle_time_seconds;
+        const baseline_fte = args.baseline_fte !== undefined ? args.baseline_fte : current.baseline_fte;
+        const staffing_realization_lag_months = args.staffing_realization_lag_months !== undefined ? args.staffing_realization_lag_months : current.staffing_realization_lag_months;
+        const containment_rate = args.containment_rate !== undefined ? args.containment_rate : current.containment_rate;
+        const containment_start_rate = args.containment_start_rate !== undefined ? args.containment_start_rate : current.containment_start_rate;
+        const containment_ramp_months = args.containment_ramp_months !== undefined ? args.containment_ramp_months : current.containment_ramp_months;
+        const escalation_rate = args.escalation_rate !== undefined ? args.escalation_rate : current.escalation_rate;
+        const failed_deflection_penalty = args.failed_deflection_penalty !== undefined ? args.failed_deflection_penalty : current.failed_deflection_penalty;
+        const churn_rate_uplift = args.churn_rate_uplift !== undefined ? args.churn_rate_uplift : current.churn_rate_uplift;
+
         const now = new Date().toISOString();
 
         db.prepare(`
           UPDATE services
-          SET name = ?, description = ?, status = ?, provider_id = ?, avg_input_tokens = ?, avg_output_tokens = ?, avg_requests_per_user_month = ?, fixed_cost_per_month = ?, fixed_cost_currency = ?, updated_at = ?
+          SET name = ?, description = ?, status = ?, provider_id = ?, avg_input_tokens = ?, avg_output_tokens = ?, avg_requests_per_user_month = ?, fixed_cost_per_month = ?, fixed_cost_currency = ?,
+              service_type = ?, interaction_driver_type = ?, monthly_volume = ?, volume_growth_rate = ?, interactions_per_customer_month = ?,
+              fully_loaded_cost_per_fte_month = ?, productive_hours_per_fte_month = ?, average_handle_time_seconds = ?, baseline_fte = ?,
+              staffing_realization_lag_months = ?, containment_rate = ?, containment_start_rate = ?, containment_ramp_months = ?,
+              escalation_rate = ?, failed_deflection_penalty = ?, churn_rate_uplift = ?, updated_at = ?
           WHERE id = ?
-        `).run(name, description, status, providerId, input, output, reqs, fixed, fixedCurrency, now, args.id);
+        `).run(
+          name, description, status, providerId, input, output, reqs, fixed, fixedCurrency,
+          service_type, interaction_driver_type, monthly_volume, volume_growth_rate, interactions_per_customer_month,
+          fully_loaded_cost_per_fte_month, productive_hours_per_fte_month, average_handle_time_seconds, baseline_fte,
+          staffing_realization_lag_months, containment_rate, containment_start_rate, containment_ramp_months,
+          escalation_rate, failed_deflection_penalty, churn_rate_uplift, now, args.id
+        );
 
         return {
           content: [{ type: "text", text: `Service '${name}' updated successfully.` }]
@@ -2578,7 +2661,7 @@ server.tool(
 
 server.tool(
   "entity_override_action",
-  "Manage per-scenario overrides of a catalog entity's FINANCIAL parameters (scenario_entity_overrides) WITHOUT cloning the shared catalog. Polymorphic over entity_type: 'service' (avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month), 'cost' (amount, frequency), 'provider' (input_price, output_price), 'plan' (base_price). Use this to vary a service's token usage, a cost's amount, a provider's price, or a plan's base price in ONE scenario only — do NOT duplicate the catalog entity. Actions: 'list' (all overrides for a scenario), 'get', 'set' (upsert), 'delete'. Mutations invalidate the scenario's cached results. Only the fields relevant to entity_type are stored.",
+  "Manage per-scenario overrides of a catalog entity's FINANCIAL parameters (scenario_entity_overrides) WITHOUT cloning the shared catalog. Polymorphic over entity_type: 'service' (avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month; for agent-type services also monthly_volume, interactions_per_customer_month, containment_rate, average_handle_time_seconds, fully_loaded_cost_per_fte_month, baseline_fte, churn_rate_uplift), 'cost' (amount, frequency), 'provider' (input_price, output_price), 'plan' (base_price). Use this to vary a service's token usage, a cost's amount, a provider's price, or a plan's base price in ONE scenario only — do NOT duplicate the catalog entity. Actions: 'list' (all overrides for a scenario), 'get', 'set' (upsert), 'delete'. Mutations invalidate the scenario's cached results. Only the fields relevant to entity_type are stored.",
   {
     action: z.enum(["list", "get", "set", "delete"]).describe("Action to perform."),
     scenario_id: z.string().describe("Scenario UUID. Required for all actions."),
@@ -2590,6 +2673,14 @@ server.tool(
     avg_output_tokens: z.number().nullable().optional().describe("[service] Override avg output tokens per request."),
     avg_requests_per_user_month: z.number().nullable().optional().describe("[service] Override avg requests per AI user per month."),
     fixed_cost_per_month: z.number().nullable().optional().describe("[service] Override the fixed monthly cost."),
+    // service (agent archetype) overrides
+    monthly_volume: z.number().nullable().optional().describe("[service/agent] Override the flat monthly interaction volume."),
+    interactions_per_customer_month: z.number().nullable().optional().describe("[service/agent] Override interactions per customer per month."),
+    containment_rate: z.number().nullable().optional().describe("[service/agent] Override the target containment rate (0..1)."),
+    average_handle_time_seconds: z.number().nullable().optional().describe("[service/agent] Override the average human handle time in seconds."),
+    fully_loaded_cost_per_fte_month: z.number().nullable().optional().describe("[service/agent] Override the fully loaded cost per FTE per month."),
+    baseline_fte: z.number().nullable().optional().describe("[service/agent] Override the baseline FTE cap (0 = uncapped)."),
+    churn_rate_uplift: z.number().nullable().optional().describe("[service/agent] Override the absolute uplift added to cohort churn rate."),
     // cost overrides
     amount: z.number().nullable().optional().describe("[cost] Override the cost amount."),
     frequency: z.enum(["one_time", "monthly", "yearly"]).nullable().optional().describe("[cost] Override the cost frequency."),
@@ -2606,7 +2697,7 @@ server.tool(
         throw new z.ZodError([{ code: "custom", path: ["scenario_id"], message: "scenario_id jest wymagany." }]);
       }
 
-      const FIELDS = ["avg_input_tokens", "avg_output_tokens", "avg_requests_per_user_month", "fixed_cost_per_month", "amount", "frequency", "input_price", "output_price", "base_price"] as const;
+      const FIELDS = ["avg_input_tokens", "avg_output_tokens", "avg_requests_per_user_month", "fixed_cost_per_month", "monthly_volume", "interactions_per_customer_month", "containment_rate", "average_handle_time_seconds", "fully_loaded_cost_per_fte_month", "baseline_fte", "churn_rate_uplift", "amount", "frequency", "input_price", "output_price", "base_price"] as const;
 
       if (args.action === "list") {
         const rows = db.prepare(`SELECT * FROM scenario_entity_overrides WHERE scenario_id = ?`).all(scenarioId) as any[];

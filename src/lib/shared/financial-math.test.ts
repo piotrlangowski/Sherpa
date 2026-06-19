@@ -815,4 +815,136 @@ describe('Financial Math Module Tests', () => {
       });
     });
   });
+
+  describe('Platform AI Agent archetype calculations', () => {
+    const provider: Provider = {
+      id: 'p_agent',
+      name: 'OpenAI',
+      model_name: 'gpt-4o',
+      input_price: 5.0,
+      output_price: 15.0,
+      is_predefined: true,
+      currency: 'USD',
+      input_tokens_per_credit: 1000000,
+      output_tokens_per_credit: 333333,
+      updated_at: ''
+    };
+
+    const cohort: CohortConfig = {
+      id: 'c1',
+      name: 'Test Cohort',
+      current_users: 1000,
+      monthly_acquisition: 0,
+      acquisition_growth_rate: 0,
+      monthly_churn_rate: 0.05,
+      retention_floor: 0,
+      monthly_expansion_rate: 0,
+      ai_adoption_rate: 1.0,
+      base_arpu: 100
+    };
+
+    const agentService: Service & { rollout_month: number } = {
+      id: 's_agent',
+      name: 'Support Agent',
+      status: 'planned',
+      service_type: 'agent',
+      interaction_driver_type: 'flat',
+      monthly_volume: 12000,
+      volume_growth_rate: 0.0,
+      interactions_per_customer_month: 0,
+      fully_loaded_cost_per_fte_month: 5000,
+      productive_hours_per_fte_month: 100,
+      average_handle_time_seconds: 300,
+      baseline_fte: 0,
+      staffing_realization_lag_months: 2,
+      containment_rate: 0.8,
+      containment_start_rate: 0.2,
+      containment_ramp_months: 6,
+      escalation_rate: 0.1,
+      failed_deflection_penalty: 10,
+      churn_rate_uplift: 0.01,
+      rollout_month: 0,
+      provider_id: 'p_agent',
+      avg_input_tokens: 1000,
+      avg_output_tokens: 1000,
+      avg_requests_per_user_month: 0
+    };
+
+    const scenario: Scenario = {
+      id: 'scen_agent',
+      name: 'Agent Scenario',
+      projection_months: 12,
+      discount_rate: 0.10,
+      scope_type: 'cohorts',
+      scope_cohorts: [cohort],
+      services: [agentService],
+      costs: []
+    };
+
+    it('should correctly calculate flat interaction volume, containment ramp, labor offsets, failed penalty, and lag', () => {
+      const results = calculateScenario(scenario, [provider]);
+      expect(results.timeline.length).toBe(12);
+
+      const m0 = results.timeline[0];
+      expect(m0.totalInteractions).toBeCloseTo(12000, 1);
+      expect(m0.deflectedInteractions).toBeCloseTo(3600, 1);
+      // staffing_realization_lag_months = 2: no headcount is cut yet, so the
+      // freed 3.0 FTE (3600 × 300s / 3600 / 100h × $5000) is all capacity, no cash.
+      expect(m0.laborSavingsCash).toBeCloseTo(0, 1);
+      expect(m0.laborSavingsCapacity).toBeCloseTo(15000, 1);
+      expect(m0.failedDeflectionCost).toBeCloseTo(12000, 1);
+
+      // Cash recognition is deferred by the 2-month lag: month 0's realizable
+      // FTE (floor(3.0) = 3 → $15000) only turns into cash at month 2.
+      const m2 = results.timeline[2];
+      expect(m2.laborSavingsCash).toBeCloseTo(15000, 1);
+
+      const m5 = results.timeline[5];
+      expect(m5.deflectedInteractions).toBeCloseTo(9600, 1);
+      expect(m5.laborSavingsCash).toBeCloseTo(30000, 1);
+      expect(m5.laborSavingsCapacity).toBeCloseTo(10000, 1);
+    });
+
+    it('should respect FTE caps when baseline_fte is set', () => {
+      const cappedService = {
+        ...agentService,
+        baseline_fte: 4.5,
+        staffing_realization_lag_months: 0
+      };
+      const cappedScenario = {
+        ...scenario,
+        services: [cappedService]
+      };
+      
+      const results = calculateScenario(cappedScenario, [provider]);
+      const m5 = results.timeline[5];
+      expect(m5.laborSavingsCash).toBeCloseTo(20000, 1);
+      expect(m5.laborSavingsCapacity).toBeCloseTo(2500, 1);
+    });
+
+    it('should calculate per-customer volume driver correctly', () => {
+      const perCustomerService = {
+        ...agentService,
+        interaction_driver_type: 'per_customer' as const,
+        interactions_per_customer_month: 10,
+        staffing_realization_lag_months: 0,
+        containment_ramp_months: 0
+      };
+      const perCustomerScenario = {
+        ...scenario,
+        services: [perCustomerService]
+      };
+      
+      const results = calculateScenario(perCustomerScenario, [provider]);
+      const m0 = results.timeline[0];
+      expect(m0.totalInteractions).toBeCloseTo(10000, 1);
+      expect(m0.laborSavingsCash).toBeCloseTo(30000, 1);
+      expect(m0.laborSavingsCapacity).toBeCloseTo(3333.33, 1);
+    });
+
+    it('should apply additive churn rate uplift to cohort projections', () => {
+      const results = calculateScenario(scenario, [provider]);
+      expect(results.timeline[1].customers).toBeCloseTo(940, 1);
+    });
+  });
 });

@@ -17,7 +17,14 @@ const EntityOverrideSchema = z.object({
   frequency: z.enum(['one_time', 'monthly', 'yearly']).nullable().optional(),
   input_price: z.number().nullable().optional(),
   output_price: z.number().nullable().optional(),
-  base_price: z.number().nullable().optional()
+  base_price: z.number().nullable().optional(),
+  monthly_volume: z.number().nullable().optional(),
+  interactions_per_customer_month: z.number().nullable().optional(),
+  containment_rate: z.number().nullable().optional(),
+  average_handle_time_seconds: z.number().nullable().optional(),
+  fully_loaded_cost_per_fte_month: z.number().nullable().optional(),
+  baseline_fte: z.number().nullable().optional(),
+  churn_rate_uplift: z.number().nullable().optional()
 });
 
 function requireParams(scenarioId: string | null, entityType: string | null, entityId: string | null): {

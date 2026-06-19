@@ -79,7 +79,8 @@
 
     const monthsLabel = timeline.map((t: any) => `Month ${t.month}`);
     const hasMonetization = timeline.some((t: any) => (t.monetizationRevenue ?? 0) > 0);
-
+    const hasAgent = timeline.some((t: any) => (t.totalInteractions ?? 0) > 0);
+ 
     const cashflow = {
       tooltip: {
         trigger: 'axis',
@@ -90,27 +91,52 @@
         textStyle: { color: tooltipText }
       },
       legend: {
-        data: [...(hasMonetization ? ['AI Monetization'] : []), 'Gross MRR', 'Baseline MRR', 'OPEX Costs', 'CAPEX Costs', 'AI Token Costs', 'Net Cashflow'],
+        data: [
+          ...(hasMonetization ? ['AI Monetization'] : []),
+          'Gross MRR',
+          'Baseline MRR',
+          'OPEX Costs',
+          'CAPEX Costs',
+          'AI Token Costs',
+          'Net Cashflow',
+          ...(hasAgent ? ['Labor Savings (Cash)', 'Labor Savings (Capacity) (Memo)', 'Failed Deflection Cost', 'Total Interactions'] : [])
+        ],
         textStyle: { color: textColor, fontSize: 11 },
         bottom: 0
       },
-      grid: { left: '3%', right: '4%', top: '10%', bottom: '15%', containLabel: true },
+      grid: { left: '3%', right: '5%', top: '12%', bottom: '15%', containLabel: true },
       xAxis: {
         type: 'category',
         data: monthsLabel,
         axisLabel: { color: axisColor, fontSize: 10 },
         axisLine: { lineStyle: { color: lineColor } }
       },
-      yAxis: {
-        type: 'value',
-        axisLabel: {
-          color: axisColor,
-          fontSize: 10,
-          formatter: (value: number) => formatCurrency(value, appState.currency, 0)
+      yAxis: [
+        {
+          type: 'value',
+          axisLabel: {
+            color: axisColor,
+            fontSize: 10,
+            formatter: (value: number) => formatCurrency(value, appState.currency, 0)
+          },
+          axisLine: { lineStyle: { color: lineColor } },
+          splitLine: { lineStyle: { color: splitLineColor } }
         },
-        axisLine: { lineStyle: { color: lineColor } },
-        splitLine: { lineStyle: { color: splitLineColor } }
-      },
+        ...(hasAgent ? [
+          {
+            type: 'value',
+            name: 'Interactions',
+            nameTextStyle: { color: textColor, fontSize: 10 },
+            axisLabel: {
+              color: axisColor,
+              fontSize: 10,
+              formatter: (value: number) => value.toLocaleString()
+            },
+            axisLine: { lineStyle: { color: lineColor } },
+            splitLine: { show: false }
+          }
+        ] : [])
+      ],
       series: [
         {
           name: 'Baseline MRR',
@@ -184,7 +210,42 @@
           itemStyle: { color: '#38bdf8' },
           lineStyle: { width: 3 },
           symbolSize: 6
-        }
+        },
+        ...(hasAgent ? [
+          {
+            name: 'Labor Savings (Cash)',
+            type: 'line',
+            data: timeline.map((t: any) => t.laborSavingsCash ?? 0),
+            itemStyle: { color: '#059669' },
+            lineStyle: { width: 2 },
+            symbolSize: 4
+          },
+          {
+            name: 'Labor Savings (Capacity) (Memo)',
+            type: 'line',
+            data: timeline.map((t: any) => t.laborSavingsCapacity ?? 0),
+            itemStyle: { color: '#2563eb' },
+            lineStyle: { width: 2, type: 'dashed' },
+            symbolSize: 4
+          },
+          {
+            name: 'Failed Deflection Cost',
+            type: 'line',
+            data: timeline.map((t: any) => t.failedDeflectionCost ?? 0),
+            itemStyle: { color: '#dc2626' },
+            lineStyle: { width: 2 },
+            symbolSize: 4
+          },
+          {
+            name: 'Total Interactions',
+            type: 'line',
+            yAxisIndex: 1,
+            data: timeline.map((t: any) => t.totalInteractions ?? 0),
+            itemStyle: { color: '#a855f7' },
+            lineStyle: { width: 2, type: 'dotted' },
+            symbolSize: 4
+          }
+        ] : [])
       ]
     };
 

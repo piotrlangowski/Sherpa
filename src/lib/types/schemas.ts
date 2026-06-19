@@ -57,7 +57,33 @@ export const ServiceSchema = z.object({
   avg_output_tokens: z.coerce.number().int().nonnegative().default(0),
   avg_requests_per_user_month: z.coerce.number().int().nonnegative().default(0),
   fixed_cost_per_month: z.coerce.number().nonnegative().nullable().optional(),
-  monetization: MonetizationConfigSchema.optional()
+  monetization: MonetizationConfigSchema.optional(),
+
+  // Agent archetype fields
+  service_type: z.enum(['copilot', 'agent']).default('copilot'),
+  interaction_driver_type: z.enum(['flat', 'per_customer']).default('flat'),
+  monthly_volume: z.coerce.number().nonnegative().default(0),
+  volume_growth_rate: z.coerce.number().default(0),
+  interactions_per_customer_month: z.coerce.number().nonnegative().default(0),
+  fully_loaded_cost_per_fte_month: z.coerce.number().nonnegative().default(0),
+  productive_hours_per_fte_month: z.coerce.number().positive().default(120),
+  average_handle_time_seconds: z.coerce.number().int().nonnegative().default(0),
+  baseline_fte: z.coerce.number().nonnegative().default(0),
+  staffing_realization_lag_months: z.coerce.number().int().nonnegative().default(0),
+  containment_rate: z.coerce.number().min(0).max(1).default(0),
+  containment_start_rate: z.coerce.number().min(0).max(1).default(0),
+  containment_ramp_months: z.coerce.number().int().nonnegative().default(0),
+  escalation_rate: z.coerce.number().min(0).max(1).default(0),
+  failed_deflection_penalty: z.coerce.number().nonnegative().default(0),
+  churn_rate_uplift: z.coerce.number().min(0).default(0)
+}).refine(data => {
+  if (data.service_type === 'agent') {
+    return (data.containment_rate || 0) + (data.escalation_rate || 0) <= 1;
+  }
+  return true;
+}, {
+  message: "Sum of containment rate and escalation rate cannot exceed 100% (1.0)",
+  path: ['containment_rate']
 });
 
 export const PackSchema = z.object({
