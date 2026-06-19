@@ -562,6 +562,10 @@ export function calculateScenario(
     throw new Error(`Scenario '${scenario.name}' has no cohort configurations.`);
   }
 
+  const sumAgentChurnUplift = (scenario.services ?? [])
+    .filter(s => s.service_type === 'agent')
+    .reduce((acc, s) => acc + (s.churn_rate_uplift || 0), 0);
+
   // 1. Generate baseline, full-adoption, and uplift-only cohort timelines
   const cohortProjections = scenario.scope_cohorts.map(cc => {
     const baselineModel = buildCohortModel({
@@ -577,13 +581,14 @@ export function calculateScenario(
       ...cc,
       ai_adoption_rate: 1.0,
       monthly_acquisition: cc.monthly_acquisition * (1 + (cc.acquisition_uplift || 0)),
-      monthly_churn_rate: cc.monthly_churn_rate * (1 - (cc.churn_reduction || 0)),
+      monthly_churn_rate: Math.max(0, cc.monthly_churn_rate * (1 - (cc.churn_reduction || 0)) + sumAgentChurnUplift),
       base_arpu: cc.base_arpu * (1 + (cc.arpu_uplift_percent || 0)) + (cc.arpu_uplift || 0)
     }, projectionMonths);
 
     const upliftOnlyModel = buildCohortModel({
       ...cc,
       ai_adoption_rate: 1.0,
+      monthly_churn_rate: Math.max(0, cc.monthly_churn_rate * (1 - (cc.churn_reduction || 0)) + sumAgentChurnUplift),
       base_arpu: cc.base_arpu * (1 + (cc.arpu_uplift_percent || 0)) + (cc.arpu_uplift || 0)
     }, projectionMonths);
 
@@ -608,6 +613,8 @@ export function calculateScenario(
   let cumulativeCashFlowLower = 0;
   const cashFlowsLower: number[] = [];
   let totalRevenueLowerSum = 0;
+
+  const serviceRealizableHistory = new Map<string, number[]>();
 
   // 3. Loop through projection months
   for (let t = 0; t < projectionMonths; t++) {
@@ -700,27 +707,122 @@ export function calculateScenario(
     let capex = 0;
     let tokenCosts = 0;
 
+    let monthTotalInteractions = 0;
+    let monthDeflectedInteractions = 0;
+    let monthLaborSavingsCash = 0;
+    let monthLaborSavingsCapacity = 0;
+    let monthFailedDeflectionCost = 0;
+    let monthAgentTokenCosts = 0;
+
     // A. Direct AI Services Costs (from scenario_services rollout)
     if (scenario.services) {
       for (const service of scenario.services) {
         const rolloutMonth = service.rollout_month ?? 0;
-        if (t >= rolloutMonth) {
-          let serviceTokenCost = 0;
-          if (service.provider_id && providersMap.has(service.provider_id)) {
-            const provider = providersMap.get(service.provider_id)!;
-            const inputPrice = provider.input_price / 1000000;
-            const outputPrice = provider.output_price / 1000000;
+        if (service.service_type === 'agent') {
+          if (t >= rolloutMonth) {
+            const driver = service.interaction_driver_type || 'flat';
+            let serviceInteractions = 0;
+            if (driver === 'flat') {
+              serviceInteractions = (service.monthly_volume || 0) * Math.pow(1 + (service.volume_growth_rate || 0), t);
+            } else if (driver === 'per_customer') {
+              serviceInteractions = activeCustomers * (service.interactions_per_customer_month || 0);
+            }
 
-            serviceTokenCost = activeAiUsers *
-              (service.avg_requests_per_user_month || 0) *
-              ((service.avg_input_tokens || 0) * inputPrice + (service.avg_output_tokens || 0) * outputPrice);
+            const ramp = service.containment_ramp_months || 0;
+            const containmentRate = service.containment_rate || 0;
+            const containmentStartRate = service.containment_start_rate || 0;
+            const escalationRate = service.escalation_rate || 0;
+
+            let contain_t = containmentRate;
+            if (ramp > 0 && t < ramp) {
+              contain_t = containmentStartRate + ((t + 1) / ramp) * (containmentRate - containmentStartRate);
+            }
+            const escal_t = escalationRate + Math.max(0, containmentRate - contain_t);
+            const failed_t = Math.max(0, 1 - contain_t - escal_t);
+
+            const deflected = serviceInteractions * contain_t;
+            const failed = serviceInteractions * failed_t;
+
+            const averageHandleTime = service.average_handle_time_seconds || 0;
+            const productiveHours = service.productive_hours_per_fte_month || 120;
+            const baselineFte = service.baseline_fte || 0;
+            const fullyLoadedCost = service.fully_loaded_cost_per_fte_month || 0;
+
+            const hoursSaved = (deflected * averageHandleTime) / 3600;
+            const fteSaved = hoursSaved / productiveHours;
+            const realizable = baselineFte > 0 ? Math.min(fteSaved, baselineFte) : fteSaved;
+
+            let realizableHistory = serviceRealizableHistory.get(service.id);
+            if (!realizableHistory) {
+              realizableHistory = [];
+              serviceRealizableHistory.set(service.id, realizableHistory);
+            }
+            realizableHistory.push(realizable);
+
+            const lag = service.staffing_realization_lag_months || 0;
+            // Defer cash recognition by `lag` months: until the staffing reduction
+            // is actually realised, the freed FTE is capacity, not cash. For the
+            // first `lag` months there is no realised headcount yet (src = 0).
+            const src = t - lag >= 0 ? realizableHistory[t - lag] : 0;
+
+            const serviceLaborCash = Math.floor(src) * fullyLoadedCost;
+            const serviceLaborCapacity = (realizable - Math.floor(src)) * fullyLoadedCost;
+
+            const failedCost = failed * (service.failed_deflection_penalty || 0);
+
+            let serviceTokenCost = 0;
+            if (service.provider_id && providersMap.has(service.provider_id)) {
+              const provider = providersMap.get(service.provider_id)!;
+              const inputPrice = provider.input_price / 1000000;
+              const outputPrice = provider.output_price / 1000000;
+
+              serviceTokenCost = serviceInteractions *
+                ((service.avg_input_tokens || 0) * inputPrice + (service.avg_output_tokens || 0) * outputPrice);
+            }
+            const serviceFixedCost = service.fixed_cost_per_month || 0;
+            const totalAgentTokenCost = serviceTokenCost + serviceFixedCost;
+
+            monthTotalInteractions += serviceInteractions;
+            monthDeflectedInteractions += deflected;
+            monthLaborSavingsCash += serviceLaborCash;
+            monthLaborSavingsCapacity += serviceLaborCapacity;
+            monthFailedDeflectionCost += failedCost;
+            monthAgentTokenCosts += totalAgentTokenCost;
+
+            tokenCosts += totalAgentTokenCost;
+            opex += failedCost;
+          } else {
+            let realizableHistory = serviceRealizableHistory.get(service.id);
+            if (!realizableHistory) {
+              realizableHistory = [];
+              serviceRealizableHistory.set(service.id, realizableHistory);
+            }
+            realizableHistory.push(0);
           }
+        } else {
+          // Copilot (default)
+          if (t >= rolloutMonth) {
+            let serviceTokenCost = 0;
+            if (service.provider_id && providersMap.has(service.provider_id)) {
+              const provider = providersMap.get(service.provider_id)!;
+              const inputPrice = provider.input_price / 1000000;
+              const outputPrice = provider.output_price / 1000000;
 
-          const serviceFixedCost = service.fixed_cost_per_month || 0;
-          tokenCosts += serviceTokenCost + serviceFixedCost;
+              serviceTokenCost = activeAiUsers *
+                (service.avg_requests_per_user_month || 0) *
+                ((service.avg_input_tokens || 0) * inputPrice + (service.avg_output_tokens || 0) * outputPrice);
+            }
+
+            const serviceFixedCost = service.fixed_cost_per_month || 0;
+            tokenCosts += serviceTokenCost + serviceFixedCost;
+          }
         }
       }
     }
+
+    // Add labor savings cash (Decision 2: labor cash in BOTH bands)
+    upperRevenue += monthLaborSavingsCash;
+    lowerRevenue += monthLaborSavingsCash;
 
     // B. OPEX / CAPEX Line Items (from scenario_costs)
     if (scenario.costs) {
@@ -770,7 +872,14 @@ export function calculateScenario(
       addonRevenue: parseFloat(monetization.addonRevenue.toFixed(2)),
       usageRevenue: parseFloat(monetization.usageRevenue.toFixed(2)),
       hybridBaseRevenue: parseFloat(monetization.hybridBaseRevenue.toFixed(2)),
-      overchargeRevenue: parseFloat(monetization.overchargeRevenue.toFixed(2))
+      overchargeRevenue: parseFloat(monetization.overchargeRevenue.toFixed(2)),
+      // Agent archetype fields
+      totalInteractions: parseFloat(monthTotalInteractions.toFixed(2)),
+      deflectedInteractions: parseFloat(monthDeflectedInteractions.toFixed(2)),
+      laborSavingsCash: parseFloat(monthLaborSavingsCash.toFixed(2)),
+      laborSavingsCapacity: parseFloat(monthLaborSavingsCapacity.toFixed(2)),
+      failedDeflectionCost: parseFloat(monthFailedDeflectionCost.toFixed(2)),
+      agentTokenCosts: parseFloat(monthAgentTokenCosts.toFixed(2))
     });
 
     cashFlowsLower.push(parseFloat(netCashFlowLower.toFixed(2)));
@@ -1148,6 +1257,145 @@ export function runSensitivityAnalysis(
       results.push({
         parameter: 'Overcharge Users %',
         key: 'overcharge_user_pct',
+        lowValueText: varLabelLow,
+        highValueText: varLabelHigh,
+        lowNpv: resLow.npvUpper,
+        highNpv: resHigh.npvUpper,
+        lowIrr: resLow.irr.annualNominal,
+        highIrr: resHigh.irr.annualNominal,
+        lowPayback: resLow.paybackUpper,
+        highPayback: resHigh.paybackUpper,
+        impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
+      });
+    }
+  }
+
+  const hasAgent = (scenario.services ?? []).some(s => s.service_type === 'agent');
+  if (hasAgent) {
+    // 9a. Containment Rate
+    {
+      const cloneLow = cloneScenario(scenario);
+      for (const s of cloneLow.services ?? []) {
+        if (s.service_type === 'agent') {
+          s.containment_rate = (s.containment_rate || 0) * (1 - variationPercent);
+          s.containment_start_rate = (s.containment_start_rate || 0) * (1 - variationPercent);
+        }
+      }
+      const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
+
+      const cloneHigh = cloneScenario(scenario);
+      for (const s of cloneHigh.services ?? []) {
+        if (s.service_type === 'agent') {
+          s.containment_rate = Math.min(1.0, (s.containment_rate || 0) * (1 + variationPercent));
+          s.containment_start_rate = Math.min(1.0, (s.containment_start_rate || 0) * (1 + variationPercent));
+        }
+      }
+      const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
+
+      results.push({
+        parameter: 'Agent Containment Rate',
+        key: 'containment_rate',
+        lowValueText: varLabelLow,
+        highValueText: varLabelHigh,
+        lowNpv: resLow.npvUpper,
+        highNpv: resHigh.npvUpper,
+        lowIrr: resLow.irr.annualNominal,
+        highIrr: resHigh.irr.annualNominal,
+        lowPayback: resLow.paybackUpper,
+        highPayback: resHigh.paybackUpper,
+        impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
+      });
+    }
+
+    // 9b. Agent Interaction Volume (both monthly_volume and interactions_per_customer_month)
+    {
+      const cloneLow = cloneScenario(scenario);
+      for (const s of cloneLow.services ?? []) {
+        if (s.service_type === 'agent') {
+          s.monthly_volume = (s.monthly_volume || 0) * (1 - variationPercent);
+          s.interactions_per_customer_month = (s.interactions_per_customer_month || 0) * (1 - variationPercent);
+        }
+      }
+      const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
+
+      const cloneHigh = cloneScenario(scenario);
+      for (const s of cloneHigh.services ?? []) {
+        if (s.service_type === 'agent') {
+          s.monthly_volume = (s.monthly_volume || 0) * (1 + variationPercent);
+          s.interactions_per_customer_month = (s.interactions_per_customer_month || 0) * (1 + variationPercent);
+        }
+      }
+      const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
+
+      results.push({
+        parameter: 'Agent Interaction Volume',
+        key: 'agent_volume',
+        lowValueText: varLabelLow,
+        highValueText: varLabelHigh,
+        lowNpv: resLow.npvUpper,
+        highNpv: resHigh.npvUpper,
+        lowIrr: resLow.irr.annualNominal,
+        highIrr: resHigh.irr.annualNominal,
+        lowPayback: resLow.paybackUpper,
+        highPayback: resHigh.paybackUpper,
+        impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
+      });
+    }
+
+    // 9c. Average Handle Time (AHT)
+    {
+      const cloneLow = cloneScenario(scenario);
+      for (const s of cloneLow.services ?? []) {
+        if (s.service_type === 'agent') {
+          s.average_handle_time_seconds = Math.round((s.average_handle_time_seconds || 0) * (1 - variationPercent));
+        }
+      }
+      const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
+
+      const cloneHigh = cloneScenario(scenario);
+      for (const s of cloneHigh.services ?? []) {
+        if (s.service_type === 'agent') {
+          s.average_handle_time_seconds = Math.round((s.average_handle_time_seconds || 0) * (1 + variationPercent));
+        }
+      }
+      const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
+
+      results.push({
+        parameter: 'Agent Average Handle Time',
+        key: 'average_handle_time_seconds',
+        lowValueText: varLabelLow,
+        highValueText: varLabelHigh,
+        lowNpv: resLow.npvUpper,
+        highNpv: resHigh.npvUpper,
+        lowIrr: resLow.irr.annualNominal,
+        highIrr: resHigh.irr.annualNominal,
+        lowPayback: resLow.paybackUpper,
+        highPayback: resHigh.paybackUpper,
+        impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
+      });
+    }
+
+    // 9d. Fully Loaded FTE Cost
+    {
+      const cloneLow = cloneScenario(scenario);
+      for (const s of cloneLow.services ?? []) {
+        if (s.service_type === 'agent') {
+          s.fully_loaded_cost_per_fte_month = (s.fully_loaded_cost_per_fte_month || 0) * (1 - variationPercent);
+        }
+      }
+      const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
+
+      const cloneHigh = cloneScenario(scenario);
+      for (const s of cloneHigh.services ?? []) {
+        if (s.service_type === 'agent') {
+          s.fully_loaded_cost_per_fte_month = (s.fully_loaded_cost_per_fte_month || 0) * (1 + variationPercent);
+        }
+      }
+      const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
+
+      results.push({
+        parameter: 'Fully Loaded FTE Cost',
+        key: 'fully_loaded_cost_per_fte_month',
         lowValueText: varLabelLow,
         highValueText: varLabelHigh,
         lowNpv: resLow.npvUpper,
