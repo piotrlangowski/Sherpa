@@ -17,7 +17,9 @@ const SELECT_COLUMNS = `
   avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month,
   amount, frequency,
   input_price, output_price,
-  base_price
+  base_price,
+  monthly_volume, interactions_per_customer_month, containment_rate, average_handle_time_seconds,
+  fully_loaded_cost_per_fte_month, baseline_fte, churn_rate_uplift
 `;
 
 /** The override value columns, in INSERT/UPDATE order. */
@@ -25,7 +27,9 @@ const VALUE_COLUMNS = [
   'avg_input_tokens', 'avg_output_tokens', 'avg_requests_per_user_month', 'fixed_cost_per_month',
   'amount', 'frequency',
   'input_price', 'output_price',
-  'base_price'
+  'base_price',
+  'monthly_volume', 'interactions_per_customer_month', 'containment_rate', 'average_handle_time_seconds',
+  'fully_loaded_cost_per_fte_month', 'baseline_fte', 'churn_rate_uplift'
 ] as const;
 
 function rowToOverride(r: any): EntityOverride {
@@ -38,7 +42,14 @@ function rowToOverride(r: any): EntityOverride {
     frequency: (r.frequency as CostFrequency) ?? null,
     input_price: r.input_price,
     output_price: r.output_price,
-    base_price: r.base_price
+    base_price: r.base_price,
+    monthly_volume: r.monthly_volume,
+    interactions_per_customer_month: r.interactions_per_customer_month,
+    containment_rate: r.containment_rate,
+    average_handle_time_seconds: r.average_handle_time_seconds,
+    fully_loaded_cost_per_fte_month: r.fully_loaded_cost_per_fte_month,
+    baseline_fte: r.baseline_fte,
+    churn_rate_uplift: r.churn_rate_uplift
   };
 }
 
@@ -53,7 +64,14 @@ function overrideValues(o: EntityOverride): any[] {
     o.frequency ?? null,
     o.input_price ?? null,
     o.output_price ?? null,
-    o.base_price ?? null
+    o.base_price ?? null,
+    o.monthly_volume ?? null,
+    o.interactions_per_customer_month ?? null,
+    o.containment_rate ?? null,
+    o.average_handle_time_seconds ?? null,
+    o.fully_loaded_cost_per_fte_month ?? null,
+    o.baseline_fte ?? null,
+    o.churn_rate_uplift ?? null
   ];
 }
 

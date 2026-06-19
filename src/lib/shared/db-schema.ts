@@ -45,6 +45,22 @@ export function runMigrations(db: DatabaseConnection): void {
         avg_requests_per_user_month INTEGER DEFAULT 0,
         fixed_cost_per_month REAL,
         fixed_cost_currency TEXT NOT NULL DEFAULT 'USD',
+        service_type    TEXT DEFAULT 'copilot',
+        interaction_driver_type TEXT DEFAULT 'flat',
+        monthly_volume  REAL DEFAULT 0,
+        volume_growth_rate REAL DEFAULT 0,
+        interactions_per_customer_month REAL DEFAULT 0,
+        fully_loaded_cost_per_fte_month REAL DEFAULT 0,
+        productive_hours_per_fte_month REAL DEFAULT 120,
+        average_handle_time_seconds INTEGER DEFAULT 0,
+        baseline_fte    REAL DEFAULT 0,
+        staffing_realization_lag_months INTEGER DEFAULT 0,
+        containment_rate REAL DEFAULT 0,
+        containment_start_rate REAL DEFAULT 0,
+        containment_ramp_months INTEGER DEFAULT 0,
+        escalation_rate REAL DEFAULT 0,
+        failed_deflection_penalty REAL DEFAULT 0,
+        churn_rate_uplift REAL DEFAULT 0,
         created_at      TEXT NOT NULL,
         updated_at      TEXT NOT NULL
       )
@@ -379,7 +395,14 @@ export function runMigrations(db: DatabaseConnection): void {
         frequency    TEXT,                    -- cost
         input_price  REAL,                    -- provider
         output_price REAL,                    -- provider
-        base_price   REAL                     -- plan
+        base_price   REAL,                    -- plan
+        monthly_volume              REAL,     -- service (agent)
+        interactions_per_customer_month REAL, -- service (agent)
+        containment_rate            REAL,     -- service (agent)
+        average_handle_time_seconds INTEGER,  -- service (agent)
+        fully_loaded_cost_per_fte_month REAL, -- service (agent)
+        baseline_fte                REAL,     -- service (agent)
+        churn_rate_uplift           REAL      -- service (agent)
       )
     `).run();
 
@@ -594,6 +617,109 @@ function runDataMigrations(db: DatabaseConnection): void {
   const scenarioPlansColumns = (db.prepare("PRAGMA table_info(scenario_plans)").all() as any[]).map(c => c.name);
   if (!scenarioPlansColumns.includes('seats')) {
     db.prepare("ALTER TABLE scenario_plans ADD COLUMN seats INTEGER DEFAULT 0").run();
+    db.prepare("DELETE FROM scenario_results").run();
+  }
+
+  // Migration 10: Agent archetype fields.
+  const serviceColumns10 = (db.prepare("PRAGMA table_info(services)").all() as any[]).map(c => c.name);
+  let servicesInvalidated10 = false;
+  if (!serviceColumns10.includes('service_type')) {
+    db.prepare("ALTER TABLE services ADD COLUMN service_type TEXT DEFAULT 'copilot'").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('interaction_driver_type')) {
+    db.prepare("ALTER TABLE services ADD COLUMN interaction_driver_type TEXT DEFAULT 'flat'").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('monthly_volume')) {
+    db.prepare("ALTER TABLE services ADD COLUMN monthly_volume REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('volume_growth_rate')) {
+    db.prepare("ALTER TABLE services ADD COLUMN volume_growth_rate REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('interactions_per_customer_month')) {
+    db.prepare("ALTER TABLE services ADD COLUMN interactions_per_customer_month REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('fully_loaded_cost_per_fte_month')) {
+    db.prepare("ALTER TABLE services ADD COLUMN fully_loaded_cost_per_fte_month REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('productive_hours_per_fte_month')) {
+    db.prepare("ALTER TABLE services ADD COLUMN productive_hours_per_fte_month REAL DEFAULT 120").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('average_handle_time_seconds')) {
+    db.prepare("ALTER TABLE services ADD COLUMN average_handle_time_seconds INTEGER DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('baseline_fte')) {
+    db.prepare("ALTER TABLE services ADD COLUMN baseline_fte REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('staffing_realization_lag_months')) {
+    db.prepare("ALTER TABLE services ADD COLUMN staffing_realization_lag_months INTEGER DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('containment_rate')) {
+    db.prepare("ALTER TABLE services ADD COLUMN containment_rate REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('containment_start_rate')) {
+    db.prepare("ALTER TABLE services ADD COLUMN containment_start_rate REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('containment_ramp_months')) {
+    db.prepare("ALTER TABLE services ADD COLUMN containment_ramp_months INTEGER DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('escalation_rate')) {
+    db.prepare("ALTER TABLE services ADD COLUMN escalation_rate REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('failed_deflection_penalty')) {
+    db.prepare("ALTER TABLE services ADD COLUMN failed_deflection_penalty REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+  if (!serviceColumns10.includes('churn_rate_uplift')) {
+    db.prepare("ALTER TABLE services ADD COLUMN churn_rate_uplift REAL DEFAULT 0").run();
+    servicesInvalidated10 = true;
+  }
+
+  // Overrides table migration
+  const entityOverrideColumns = (db.prepare("PRAGMA table_info(scenario_entity_overrides)").all() as any[]).map(c => c.name);
+  if (!entityOverrideColumns.includes('monthly_volume')) {
+    db.prepare("ALTER TABLE scenario_entity_overrides ADD COLUMN monthly_volume REAL").run();
+    servicesInvalidated10 = true;
+  }
+  if (!entityOverrideColumns.includes('interactions_per_customer_month')) {
+    db.prepare("ALTER TABLE scenario_entity_overrides ADD COLUMN interactions_per_customer_month REAL").run();
+    servicesInvalidated10 = true;
+  }
+  if (!entityOverrideColumns.includes('containment_rate')) {
+    db.prepare("ALTER TABLE scenario_entity_overrides ADD COLUMN containment_rate REAL").run();
+    servicesInvalidated10 = true;
+  }
+  if (!entityOverrideColumns.includes('average_handle_time_seconds')) {
+    db.prepare("ALTER TABLE scenario_entity_overrides ADD COLUMN average_handle_time_seconds INTEGER").run();
+    servicesInvalidated10 = true;
+  }
+  if (!entityOverrideColumns.includes('fully_loaded_cost_per_fte_month')) {
+    db.prepare("ALTER TABLE scenario_entity_overrides ADD COLUMN fully_loaded_cost_per_fte_month REAL").run();
+    servicesInvalidated10 = true;
+  }
+  if (!entityOverrideColumns.includes('baseline_fte')) {
+    db.prepare("ALTER TABLE scenario_entity_overrides ADD COLUMN baseline_fte REAL").run();
+    servicesInvalidated10 = true;
+  }
+  if (!entityOverrideColumns.includes('churn_rate_uplift')) {
+    db.prepare("ALTER TABLE scenario_entity_overrides ADD COLUMN churn_rate_uplift REAL").run();
+    servicesInvalidated10 = true;
+  }
+
+  if (servicesInvalidated10) {
     db.prepare("DELETE FROM scenario_results").run();
   }
 }

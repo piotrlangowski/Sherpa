@@ -152,6 +152,24 @@ export interface Service {
   created_at?: string;
   updated_at?: string;
   
+  // Agent archetype fields
+  service_type?: 'copilot' | 'agent';
+  interaction_driver_type?: 'flat' | 'per_customer';
+  monthly_volume?: number;
+  volume_growth_rate?: number;
+  interactions_per_customer_month?: number;
+  fully_loaded_cost_per_fte_month?: number;
+  productive_hours_per_fte_month?: number;
+  average_handle_time_seconds?: number;
+  baseline_fte?: number;
+  staffing_realization_lag_months?: number;
+  containment_rate?: number;
+  containment_start_rate?: number;
+  containment_ramp_months?: number;
+  escalation_rate?: number;
+  failed_deflection_penalty?: number;
+  churn_rate_uplift?: number;
+
   // Relations
   provider?: Provider | null;
   dependencies?: ServiceDependency[];
@@ -291,6 +309,13 @@ export interface EntityOverride {
   avg_output_tokens?: number | null;
   avg_requests_per_user_month?: number | null;
   fixed_cost_per_month?: number | null;
+  monthly_volume?: number | null;
+  interactions_per_customer_month?: number | null;
+  containment_rate?: number | null;
+  average_handle_time_seconds?: number | null;
+  fully_loaded_cost_per_fte_month?: number | null;
+  baseline_fte?: number | null;
+  churn_rate_uplift?: number | null;
   // cost
   amount?: number | null;
   frequency?: CostFrequency | null;
@@ -398,6 +423,14 @@ export interface MonthlyBreakdown {
   usageRevenue: number;
   hybridBaseRevenue: number;
   overchargeRevenue: number;
+
+  // Agent archetype fields
+  totalInteractions?: number;
+  deflectedInteractions?: number;
+  laborSavingsCash?: number;
+  laborSavingsCapacity?: number; // memo
+  failedDeflectionCost?: number;
+  agentTokenCosts?: number;
 }
 
 export type IrrStatus = 'ok' | 'unstable_short_payback' | 'ambiguous_multiple_roots' | 'undefined_no_sign_change' | 'non_converged';

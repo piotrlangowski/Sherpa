@@ -9,6 +9,13 @@ export const servicesRepository = {
       SELECT s.id, s.name, s.description, s.status, s.provider_id, 
              s.avg_input_tokens, s.avg_output_tokens, s.avg_requests_per_user_month,
              s.fixed_cost_per_month, s.fixed_cost_currency, s.created_at, s.updated_at,
+             s.service_type, s.interaction_driver_type, s.monthly_volume,
+             s.volume_growth_rate, s.interactions_per_customer_month,
+             s.fully_loaded_cost_per_fte_month, s.productive_hours_per_fte_month,
+             s.average_handle_time_seconds, s.baseline_fte,
+             s.staffing_realization_lag_months, s.containment_rate,
+             s.containment_start_rate, s.containment_ramp_months,
+             s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift,
              p.name as provider_name, p.model_name as provider_model_name
       FROM services s
       LEFT JOIN providers p ON s.provider_id = p.id
@@ -26,6 +33,22 @@ export const servicesRepository = {
       avg_requests_per_user_month: r.avg_requests_per_user_month,
       fixed_cost_per_month: r.fixed_cost_per_month,
       fixed_cost_currency: (r.fixed_cost_currency as Currency) || 'USD',
+      service_type: r.service_type || 'copilot',
+      interaction_driver_type: r.interaction_driver_type || 'flat',
+      monthly_volume: r.monthly_volume || 0,
+      volume_growth_rate: r.volume_growth_rate || 0,
+      interactions_per_customer_month: r.interactions_per_customer_month || 0,
+      fully_loaded_cost_per_fte_month: r.fully_loaded_cost_per_fte_month || 0,
+      productive_hours_per_fte_month: r.productive_hours_per_fte_month ?? 120,
+      average_handle_time_seconds: r.average_handle_time_seconds || 0,
+      baseline_fte: r.baseline_fte || 0,
+      staffing_realization_lag_months: r.staffing_realization_lag_months || 0,
+      containment_rate: r.containment_rate || 0,
+      containment_start_rate: r.containment_start_rate || 0,
+      containment_ramp_months: r.containment_ramp_months || 0,
+      escalation_rate: r.escalation_rate || 0,
+      failed_deflection_penalty: r.failed_deflection_penalty || 0,
+      churn_rate_uplift: r.churn_rate_uplift || 0,
       created_at: r.created_at,
       updated_at: r.updated_at,
       provider: r.provider_id ? {
@@ -48,6 +71,13 @@ export const servicesRepository = {
       SELECT s.id, s.name, s.description, s.status, s.provider_id, 
              s.avg_input_tokens, s.avg_output_tokens, s.avg_requests_per_user_month,
              s.fixed_cost_per_month, s.fixed_cost_currency, s.created_at, s.updated_at,
+             s.service_type, s.interaction_driver_type, s.monthly_volume,
+             s.volume_growth_rate, s.interactions_per_customer_month,
+             s.fully_loaded_cost_per_fte_month, s.productive_hours_per_fte_month,
+             s.average_handle_time_seconds, s.baseline_fte,
+             s.staffing_realization_lag_months, s.containment_rate,
+             s.containment_start_rate, s.containment_ramp_months,
+             s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift,
              p.name as provider_name, p.model_name as provider_model_name,
              p.input_price as provider_input_price, p.output_price as provider_output_price,
              p.currency as provider_currency,
@@ -90,6 +120,22 @@ export const servicesRepository = {
       avg_requests_per_user_month: r.avg_requests_per_user_month,
       fixed_cost_per_month: r.fixed_cost_per_month,
       fixed_cost_currency: (r.fixed_cost_currency as Currency) || 'USD',
+      service_type: r.service_type || 'copilot',
+      interaction_driver_type: r.interaction_driver_type || 'flat',
+      monthly_volume: r.monthly_volume || 0,
+      volume_growth_rate: r.volume_growth_rate || 0,
+      interactions_per_customer_month: r.interactions_per_customer_month || 0,
+      fully_loaded_cost_per_fte_month: r.fully_loaded_cost_per_fte_month || 0,
+      productive_hours_per_fte_month: r.productive_hours_per_fte_month ?? 120,
+      average_handle_time_seconds: r.average_handle_time_seconds || 0,
+      baseline_fte: r.baseline_fte || 0,
+      staffing_realization_lag_months: r.staffing_realization_lag_months || 0,
+      containment_rate: r.containment_rate || 0,
+      containment_start_rate: r.containment_start_rate || 0,
+      containment_ramp_months: r.containment_ramp_months || 0,
+      escalation_rate: r.escalation_rate || 0,
+      failed_deflection_penalty: r.failed_deflection_penalty || 0,
+      churn_rate_uplift: r.churn_rate_uplift || 0,
       created_at: r.created_at,
       updated_at: r.updated_at,
       provider: r.provider_id ? {
@@ -114,8 +160,14 @@ export const servicesRepository = {
     const fixed_cost_currency = data.fixed_cost_currency || 'USD';
     
     db.prepare(`
-      INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, fixed_cost_currency, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO services (
+        id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, fixed_cost_currency,
+        service_type, interaction_driver_type, monthly_volume, volume_growth_rate, interactions_per_customer_month,
+        fully_loaded_cost_per_fte_month, productive_hours_per_fte_month, average_handle_time_seconds, baseline_fte,
+        staffing_realization_lag_months, containment_rate, containment_start_rate, containment_ramp_months,
+        escalation_rate, failed_deflection_penalty, churn_rate_uplift, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.name,
@@ -127,6 +179,22 @@ export const servicesRepository = {
       data.avg_requests_per_user_month,
       data.fixed_cost_per_month === undefined ? null : data.fixed_cost_per_month,
       fixed_cost_currency,
+      data.service_type || 'copilot',
+      data.interaction_driver_type || 'flat',
+      data.monthly_volume || 0,
+      data.volume_growth_rate || 0,
+      data.interactions_per_customer_month || 0,
+      data.fully_loaded_cost_per_fte_month || 0,
+      data.productive_hours_per_fte_month ?? 120,
+      data.average_handle_time_seconds || 0,
+      data.baseline_fte || 0,
+      data.staffing_realization_lag_months || 0,
+      data.containment_rate || 0,
+      data.containment_start_rate || 0,
+      data.containment_ramp_months || 0,
+      data.escalation_rate || 0,
+      data.failed_deflection_penalty || 0,
+      data.churn_rate_uplift || 0,
       now,
       now
     );
@@ -135,6 +203,22 @@ export const servicesRepository = {
       id,
       ...data,
       fixed_cost_currency,
+      service_type: data.service_type || 'copilot',
+      interaction_driver_type: data.interaction_driver_type || 'flat',
+      monthly_volume: data.monthly_volume || 0,
+      volume_growth_rate: data.volume_growth_rate || 0,
+      interactions_per_customer_month: data.interactions_per_customer_month || 0,
+      fully_loaded_cost_per_fte_month: data.fully_loaded_cost_per_fte_month || 0,
+      productive_hours_per_fte_month: data.productive_hours_per_fte_month ?? 120,
+      average_handle_time_seconds: data.average_handle_time_seconds || 0,
+      baseline_fte: data.baseline_fte || 0,
+      staffing_realization_lag_months: data.staffing_realization_lag_months || 0,
+      containment_rate: data.containment_rate || 0,
+      containment_start_rate: data.containment_start_rate || 0,
+      containment_ramp_months: data.containment_ramp_months || 0,
+      escalation_rate: data.escalation_rate || 0,
+      failed_deflection_penalty: data.failed_deflection_penalty || 0,
+      churn_rate_uplift: data.churn_rate_uplift || 0,
       created_at: now,
       updated_at: now
     };
@@ -153,13 +237,39 @@ export const servicesRepository = {
     const avg_requests_per_user_month = data.avg_requests_per_user_month !== undefined ? data.avg_requests_per_user_month : current.avg_requests_per_user_month;
     const fixed_cost_per_month = data.fixed_cost_per_month !== undefined ? data.fixed_cost_per_month : current.fixed_cost_per_month;
     const fixed_cost_currency = data.fixed_cost_currency !== undefined ? data.fixed_cost_currency : current.fixed_cost_currency;
+
+    const service_type = data.service_type !== undefined ? data.service_type : current.service_type;
+    const interaction_driver_type = data.interaction_driver_type !== undefined ? data.interaction_driver_type : current.interaction_driver_type;
+    const monthly_volume = data.monthly_volume !== undefined ? data.monthly_volume : current.monthly_volume;
+    const volume_growth_rate = data.volume_growth_rate !== undefined ? data.volume_growth_rate : current.volume_growth_rate;
+    const interactions_per_customer_month = data.interactions_per_customer_month !== undefined ? data.interactions_per_customer_month : current.interactions_per_customer_month;
+    const fully_loaded_cost_per_fte_month = data.fully_loaded_cost_per_fte_month !== undefined ? data.fully_loaded_cost_per_fte_month : current.fully_loaded_cost_per_fte_month;
+    const productive_hours_per_fte_month = data.productive_hours_per_fte_month !== undefined ? data.productive_hours_per_fte_month : current.productive_hours_per_fte_month;
+    const average_handle_time_seconds = data.average_handle_time_seconds !== undefined ? data.average_handle_time_seconds : current.average_handle_time_seconds;
+    const baseline_fte = data.baseline_fte !== undefined ? data.baseline_fte : current.baseline_fte;
+    const staffing_realization_lag_months = data.staffing_realization_lag_months !== undefined ? data.staffing_realization_lag_months : current.staffing_realization_lag_months;
+    const containment_rate = data.containment_rate !== undefined ? data.containment_rate : current.containment_rate;
+    const containment_start_rate = data.containment_start_rate !== undefined ? data.containment_start_rate : current.containment_start_rate;
+    const containment_ramp_months = data.containment_ramp_months !== undefined ? data.containment_ramp_months : current.containment_ramp_months;
+    const escalation_rate = data.escalation_rate !== undefined ? data.escalation_rate : current.escalation_rate;
+    const failed_deflection_penalty = data.failed_deflection_penalty !== undefined ? data.failed_deflection_penalty : current.failed_deflection_penalty;
+    const churn_rate_uplift = data.churn_rate_uplift !== undefined ? data.churn_rate_uplift : current.churn_rate_uplift;
+
     const now = new Date().toISOString();
     
     db.prepare(`
       UPDATE services
       SET name = ?, description = ?, status = ?, provider_id = ?, 
           avg_input_tokens = ?, avg_output_tokens = ?, avg_requests_per_user_month = ?, 
-          fixed_cost_per_month = ?, fixed_cost_currency = ?, updated_at = ?
+          fixed_cost_per_month = ?, fixed_cost_currency = ?,
+          service_type = ?, interaction_driver_type = ?, monthly_volume = ?,
+          volume_growth_rate = ?, interactions_per_customer_month = ?,
+          fully_loaded_cost_per_fte_month = ?, productive_hours_per_fte_month = ?,
+          average_handle_time_seconds = ?, baseline_fte = ?,
+          staffing_realization_lag_months = ?, containment_rate = ?,
+          containment_start_rate = ?, containment_ramp_months = ?,
+          escalation_rate = ?, failed_deflection_penalty = ?, churn_rate_uplift = ?,
+          updated_at = ?
       WHERE id = ?
     `).run(
       name,
@@ -171,6 +281,22 @@ export const servicesRepository = {
       avg_requests_per_user_month,
       fixed_cost_per_month,
       fixed_cost_currency,
+      service_type,
+      interaction_driver_type,
+      monthly_volume,
+      volume_growth_rate,
+      interactions_per_customer_month,
+      fully_loaded_cost_per_fte_month,
+      productive_hours_per_fte_month,
+      average_handle_time_seconds,
+      baseline_fte,
+      staffing_realization_lag_months,
+      containment_rate,
+      containment_start_rate,
+      containment_ramp_months,
+      escalation_rate,
+      failed_deflection_penalty,
+      churn_rate_uplift,
       now,
       id
     );

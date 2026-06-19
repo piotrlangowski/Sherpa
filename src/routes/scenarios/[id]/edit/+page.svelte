@@ -429,7 +429,15 @@
   // Per-entity financial override rows (service tokens / provider prices / plan base_price / cost amount).
   // Live override map: seeded from the server snapshot, then kept in sync as the override component
   // saves/clears, so values survive a component remount (which happens when the selection set changes).
-  type EntityOvRow = { type: 'service' | 'cost' | 'provider' | 'plan'; id: string; name: string; catalog: any; override: any };
+  type EntityOvRow = {
+    type: 'service' | 'cost' | 'provider' | 'plan';
+    id: string;
+    name: string;
+    catalog: any;
+    override: any;
+    service_type?: 'copilot' | 'agent';
+    interaction_driver_type?: 'flat' | 'per_customer';
+  };
   let liveEntityOverrides = $state<Record<string, any>>({ ...(data.entityOverrides ?? {}) });
   function handleOverrideSaved(type: string, id: string, override: any) {
     liveEntityOverrides[`${type}:${id}`] = override;
@@ -439,7 +447,21 @@
     const rows: EntityOvRow[] = [];
     for (const s of data.services) if (selectedServices[s.id]) rows.push({
       type: 'service', id: s.id, name: s.name,
-      catalog: { avg_input_tokens: s.avg_input_tokens, avg_output_tokens: s.avg_output_tokens, avg_requests_per_user_month: s.avg_requests_per_user_month, fixed_cost_per_month: s.fixed_cost_per_month },
+      service_type: s.service_type,
+      interaction_driver_type: s.interaction_driver_type,
+      catalog: {
+        avg_input_tokens: s.avg_input_tokens,
+        avg_output_tokens: s.avg_output_tokens,
+        avg_requests_per_user_month: s.avg_requests_per_user_month,
+        fixed_cost_per_month: s.fixed_cost_per_month,
+        monthly_volume: s.monthly_volume,
+        interactions_per_customer_month: s.interactions_per_customer_month,
+        containment_rate: s.containment_rate,
+        average_handle_time_seconds: s.average_handle_time_seconds,
+        fully_loaded_cost_per_fte_month: s.fully_loaded_cost_per_fte_month,
+        baseline_fte: s.baseline_fte,
+        churn_rate_uplift: s.churn_rate_uplift
+      },
       override: ovr[`service:${s.id}`] ?? null
     });
     const providerIds = new Set<string>();

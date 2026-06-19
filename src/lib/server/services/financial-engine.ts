@@ -171,7 +171,11 @@ export function applyEntityOverrides(
   };
 
   const services = (scenario.services ?? []).map(s =>
-    withOverride(s, `service:${s.id}`, ['avg_input_tokens', 'avg_output_tokens', 'avg_requests_per_user_month', 'fixed_cost_per_month'])
+    withOverride(s, `service:${s.id}`, [
+      'avg_input_tokens', 'avg_output_tokens', 'avg_requests_per_user_month', 'fixed_cost_per_month',
+      'monthly_volume', 'interactions_per_customer_month', 'containment_rate', 'average_handle_time_seconds',
+      'fully_loaded_cost_per_fte_month', 'baseline_fte', 'churn_rate_uplift'
+    ])
   ) as Scenario['services'];
 
   const costs = (scenario.costs ?? []).map(c =>

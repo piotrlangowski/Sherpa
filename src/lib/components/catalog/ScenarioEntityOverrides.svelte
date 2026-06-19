@@ -17,6 +17,8 @@
     /** Catalog values for the overridable fields — shown as input placeholders. */
     catalog: EntityOverride;
     override: EntityOverride | null;
+    service_type?: 'copilot' | 'agent';
+    interaction_driver_type?: 'flat' | 'per_customer';
   }
 
   interface Props {
@@ -55,6 +57,34 @@
     ],
     plan: [{ key: 'base_price', label: 'Base price', step: '0.01', kind: 'number' }]
   };
+
+  function getFieldDefs(e: EntityOverrideRow): FieldDef[] {
+    if (e.type === 'service') {
+      if (e.service_type === 'agent') {
+        const fields: FieldDef[] = [
+          { key: 'avg_input_tokens', label: 'Avg Input Tokens', step: '1', kind: 'number' },
+          { key: 'avg_output_tokens', label: 'Avg Output Tokens', step: '1', kind: 'number' },
+          { key: 'fixed_cost_per_month', label: 'Fixed Cost / Month', step: '0.01', kind: 'number' },
+          { key: 'containment_rate', label: 'Target Containment Rate (0-1)', step: '0.01', kind: 'number' },
+          { key: 'average_handle_time_seconds', label: 'Avg Handle Time (seconds)', step: '1', kind: 'number' },
+          { key: 'fully_loaded_cost_per_fte_month', label: 'Fully Loaded FTE Cost / Month', step: '0.01', kind: 'number' },
+          { key: 'baseline_fte', label: 'Max FTE Cap (Baseline FTE)', step: '0.1', kind: 'number' },
+          { key: 'churn_rate_uplift', label: 'Monthly Churn Uplift (0-1)', step: '0.0001', kind: 'number' }
+        ];
+
+        if (e.interaction_driver_type === 'flat') {
+          fields.push({ key: 'monthly_volume', label: 'Monthly Volume (interactions)', step: '1', kind: 'number' });
+        } else {
+          fields.push({ key: 'interactions_per_customer_month', label: 'Interactions / Customer / Month', step: '0.1', kind: 'number' });
+        }
+
+        return fields;
+      } else {
+        return FIELD_DEFS.service;
+      }
+    }
+    return FIELD_DEFS[e.type];
+  }
 
   const ICONS: Record<EntityOverrideType, typeof BrainCircuit> = {
     service: BrainCircuit,
@@ -98,7 +128,7 @@
 
   function summarize(e: EntityOverrideRow): string {
     const ov = overrides[keyOf(e)];
-    const defs = FIELD_DEFS[e.type];
+    const defs = getFieldDefs(e);
     if (isEmpty(ov)) return `Catalog · ${defs.map((d) => fmtCatalog(e, d)).join(' · ')}`;
     const parts = defs
       .filter((d) => ov && ov[d.key] !== null && ov[d.key] !== undefined)
@@ -202,7 +232,7 @@
           {#if expanded[key] && draft[key]}
             <div class="border-t border-border/60 p-4 space-y-4">
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {#each FIELD_DEFS[e.type] as f (f.key)}
+                {#each getFieldDefs(e) as f (f.key)}
                   <div class="space-y-1.5">
                     <Label for="{key}_{f.key}">{f.label}</Label>
                     {#if f.kind === 'frequency'}

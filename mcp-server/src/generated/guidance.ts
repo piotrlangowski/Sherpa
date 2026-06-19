@@ -11,8 +11,11 @@ Sherpa is a local-first AI-feature ROI calculator for SaaS. It calculates Net Pr
 
 ## 2. ROI & Financial Methodology
 - **Incremental Value Model**: All KPIs are computed on *incremental* cash flows (With AI minus Without AI counterfactual baseline).
-- **No Uplifts => Pure Cost**: If you do not define customer uplifts (churn reduction, ARPU uplift, or acquisition growth), the scenario represents a pure cost and the NPV will be negative by design.
+- **No Uplifts => Pure Cost**: If you do not define customer uplifts (churn reduction, ARPU uplift, or acquisition growth) in copilot mode, or do not deflect interactions in agent mode, the scenario represents a pure cost and the NPV will be negative by design.
 - **IRR Resolution**: IRR is calculated via Newton-Raphson. If cash flows never change sign (e.g. purely negative or always positive from month 0), IRR will return \`null\`. This is expected financial behavior.
+- **Service Archetypes (Copilot vs Agent)**:
+  - **Copilot**: "AI assists human". Request volume is driven by active users. Benefits derived from ARPU uplifts, churn reductions, and acquisition increases.
+  - **Platform Agent**: "AI replaces human". Interaction volume is driven by ticket counts (flat monthly or per-customer). Benefits derived from FTE labor offsets (saved work hours). Quality parameters like containment rate, escalation rate, and deflection penalties apply. Staffing realization lag is supported.
 
 ## 3. Scenarios, Scopes, and Overrides
 - **Cascading Overrides**: Cohort configurations serve as the base. When calculating scenario projections, scenario-specific overrides from the \`scenario_scope_overrides\` table are applied on top of the cohort base using a three-level hierarchy: \`all_clients\` (global scenario overrides) → \`vertical\` (vertical scenario overrides) → \`cohort\` (specific cohort scenario overrides). The most specific override wins.
