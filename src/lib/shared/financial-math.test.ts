@@ -12,7 +12,10 @@ import {
   calculateMonetizationRevenue,
   calculateCreditsPerUserMonth,
   DEFAULT_CREDIT_SETTINGS,
-  calculateIRRGuarded
+  calculateIRRGuarded,
+  validateRevenueIntegrity,
+  computeImpliedPopulation,
+  resolveCarrier
 } from './financial-math.js';
 import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig } from './types.js';
 
@@ -333,7 +336,7 @@ describe('Financial Math Module Tests', () => {
       });
     });
 
-    describe('calculateScenario revenue_source', () => {
+    describe('calculateScenario modeling_type and revenue_carrier (ADR 0001–0004)', () => {
       // Static cohort (no churn/acquisition) so months are easy to reason about.
       const cohort: CohortConfig = {
         id: 'c1', name: 'Cohort', current_users: 1000, monthly_acquisition: 0,
@@ -341,65 +344,135 @@ describe('Financial Math Module Tests', () => {
         monthly_expansion_rate: 0, ai_adoption_rate: 0.30, base_arpu: 100,
         arpu_uplift_percent: 0.10
       };
-      const makeScenario = (revenue_source: Scenario['revenue_source']): Scenario => ({
+
+      const makeScenario = (
+        modeling_type: Scenario['modeling_type'],
+        revenue_carrier: Scenario['revenue_carrier'],
+        revenue_bridge: Scenario['revenue_bridge'] = null,
+        seats = 0
+      ): Scenario => ({
         id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.10,
-        scope_type: 'cohorts', revenue_source, scope_cohorts: [cohort],
+        scope_type: 'cohorts', modeling_type, revenue_carrier, revenue_bridge, scope_cohorts: [cohort],
         services: [{ ...creditService, monetization: { monetization_type: 'addon', addon_monthly_fee: 10 } }],
+        plans: seats > 0 ? [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats }] : [],
         costs: []
       });
 
-      it('keeps monetization revenue at zero for the cohort source', () => {
-        const r = calculateScenario(makeScenario('cohort'), [creditProvider]);
+      it('keeps monetization revenue at zero for incremental (cohort carrier) source', () => {
+        const r = calculateScenario(makeScenario('incremental', 'cohort'), [creditProvider]);
         expect(r.timeline[0].monetizationRevenue).toBe(0);
+        // Revenue is cohort ARPU uplift: 300 active users * 10% uplift of 100 base_arpu = 3000
+        expect(r.timeline[0].revenue).toBeCloseTo(3000, 2);
       });
 
-      it('uses only monetization revenue for the monetization source', () => {
-        const m0 = calculateScenario(makeScenario('monetization'), [creditProvider]).timeline[0];
-        expect(m0.monetizationRevenue).toBeGreaterThan(0);
-        expect(m0.addonRevenue).toBeGreaterThan(0);
-        expect(m0.revenue).toBeCloseTo(m0.monetizationRevenue, 2);
+      it('uses only monetization revenue for appraisal with feature carrier', () => {
+        const r = calculateScenario(makeScenario('appraisal', 'feature'), [creditProvider]);
+        // Monetization is active. Cohort uplift (3000) is ignored.
+        expect(r.timeline[0].monetizationRevenue).toBeGreaterThan(0);
+        expect(r.timeline[0].revenue).toBeCloseTo(r.timeline[0].monetizationRevenue, 2);
       });
 
-      it('sums cohort delta and monetization revenue for the both source', () => {
-        const cohortOnly = calculateScenario(makeScenario('cohort'), [creditProvider]).timeline[0];
-        const both = calculateScenario(makeScenario('both'), [creditProvider]).timeline[0];
-        expect(both.monetizationRevenue).toBeGreaterThan(0);
-        expect(both.revenue).toBeCloseTo(cohortOnly.revenue + both.monetizationRevenue, 2);
+      it('uses plan seats + monetization for GTM modeling (plan carrier)', () => {
+        const r = calculateScenario(makeScenario('gtm', 'plan', null, 100), [creditProvider]);
+        // GTM resolves to plan carrier, so we have plan seats (100 * 99 = 9900) + monetization.
+        expect(r.timeline[0].monetizationRevenue).toBeGreaterThan(0);
+        expect(r.timeline[0].revenue).toBeCloseTo(9900 + r.timeline[0].monetizationRevenue, 2);
+      });
+
+      it('ignores plan seats for cohort carrier under upsell_on_cohort bridge', () => {
+        const r = calculateScenario(makeScenario('appraisal', 'cohort', 'upsell_on_cohort', 100), [creditProvider]);
+        // Revenue is only cohort uplift (3000). Seats (100) are informational only.
+        expect(r.timeline[0].revenue).toBeCloseTo(3000, 2);
+      });
+
+      it('adds plan seats for cohort carrier under separate_market bridge', () => {
+        const r = calculateScenario(makeScenario('appraisal', 'cohort', 'separate_market', 100), [creditProvider]);
+        // Revenue is cohort uplift (3000) + plan seats (100 * 99 = 9900) = 12900
+        expect(r.timeline[0].revenue).toBeCloseTo(12900, 2);
       });
     });
 
-    describe('plan subscription revenue (base_price × seats)', () => {
+    describe('validateRevenueIntegrity (ADR 0001–0004)', () => {
       const cohort: CohortConfig = {
         id: 'c1', name: 'Cohort', current_users: 1000, monthly_acquisition: 0,
         acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 1,
-        monthly_expansion_rate: 0, ai_adoption_rate: 0.30, base_arpu: 100
+        monthly_expansion_rate: 0, ai_adoption_rate: 0.30, base_arpu: 100,
+        arpu_uplift_percent: 0.10
       };
-      const makeScenario = (revenue_source: Scenario['revenue_source'], seats: number): Scenario => ({
-        id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.10,
-        scope_type: 'cohorts', revenue_source, scope_cohorts: [cohort],
-        services: [],
-        plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats }],
-        costs: []
+
+      it('blocks incremental scenarios with monetization', () => {
+        const sc: Scenario = {
+          id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.1, scope_type: 'cohorts',
+          modeling_type: 'incremental', revenue_carrier: 'cohort', scope_cohorts: [cohort],
+          services: [{ ...creditService, monetization: { monetization_type: 'addon', addon_monthly_fee: 10 } }],
+          costs: []
+        };
+        const res = validateRevenueIntegrity(sc);
+        expect(res.status).toBe('block');
+        expect(res.message).toContain('Incremental scenarios cannot have monetization overrides');
       });
 
-      it('ignores plan base_price/seats under the default cohort source', () => {
-        const noSeats = calculateScenario(makeScenario('cohort', 0), []).npvUpper;
-        const withSeats = calculateScenario(makeScenario('cohort', 500), []).npvUpper;
-        expect(withSeats).toBeCloseTo(noSeats, 2);
+      it('blocks incremental scenarios with plan seats', () => {
+        const sc: Scenario = {
+          id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.1, scope_type: 'cohorts',
+          modeling_type: 'incremental', revenue_carrier: 'cohort', scope_cohorts: [cohort],
+          plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats: 10 }],
+          costs: []
+        };
+        const res = validateRevenueIntegrity(sc);
+        expect(res.status).toBe('block');
+        expect(res.message).toContain('Incremental scenarios cannot use plan seats');
       });
 
-      it('adds base_price × seats to monthly revenue under the both source', () => {
-        const m0 = calculateScenario(makeScenario('both', 500), []).timeline[0];
-        const m0NoSeats = calculateScenario(makeScenario('both', 0), []).timeline[0];
-        expect(m0.revenue - m0NoSeats.revenue).toBeCloseTo(99 * 500, 2);
+      it('blocks cohort carrier with seats and no bridge', () => {
+        const sc: Scenario = {
+          id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.1, scope_type: 'cohorts',
+          modeling_type: 'appraisal', revenue_carrier: 'cohort', revenue_bridge: null, scope_cohorts: [cohort],
+          plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats: 10 }],
+          costs: []
+        };
+        const res = validateRevenueIntegrity(sc);
+        expect(res.status).toBe('block');
+        expect(res.message).toContain('Choose \'Upsell on Cohort\' or \'Separate Market\'');
       });
 
-      it('increases NPV when plan seats are added (both source)', () => {
-        const base = calculateScenario(makeScenario('both', 0), []).npvUpper;
-        const withPlan = calculateScenario(makeScenario('both', 500), []).npvUpper;
-        expect(withPlan).toBeGreaterThan(base);
+      it('blocks cohort carrier with seats exceeding implied population * tolerance', () => {
+        const sc: Scenario = {
+          id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.1, scope_type: 'cohorts',
+          modeling_type: 'appraisal', revenue_carrier: 'cohort', revenue_bridge: 'upsell_on_cohort', scope_cohorts: [cohort],
+          plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats: 500 }], // 500 seats > 1000 * 0.3 * 1.2 = 360
+          costs: []
+        };
+        const res = validateRevenueIntegrity(sc);
+        expect(res.status).toBe('block');
+        expect(res.message).toContain('exceed implied population');
+      });
+
+      it('warns cohort carrier with seats within tolerance', () => {
+        const sc: Scenario = {
+          id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.1, scope_type: 'cohorts',
+          modeling_type: 'appraisal', revenue_carrier: 'cohort', revenue_bridge: 'upsell_on_cohort', scope_cohorts: [cohort],
+          plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats: 200 }], // 200 seats <= 360
+          costs: []
+        };
+        const res = validateRevenueIntegrity(sc);
+        expect(res.status).toBe('warn');
+        expect(res.message).toContain('overlap with cohort population');
+      });
+
+      it('passes cohort carrier with separate_market bridge and high seats', () => {
+        const sc: Scenario = {
+          id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.1, scope_type: 'cohorts',
+          modeling_type: 'appraisal', revenue_carrier: 'cohort', revenue_bridge: 'separate_market', scope_cohorts: [cohort],
+          plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats: 500 }],
+          costs: []
+        };
+        const res = validateRevenueIntegrity(sc);
+        expect(res.status).toBe('ok');
+        expect(res.message).toBeNull();
       });
     });
+
   });
 
   describe('runSensitivityAnalysis', () => {

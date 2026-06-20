@@ -1,0 +1,24 @@
+# Architecture Decision Records — modelowanie scenariuszy
+
+Seria decyzji porządkujących, jak Sherpa liczy przychód w scenariuszu. Wspólny punkt wyjścia: scenariusz "AI Agent" dawał NPV ~761 mln USD na skutek sumowania trzech opisów tego samego pieniądza (uplift ARPU kohorty + opłata za plan + override monetyzacji). Źródłem był brak jawnie wybranej jednostki rozliczeniowej.
+
+Format: Michael Nygard (kontekst / decyzja / status / konsekwencje).
+
+| ADR | Decyzja | Status |
+|---|---|---|
+| [0001](0001-trzy-typy-modelowania.md) | Trzy typy modelowania (a/b/c) zamiast "pytania o korzeń", w języku biznesowym | Zaakceptowany |
+| [0002](0002-jeden-nosnik-przychodu.md) | Jeden nośnik przychodu na typ; pozostałe poziomy w roli kosztu/kontekstu | Zaakceptowany |
+| [0003](0003-override-monetyzacji-na-nosniku.md) | Override monetyzacji tylko na nośniku; typ a celowo płaski (Wariant 2) | Zaakceptowany |
+| [0004](0004-walidacja-zastap-nie-dodawaj.md) | Walidacja "zastąp, nie dodawaj"; zakaz `both` bez mostka (Poziom 3) | Zaakceptowany |
+
+## Skrót koncepcji
+
+Trzy typy modelowania odpowiadają trzem pytaniom biznesowym i trzem ustalonym technikom:
+
+- a) "Co feature zrobi z moimi klientami?" → incremental / cohort uplift modeling (mierzy deltę)
+- b) "Jak sprzeda się produkt na rynku?" → bottom-up / GTM revenue modeling (mierzy poziom)
+- c) "Czy opłaca się to zbudować?" → investment appraisal / capital budgeting (NPV/IRR/payback)
+
+Relacja: c = a + rachunek inwestycyjny (oba operują na przyroście). b operuje na poziomie — dlatego nie sumuje się z a/c.
+
+Zasada nadrzędna spinająca całą serię: **tylko jeden poziom generuje przychód; reszta go modyfikuje albo obciąża kosztem. Override jest bezpieczny, gdy zastępuje, niebezpieczny, gdy dodaje.**

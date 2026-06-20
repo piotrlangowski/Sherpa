@@ -13,7 +13,9 @@ import {
   calculateScenario,
   runSensitivityAnalysis,
   buildCohortModel,
-  applyScopeOverrides
+  applyScopeOverrides,
+  resolveCarrier,
+  validateRevenueIntegrity
 } from "./shared/financial-math.js";
 import {
   convertAmount,
@@ -293,7 +295,7 @@ function attachMonetization(scenario: Scenario): void {
 // Helper: Load a full scenario using the current multi-cohort schema (scope_type + junctions)
 function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
-    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source
+    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge
     FROM scenarios
     WHERE id = ?
   `).get(scenarioId) as any;
@@ -1592,33 +1594,62 @@ function formatIrrMcp(irr: any): string {
   return (irr.annualNominal * 100).toFixed(1) + '%';
 }
 
+function calculateScenarioWithIntegrity(
+  scenario: Scenario,
+  allProviders: Provider[],
+  creditSettings: CreditSettings
+): CalculationResult {
+  const integrity = validateRevenueIntegrity(scenario);
+  if (integrity.status === 'block') {
+    return {
+      timeline: [],
+      paybackUpper: null,
+      paybackLower: null,
+      npvUpper: 0,
+      npvLower: 0,
+      piUpper: 0,
+      piLower: 0,
+      irr: { monthly: null, annualNominal: null, status: 'blocked_by_integrity', displayable: false },
+      tco: 0
+    };
+  }
+  return calculateScenario(scenario, allProviders, creditSettings);
+}
+
 function saveScenarioResults(scenarioId: string, results: any, resultsId?: string) {
   const now = new Date().toISOString();
+  const scenario = getFullScenario(scenarioId);
+  const integrity = scenario ? validateRevenueIntegrity(scenario) : { status: 'ok', message: null };
+
   if (resultsId) {
     db.prepare(`
       INSERT OR REPLACE INTO scenario_results (
         id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index,
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
-        monthly_cashflows, monthly_mrr, monthly_customers, calculated_at
+        monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
+        revenue_integrity_status, revenue_integrity_message
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       resultsId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
       results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
-      JSON.stringify(results.timeline.map((t: any) => t.netCashFlow)), JSON.stringify(results.timeline.map((t: any) => t.revenue)), JSON.stringify(results.timeline.map((t: any) => t.customers)), now
+      JSON.stringify(results.timeline.map((t: any) => t.netCashFlow)), JSON.stringify(results.timeline.map((t: any) => t.revenue)), JSON.stringify(results.timeline.map((t: any) => t.customers)), now,
+      integrity.status, integrity.message
     );
   } else {
     db.prepare(`
       INSERT OR REPLACE INTO scenario_results (
         id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index,
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
-        monthly_cashflows, monthly_mrr, monthly_customers, calculated_at
+        monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
+        revenue_integrity_status, revenue_integrity_message
       )
-      VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       scenarioId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
       results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
-      JSON.stringify(results.timeline.map((t: any) => t.netCashFlow)), JSON.stringify(results.timeline.map((t: any) => t.revenue)), JSON.stringify(results.timeline.map((t: any) => t.customers)), now
+      JSON.stringify(results.timeline.map((t: any) => t.netCashFlow)), JSON.stringify(results.timeline.map((t: any) => t.revenue)), JSON.stringify(results.timeline.map((t: any) => t.customers)), now,
+      integrity.status, integrity.message
     );
   }
 }
@@ -1635,7 +1666,10 @@ server.tool(
     projection_months: z.number().int().min(12).max(120).optional().describe("Projection horizon in months (default: 36)."),
     discount_rate: z.number().min(0).max(1).optional().describe("Annual discount rate as a decimal (default: 0.10 for 10%)."),
     scope_type: z.enum(["all_clients", "verticals", "cohorts"]).optional().describe("Scope type (default: cohorts)."),
-    revenue_source: z.enum(["cohort", "monetization", "both"]).optional().describe("Where the scenario draws its revenue from (default: cohort)."),
+    revenue_source: z.enum(["cohort", "monetization", "both"]).optional().describe("Where the scenario draws its revenue from (deprecated, use modeling_type and revenue_carrier instead)."),
+    modeling_type: z.enum(["incremental", "gtm", "appraisal"]).optional().describe("Business-centric modeling type: 'incremental', 'gtm', or 'appraisal' (default: appraisal)."),
+    revenue_carrier: z.enum(["cohort", "plan", "pack", "feature"]).nullable().optional().describe("Exactly one entity level carries revenue; the rest are cost/context (default: cohort)."),
+    revenue_bridge: z.enum(["upsell_on_cohort", "separate_market"]).nullable().optional().describe("When a plan-carrier scenario also references a cohort, how they relate."),
     capex_contingency_pct: z.number().min(0).max(1).optional().describe("CAPEX contingency buffer percentage (e.g. 0.20 for 20% contingency). Defaults to 0."),
     cohort_config: z.object({
       name: z.string(),
@@ -1668,8 +1702,10 @@ server.tool(
       if (args.action === "list") {
         const scenarios = db.prepare(`
           SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct,
+                 s.modeling_type, s.revenue_carrier, s.revenue_bridge,
                  r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index,
-                 r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status
+                 r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status,
+                 r.revenue_integrity_status, r.revenue_integrity_message
           FROM scenarios s
           LEFT JOIN scenario_results r ON s.id = r.scenario_id
           ORDER BY s.updated_at DESC
@@ -1730,11 +1766,46 @@ server.tool(
             }
           }
 
-          const revSource = args.revenue_source || 'cohort';
+          let modeling_type = args.modeling_type;
+          let revenue_carrier = args.revenue_carrier;
+          let revenue_bridge = args.revenue_bridge;
+
+          if (!modeling_type) {
+            const source = args.revenue_source || 'cohort';
+            if (source === 'cohort') {
+              modeling_type = 'incremental';
+              revenue_carrier = revenue_carrier !== undefined ? revenue_carrier : 'cohort';
+            } else if (source === 'monetization') {
+              modeling_type = 'appraisal';
+              revenue_carrier = revenue_carrier !== undefined ? revenue_carrier : 'feature';
+            } else { // both
+              modeling_type = 'appraisal';
+              revenue_carrier = revenue_carrier !== undefined ? revenue_carrier : 'cohort';
+            }
+          } else {
+            if (modeling_type === 'incremental') {
+              revenue_carrier = 'cohort';
+            } else if (modeling_type === 'gtm') {
+              revenue_carrier = 'plan';
+            } else {
+              revenue_carrier = revenue_carrier !== undefined ? revenue_carrier : 'cohort';
+            }
+          }
+
+          const revSource = args.revenue_source || (modeling_type === 'incremental' ? 'cohort' : 'monetization');
+
           db.prepare(`
-            INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?, ?, ?)
-          `).run(scenarioId, args.name, args.description || null, args.projection_months ?? 36, args.discount_rate ?? 0.10, revSource, args.capex_contingency_pct ?? 0, now, now);
+            INSERT INTO scenarios (
+              id, name, description, projection_months, discount_rate, scope_type,
+              revenue_source, capex_contingency_pct, modeling_type, revenue_carrier,
+              revenue_bridge, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            scenarioId, args.name, args.description || null, args.projection_months ?? 36,
+            args.discount_rate ?? 0.10, revSource, args.capex_contingency_pct ?? 0,
+            modeling_type, revenue_carrier || null, revenue_bridge || null, now, now
+          );
 
           if (args.services) {
             const insertServ = db.prepare("INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)");
@@ -1764,6 +1835,7 @@ server.tool(
 
         // Calculate and cache results
         const fullScenario = getFullScenario(scenarioId)!;
+        const integrity = validateRevenueIntegrity(fullScenario);
         const providers = applyProviderOverrides(scenarioId, getProviders());
         const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
@@ -1773,18 +1845,30 @@ server.tool(
           currency,
           exchangeRates
         );
-        const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
+        const results = calculateScenarioWithIntegrity(normalizedScenario, normalizedProviders, creditSettings);
         const resultsId = crypto.randomUUID();
 
         saveScenarioResults(scenarioId, results, resultsId);
 
+        let responseText = `Scenario '${args.name}' created with ID: ${scenarioId}.`;
+        if (integrity.status === 'block') {
+          return {
+            content: [{
+              type: "text",
+              text: `${responseText} Projections calculation is blocked due to integrity error: ${integrity.message}`
+            }],
+            isError: true
+          };
+        }
+
+        let warningText = integrity.status === 'warn' ? `\nWarning: ${integrity.message}` : '';
         const linkedCohortsStr = fullScenario.scope_cohorts ? fullScenario.scope_cohorts.map((c: any) => `'${c.name}' (${c.id})`).join(', ') : 'none';
         const linkedCostsStr = fullScenario.costs ? fullScenario.costs.map((c: any) => `'${c.name}' (${c.id})`).join(', ') : 'none';
 
         return {
           content: [{ 
             type: "text", 
-            text: `Scenario '${args.name}' created with ID: ${scenarioId}. Projections calculated (NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}, IRR: ${formatIrrMcp(results.irr)}).\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}` 
+            text: `${responseText} Projections calculated (NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}, IRR: ${formatIrrMcp(results.irr)}).${warningText}\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}` 
           }]
         };
       }
@@ -1803,15 +1887,46 @@ server.tool(
           const projection_months = args.projection_months !== undefined ? args.projection_months : current.projection_months;
           const discount_rate = args.discount_rate !== undefined ? args.discount_rate : current.discount_rate;
           const scope_type = args.scope_type !== undefined ? args.scope_type : current.scope_type;
-          const revenue_source = args.revenue_source !== undefined ? args.revenue_source : current.revenue_source;
           const capex_contingency_pct = args.capex_contingency_pct !== undefined ? args.capex_contingency_pct : current.capex_contingency_pct;
           const now = new Date().toISOString();
 
+          let modeling_type = args.modeling_type !== undefined ? args.modeling_type : current.modeling_type;
+          let revenue_carrier = args.revenue_carrier !== undefined ? args.revenue_carrier : current.revenue_carrier;
+          let revenue_bridge = args.revenue_bridge !== undefined ? args.revenue_bridge : current.revenue_bridge;
+
+          if (args.modeling_type === undefined && args.revenue_source !== undefined) {
+            if (args.revenue_source === 'cohort') {
+              modeling_type = 'incremental';
+              revenue_carrier = 'cohort';
+            } else if (args.revenue_source === 'monetization') {
+              modeling_type = 'appraisal';
+              revenue_carrier = 'feature';
+            } else if (args.revenue_source === 'both') {
+              modeling_type = 'appraisal';
+              revenue_carrier = 'cohort';
+              revenue_bridge = null;
+            }
+          }
+
+          if (modeling_type === 'incremental') {
+            revenue_carrier = 'cohort';
+          } else if (modeling_type === 'gtm') {
+            revenue_carrier = 'plan';
+          }
+
+          const revenue_source = args.revenue_source !== undefined ? args.revenue_source : (modeling_type === 'incremental' ? 'cohort' : 'monetization');
+
           db.prepare(`
             UPDATE scenarios
-            SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, updated_at = ?
+            SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?,
+                revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?,
+                revenue_carrier = ?, revenue_bridge = ?, updated_at = ?
             WHERE id = ?
-          `).run(name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, now, args.id);
+          `).run(
+            name, description || null, projection_months, discount_rate, scope_type,
+            revenue_source, capex_contingency_pct, modeling_type,
+            revenue_carrier || null, revenue_bridge || null, now, args.id
+          );
 
           if (args.services !== undefined) {
             db.prepare("DELETE FROM scenario_services WHERE scenario_id = ?").run(args.id);
@@ -1852,6 +1967,7 @@ server.tool(
 
         // Re-calculate projections after modification
         const fullScenario = getFullScenario(args.id)!;
+        const integrity = validateRevenueIntegrity(fullScenario);
         const providers = applyProviderOverrides(args.id, getProviders());
         const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
@@ -1861,14 +1977,31 @@ server.tool(
           currency,
           exchangeRates
         );
-        const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
+        const results = calculateScenarioWithIntegrity(normalizedScenario, normalizedProviders, creditSettings);
 
         saveScenarioResults(args.id, results);
 
+        let responseText = `Scenario '${fullScenario.name}' updated successfully.`;
+        if (integrity.status === 'block') {
+          return {
+            content: [{
+              type: "text",
+              text: `${responseText} Projections calculation is blocked due to integrity error: ${integrity.message}`
+            }],
+            isError: true
+          };
+        }
+
+        let warningText = integrity.status === 'warn' ? `\nWarning: ${integrity.message}` : '';
         const linkedCohortsStr = fullScenario.scope_cohorts ? fullScenario.scope_cohorts.map((c: any) => `'${c.name}' (${c.id})`).join(', ') : 'none';
         const linkedCostsStr = fullScenario.costs ? fullScenario.costs.map((c: any) => `'${c.name}' (${c.id})`).join(', ') : 'none';
 
-        return { content: [{ type: "text", text: `Scenario '${fullScenario.name}' updated successfully and ROI re-projected.\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}` }] };
+        return {
+          content: [{
+            type: "text",
+            text: `${responseText} ROI re-projected successfully.${warningText}\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}`
+          }]
+        };
       }
 
       if (args.action === "delete") {
@@ -1899,6 +2032,14 @@ server.tool(
         if (!scenario) {
           return { content: [{ type: "text", text: `Scenario '${args.id}' not found` }], isError: true };
         }
+        const integrity = validateRevenueIntegrity(scenario);
+        if (integrity.status === 'block') {
+          return {
+            content: [{ type: "text", text: `ROI calculation blocked due to integrity error: ${integrity.message}` }],
+            isError: true
+          };
+        }
+
         const providers = applyProviderOverrides(args.id, getProviders());
         const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
@@ -1908,13 +2049,16 @@ server.tool(
           currency,
           exchangeRates
         );
-        const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
+        const results = calculateScenarioWithIntegrity(normalizedScenario, normalizedProviders, creditSettings);
         const now = new Date().toISOString();
         saveScenarioResults(args.id, results);
+        
+        let warningText = integrity.status === 'warn' ? `\nWarning: ${integrity.message}` : '';
+
         return {
           content: [{
             type: "text",
-            text: `ROI Results calculated successfully:\n- NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}\n- IRR (Guarded Annualized): ${formatIrrMcp(results.irr)}\n- Payback Period Range: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n- TCO: ${results.tco.toLocaleString()} ${currency}\n- PI Range: ${results.piLower.toFixed(2)}x – ${results.piUpper.toFixed(2)}x`
+            text: `ROI Results calculated successfully:\n- NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}\n- IRR (Guarded Annualized): ${formatIrrMcp(results.irr)}\n- Payback Period Range: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n- TCO: ${results.tco.toLocaleString()} ${currency}\n- PI Range: ${results.piLower.toFixed(2)}x – ${results.piUpper.toFixed(2)}x${warningText}`
           }]
         };
       }
@@ -1927,6 +2071,14 @@ server.tool(
         if (!scenario) {
           return { content: [{ type: "text", text: `Scenario '${args.id}' not found` }], isError: true };
         }
+        const integrity = validateRevenueIntegrity(scenario);
+        if (integrity.status === 'block') {
+          return {
+            content: [{ type: "text", text: `Sensitivity analysis blocked due to revenue integrity violation: ${integrity.message}` }],
+            isError: true
+          };
+        }
+
         const providers = applyProviderOverrides(args.id, getProviders());
         const { currency, exchangeRates } = loadCurrencyContext();
         const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
@@ -1963,13 +2115,20 @@ server.tool(
           if (!scenario) {
             return { content: [{ type: "text", text: `Scenario '${id}' not found.` }], isError: true };
           }
+          const integrity = validateRevenueIntegrity(scenario);
+          if (integrity.status === 'block') {
+            return {
+              content: [{ type: "text", text: `Scenario '${scenario.name}' (${id}) cannot be compared because it is blocked due to integrity error: ${integrity.message}` }],
+              isError: true
+            };
+          }
           const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
             scenario,
             applyProviderOverrides(id, providers),
             currency,
             exchangeRates
           );
-          const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
+          const results = calculateScenarioWithIntegrity(normalizedScenario, normalizedProviders, creditSettings);
           scenarios.push({ scenario, results });
         }
 
@@ -2065,8 +2224,8 @@ server.tool(
           `).run(cohortId, `${scenarioName} Cohort`, null, currentUsers, monthlyAcquisition, acquisitionGrowthRate, monthlyChurnRate, retentionFloor, monthlyExpansionRate, aiAdoptionRate, baseArpu, 0, 0, 0, 0, now, now);
 
           db.prepare(`
-            INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?)
+            INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, modeling_type, revenue_carrier, revenue_bridge, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'cohorts', 'cohort', 'incremental', 'cohort', null, ?, ?)
           `).run(scenarioId, scenarioName, args.description, projectionMonths, discountRate, now, now);
 
           db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`)
@@ -2082,6 +2241,7 @@ server.tool(
 
         // Run and cache ROI results
         const fullScenario = getFullScenario(scenarioId)!;
+        const integrity = validateRevenueIntegrity(fullScenario);
         const providers = applyProviderOverrides(scenarioId, getProviders());
         const creditSettings = getCreditSettings();
         const { currency, exchangeRates } = loadCurrencyContext();
@@ -2091,7 +2251,7 @@ server.tool(
           currency,
           exchangeRates
         );
-        const results = calculateScenario(normalizedScenario, normalizedProviders, creditSettings);
+        const results = calculateScenarioWithIntegrity(normalizedScenario, normalizedProviders, creditSettings);
         const resultsId = crypto.randomUUID();
 
         saveScenarioResults(scenarioId, results, resultsId);
@@ -2117,12 +2277,21 @@ server.tool(
           responseText += `*No matching catalog services found in description; created scenario with cohort settings only.*\n\n`;
         }
 
+        if (integrity.status === 'block') {
+          return {
+            content: [{ type: "text", text: `Scenario was generated but calculation is blocked due to integrity error: ${integrity.message}` }],
+            isError: true
+          };
+        }
+
+        let warningText = integrity.status === 'warn' ? `\n\n**Warning**: ${integrity.message}` : '';
+
         responseText += `#### Simulated ROI Summary:\n`;
         responseText += `- **NPV Range**: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}\n`;
         responseText += `- **IRR**: ${formatIrrMcp(results.irr)}\n`;
         responseText += `- **Payback period range**: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n`;
         responseText += `- **TCO**: ${results.tco.toLocaleString()} ${currency}\n`;
-        responseText += `\n*Scenario ID: \`${scenarioId}\`. View this scenario inside the SvelteKit dashboard.*`;
+        responseText += `${warningText}\n\n*Scenario ID: \`${scenarioId}\`. View this scenario inside the SvelteKit dashboard.*`;
 
         return {
           content: [{ type: "text", text: responseText }]
@@ -2449,6 +2618,21 @@ server.tool(
         // Upsert logic
         // If monetization_type is 'none', it behaves as delete
         const monType = args.monetization_type || 'none';
+
+        if (scenarioId && monType !== 'none') {
+          const scenario = getFullScenario(scenarioId);
+          if (!scenario) {
+            throw new Error(`Scenario not found: ${scenarioId}`);
+          }
+          const carrier = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
+          if (scenario.modeling_type === 'incremental' || carrier === 'cohort') {
+            throw new Error(`Monetization overrides are disabled for incremental or cohort-carrier scenarios.`);
+          }
+          const expectedEntityType = carrier === 'feature' ? 'service' : carrier;
+          if (entityType !== expectedEntityType) {
+            throw new Error(`Monetization overrides for this scenario can only be set on '${expectedEntityType}' entities (since the resolved carrier is '${carrier}').`);
+          }
+        }
         if (monType === 'none') {
           db.transaction(() => {
             if (scenarioId) {

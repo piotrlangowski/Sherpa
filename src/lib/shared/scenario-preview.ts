@@ -1,4 +1,4 @@
-import type { CohortConfig, Scenario, ScopeOverride, Service, Pack, Plan, CostItem, ServiceStatus, Currency, CostCategory, CostFrequency } from './types.js';
+import type { CohortConfig, Scenario, ScopeOverride, Service, Pack, Plan, CostItem, ServiceStatus, Currency, CostCategory, CostFrequency, ModelingType, RevenueCarrier, RevenueBridge } from './types.js';
 import { applyScopeOverrides } from './financial-math.js';
 
 /**
@@ -33,7 +33,11 @@ interface DraftFormState {
   discountRate: number;
   scopeType: 'all_clients' | 'verticals' | 'cohorts';
   capexContingencyPct?: number;
+  modelingType?: ModelingType;
+  revenueCarrier?: RevenueCarrier | null;
+  revenueBridge?: RevenueBridge | null;
 }
+
 
 /**
  * Maps wizard form states into a Scenario object structure.
@@ -118,6 +122,9 @@ export function buildDraftScenario(
     discount_rate: formState.discountRate,
     scope_type: formState.scopeType,
     capex_contingency_pct: formState.capexContingencyPct ?? 0,
+    modeling_type: formState.modelingType || 'appraisal',
+    revenue_carrier: formState.revenueCarrier || null,
+    revenue_bridge: formState.revenueBridge || null,
     scope_cohorts: resolvedCohorts,
     scope_overrides: overrides,
     services,

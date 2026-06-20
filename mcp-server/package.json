@@ -1,6 +1,6 @@
 {
   "name": "sherpa-mcp-server",
-  "version": "1.0.18",
+  "version": "1.0.20",
   "type": "module",
   "scripts": {
     "prebuild": "node ../scripts/gen-guidance.mjs",

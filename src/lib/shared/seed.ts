@@ -222,8 +222,8 @@ export function seedDatabase(db: DatabaseConnection): void {
 
     // 10. Scenarios
     const insertScenario = db.prepare(`
-      INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, modeling_type, revenue_carrier, revenue_bridge, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'cohort', 'incremental', 'cohort', null, ?, ?)
     `);
     const insertScenarioService = db.prepare(`INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)`);
     const insertScenarioCost = db.prepare(`INSERT INTO scenario_costs (scenario_id, cost_item_id) VALUES (?, ?)`);

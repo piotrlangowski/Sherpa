@@ -21,8 +21,27 @@ export type MonetizationType = 'none' | 'addon' | 'usage' | 'hybrid';
 export type UsageVariant = 'prepaid' | 'payg';
 /** Behaviour once a usage limit / credit pool is exhausted. */
 export type OverchargePolicy = 'hard_stop' | 'credit_pack' | 'payg';
-/** Where a scenario draws its revenue from. */
+/** Where a scenario draws its revenue from.
+ * @deprecated Use ModelingType + RevenueCarrier instead (ADR 0001–0004). */
 export type RevenueSource = 'cohort' | 'monetization' | 'both';
+
+// ============================================================
+// Revenue Modeling (ADR 0001–0004)
+// ============================================================
+
+/** Business-centric modeling type chosen in Step 0 of the wizard. */
+export type ModelingType = 'incremental' | 'gtm' | 'appraisal';
+/** Exactly one entity level carries revenue; the rest are cost/context. */
+export type RevenueCarrier = 'cohort' | 'plan' | 'pack' | 'feature';
+/** When a plan-carrier scenario also references a cohort, how they relate. */
+export type RevenueBridge = 'upsell_on_cohort' | 'separate_market';
+
+export type RevenueIntegrityStatus = 'ok' | 'warn' | 'block';
+export interface RevenueIntegrityResult {
+  status: RevenueIntegrityStatus;
+  severity: 'ok' | 'warn' | 'block';
+  message: string | null;
+}
 
 /**
  * Monetization configuration shared by Service, Pack and Plan.
@@ -339,8 +358,15 @@ export interface Scenario {
   projection_months: number;
   discount_rate: number;
   scope_type: ScopeType;
+  /** @deprecated Use modeling_type + revenue_carrier instead. */
   revenue_source?: RevenueSource;
   capex_contingency_pct?: number;
+
+  // Revenue modeling (ADR 0001–0004)
+  modeling_type?: ModelingType;
+  revenue_carrier?: RevenueCarrier | null;
+  revenue_bridge?: RevenueBridge | null;
+
   created_at?: string;
   updated_at?: string;
 
@@ -384,6 +410,10 @@ export interface ScenarioResult {
   irr_monthly?: number | null;
   irr_annual_nominal?: number | null;
   irr_status?: string;
+
+  // Revenue integrity (ADR 0004)
+  revenue_integrity_status?: RevenueIntegrityStatus | null;
+  revenue_integrity_message?: string | null;
 }
 
 export interface CohortTimelineResult {
@@ -433,7 +463,7 @@ export interface MonthlyBreakdown {
   agentTokenCosts?: number;
 }
 
-export type IrrStatus = 'ok' | 'unstable_short_payback' | 'ambiguous_multiple_roots' | 'undefined_no_sign_change' | 'non_converged';
+export type IrrStatus = 'ok' | 'unstable_short_payback' | 'ambiguous_multiple_roots' | 'undefined_no_sign_change' | 'non_converged' | 'blocked_by_integrity';
 
 export interface IrrResult {
   monthly: number | null;

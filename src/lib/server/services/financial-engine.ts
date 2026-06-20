@@ -5,7 +5,8 @@ import {
   calculateIRR,
   calculateTCO,
   calculateScenario as pureCalculateScenario,
-  applyScopeOverrides
+  applyScopeOverrides,
+  validateRevenueIntegrity
 } from '../../shared/financial-math.js';
 import { scenariosRepository } from '../repositories/scenarios';
 import { providersRepository } from '../repositories/providers';
@@ -209,6 +210,21 @@ export function resolveScenarioCohorts(scenario: Scenario): CohortConfig[] {
 }
 
 export function calculateScenario(scenario: Scenario): CalculationResult {
+  const integrity = validateRevenueIntegrity(scenario);
+  if (integrity.status === 'block') {
+    return {
+      timeline: [],
+      paybackUpper: null,
+      paybackLower: null,
+      npvUpper: 0,
+      npvLower: 0,
+      piUpper: 0,
+      piLower: 0,
+      irr: { monthly: null, annualNominal: null, status: 'blocked_by_integrity', displayable: false },
+      tco: 0
+    };
+  }
+
   const allProviders = providersRepository.getAll();
   const resolvedConfigs = resolveScenarioCohorts(scenario);
 
@@ -242,6 +258,7 @@ export function runAndSaveScenario(scenarioId: string): CalculationResult {
     throw new Error(`Scenario not found: ${scenarioId}`);
   }
 
+  const integrity = validateRevenueIntegrity(scenario);
   const result = calculateScenario(scenario);
 
   scenariosRepository.saveResults({
@@ -261,7 +278,9 @@ export function runAndSaveScenario(scenarioId: string): CalculationResult {
     profitability_index_lower: result.piLower,
     irr_monthly: result.irr.monthly,
     irr_annual_nominal: result.irr.annualNominal,
-    irr_status: result.irr.status
+    irr_status: result.irr.status,
+    revenue_integrity_status: integrity.status,
+    revenue_integrity_message: integrity.message
   });
 
   return result;

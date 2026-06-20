@@ -566,18 +566,48 @@
       </CardContent>
     </Card>
   {:else}
-    <div id="scenario-dashboard-container" class="space-y-6">
-      {#if hasNoAiBenefit}
-        <Card class="border-amber-500/30 bg-amber-500/5 p-4 select-none">
+    {#if results.revenue_integrity_status === 'block'}
+      <div id="scenario-dashboard-container" class="space-y-6">
+        <Card class="border-rose-500/30 bg-rose-500/5 p-4 select-none">
           <CardContent class="flex items-start space-x-3 text-sm p-0">
-            <Info class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+            <Info class="h-5 w-5 text-rose-500 shrink-0 mt-0.5" />
             <div>
-              <h4 class="font-bold text-amber-600 dark:text-amber-400">No AI benefit is modeled</h4>
-              <p class="text-muted-foreground mt-1 text-xs">No AI benefit is modeled — set uplift assumptions on cohorts or scenario overrides.</p>
+              <h4 class="font-bold text-rose-600 dark:text-rose-400">Revenue Integrity Blocked</h4>
+              <p class="text-muted-foreground mt-1 text-xs">{results.revenue_integrity_message}</p>
+              <div class="mt-2.5">
+                <Button href="/scenarios/{scenario.id}/edit" size="sm" variant="outline" class="h-7 text-xs font-semibold px-3.5 border-rose-500/25 text-rose-600 dark:text-rose-400 hover:bg-rose-500/5">
+                  Edit Scenario to Fix
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
-      {/if}
+      </div>
+    {:else}
+      <div id="scenario-dashboard-container" class="space-y-6">
+        {#if results.revenue_integrity_status === 'warn'}
+          <Card class="border-amber-500/30 bg-amber-500/5 p-4 select-none">
+            <CardContent class="flex items-start space-x-3 text-sm p-0">
+              <Info class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <h4 class="font-bold text-amber-600 dark:text-amber-400">Revenue Integrity Warning</h4>
+                <p class="text-muted-foreground mt-1 text-xs">{results.revenue_integrity_message}</p>
+              </div>
+            </CardContent>
+          </Card>
+        {/if}
+
+        {#if hasNoAiBenefit}
+          <Card class="border-amber-500/30 bg-amber-500/5 p-4 select-none">
+            <CardContent class="flex items-start space-x-3 text-sm p-0">
+              <Info class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <h4 class="font-bold text-amber-600 dark:text-amber-400">No AI benefit is modeled</h4>
+                <p class="text-muted-foreground mt-1 text-xs">No AI benefit is modeled — set uplift assumptions on cohorts or scenario overrides.</p>
+              </div>
+            </CardContent>
+          </Card>
+        {/if}
 
       <!-- KPI widgets grid -->
       <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
@@ -996,5 +1026,6 @@
         {/if}
       </div>
     </div>
+    {/if}
   {/if}
 </div>

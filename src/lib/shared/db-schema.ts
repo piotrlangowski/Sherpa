@@ -722,4 +722,58 @@ function runDataMigrations(db: DatabaseConnection): void {
   if (servicesInvalidated10) {
     db.prepare("DELETE FROM scenario_results").run();
   }
+
+  // Migration 11: Revenue modeling overhaul (ADR 0001–0004).
+  // Adds modeling_type / revenue_carrier / revenue_bridge to scenarios and
+  // integrity fields to scenario_results.  Backfills from the deprecated
+  // revenue_source column:
+  //   'cohort'       → incremental / cohort
+  //   'monetization' → appraisal  / feature
+  //   'both'         → appraisal  / cohort  (bridge = NULL → forces user resolution)
+  const scenarioCols11 = (db.prepare("PRAGMA table_info(scenarios)").all() as any[]).map(c => c.name);
+  let resultsInvalidated11 = false;
+
+  if (!scenarioCols11.includes('modeling_type')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN modeling_type TEXT DEFAULT 'appraisal'").run();
+    // Backfill modeling_type from revenue_source
+    db.prepare(`
+      UPDATE scenarios SET modeling_type = CASE
+        WHEN revenue_source = 'cohort' THEN 'incremental'
+        ELSE 'appraisal'
+      END
+    `).run();
+    resultsInvalidated11 = true;
+  }
+
+  if (!scenarioCols11.includes('revenue_carrier')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN revenue_carrier TEXT").run();
+    // Backfill revenue_carrier from revenue_source
+    db.prepare(`
+      UPDATE scenarios SET revenue_carrier = CASE
+        WHEN revenue_source = 'cohort'       THEN 'cohort'
+        WHEN revenue_source = 'monetization' THEN 'feature'
+        WHEN revenue_source = 'both'         THEN 'cohort'
+        ELSE 'cohort'
+      END
+    `).run();
+    resultsInvalidated11 = true;
+  }
+
+  if (!scenarioCols11.includes('revenue_bridge')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN revenue_bridge TEXT").run();
+    // 'both' scenarios get NULL bridge intentionally — forces user to choose
+    resultsInvalidated11 = true;
+  }
+
+  const scenarioResultsCols11 = (db.prepare("PRAGMA table_info(scenario_results)").all() as any[]).map(c => c.name);
+  if (!scenarioResultsCols11.includes('revenue_integrity_status')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN revenue_integrity_status TEXT").run();
+  }
+  if (!scenarioResultsCols11.includes('revenue_integrity_message')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN revenue_integrity_message TEXT").run();
+  }
+
+  if (resultsInvalidated11) {
+    db.prepare("DELETE FROM scenario_results").run();
+  }
 }

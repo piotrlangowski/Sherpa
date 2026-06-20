@@ -26,7 +26,7 @@ graph TD
 
 The MCP server presents four interfaces to the consuming LLM host (e.g., Claude Desktop, Claude Chat, or the Antigravity developer CLI):
 
-1. **Tools (13)**: Structured JSON-RPC methods defined in `mcp-server/src/index.ts` using Zod schemas for input validation.
+1. **Tools (14)**: Structured JSON-RPC methods defined in `mcp-server/src/index.ts` using Zod schemas for input validation.
 2. **Resources (2)**: Read-only URIs using the `sherpa://` scheme to query cached calculation data.
 3. **Prompts**: Named system-instruction templates.
 4. **Instructions**: A global system prompt loaded during MCP initialization that provides context to the host (host-dependent, typically appended to system instructions).

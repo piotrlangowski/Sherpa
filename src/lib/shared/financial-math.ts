@@ -21,7 +21,11 @@ import type {
   MonetizationConfig,
   CreditSettings,
   MonetizationRevenueResult,
-  IrrResult
+  IrrResult,
+  ModelingType,
+  RevenueCarrier,
+  RevenueIntegrityResult,
+  RevenueIntegrityStatus
 } from './types.js';
 
 /**
@@ -36,6 +40,111 @@ export const DEFAULT_CREDIT_SETTINGS: CreditSettings = {
   defaultInputTokensPerCredit: 1000000,
   defaultOutputTokensPerCredit: 333333
 };
+
+// ============================================================
+// Revenue Integrity (ADR 0001–0004)
+// ============================================================
+
+/**
+ * If plan seats exceed implied_population × TOLERANCE for a cohort-carrier
+ * scenario, saving is hard-blocked until the bridge is set to 'separate_market'
+ * or seats are reduced.
+ */
+export const REVENUE_INTEGRITY_TOLERANCE = 1.2;
+
+/**
+ * Sum of (current_users × ai_adoption_rate) across all cohorts.
+ * Represents the implied population that a plan's seats should be anchored to.
+ */
+export function computeImpliedPopulation(cohorts: CohortConfig[]): number {
+  return cohorts.reduce((sum, c) => sum + (c.current_users || 0) * (c.ai_adoption_rate || 0), 0);
+}
+
+/**
+ * Deterministically resolves the revenue carrier from the scenario's
+ * modeling type and explicit carrier setting.
+ *   - incremental → always 'cohort'
+ *   - gtm         → always 'plan'
+ *   - appraisal   → uses the explicit carrier ('cohort' | 'plan' | 'pack' | 'feature')
+ */
+export function resolveCarrier(
+  modelingType: ModelingType | undefined,
+  revenueCarrier: RevenueCarrier | null | undefined
+): RevenueCarrier {
+  switch (modelingType) {
+    case 'incremental': return 'cohort';
+    case 'gtm':         return 'plan';
+    case 'appraisal':   return revenueCarrier ?? 'cohort';
+    default:            return revenueCarrier ?? 'cohort';
+  }
+}
+
+/**
+ * Validates that a scenario's revenue configuration doesn't double-count.
+ * Returns 'block' when saving should be prevented, 'warn' when the user
+ * should be alerted, and 'ok' when everything is anchored properly.
+ */
+export function validateRevenueIntegrity(scenario: Scenario): RevenueIntegrityResult {
+  const mt = scenario.modeling_type ?? 'appraisal';
+  const carrier = resolveCarrier(mt, scenario.revenue_carrier);
+
+  // ADR 0001 — incremental scenarios must not have monetization or seats
+  if (mt === 'incremental') {
+    const hasMonetization = (scenario.services ?? []).some(
+      s => s.monetization && s.monetization.monetization_type !== 'none'
+    );
+    if (hasMonetization) {
+      return {
+        status: 'block',
+        severity: 'block',
+        message: 'Incremental scenarios cannot have monetization overrides. Remove monetization or switch to appraisal/GTM modeling.'
+      };
+    }
+    const totalSeats = (scenario.plans ?? []).reduce((sum, p) => sum + (p.seats ?? 0), 0);
+    if (totalSeats > 0) {
+      return {
+        status: 'block',
+        severity: 'block',
+        message: 'Incremental scenarios cannot use plan seats as a revenue source. Remove seats or switch to GTM modeling.'
+      };
+    }
+    return { status: 'ok', severity: 'ok', message: null };
+  }
+
+  // ADR 0004 — cohort carrier with plan seats: check bridge
+  if (carrier === 'cohort') {
+    const totalSeats = (scenario.plans ?? []).reduce((sum, p) => sum + (p.seats ?? 0), 0);
+    if (totalSeats > 0) {
+      const bridge = scenario.revenue_bridge;
+      if (bridge === 'separate_market') {
+        return { status: 'ok', severity: 'ok', message: null };
+      }
+      const impliedPop = computeImpliedPopulation(scenario.scope_cohorts ?? []);
+      if (!bridge) {
+        return {
+          status: 'block',
+          severity: 'block',
+          message: `Scenario has ${totalSeats} plan seats with a cohort-based carrier but no revenue bridge defined. Choose 'Upsell on Cohort' or 'Separate Market'.`
+        };
+      }
+      // bridge === 'upsell_on_cohort'
+      if (totalSeats > impliedPop * REVENUE_INTEGRITY_TOLERANCE) {
+        return {
+          status: 'block',
+          severity: 'block',
+          message: `Plan seats (${totalSeats}) exceed implied population (${Math.round(impliedPop)}) × ${REVENUE_INTEGRITY_TOLERANCE}. Reduce seats or set bridge to 'Separate Market'.`
+        };
+      }
+      return {
+        status: 'warn',
+        severity: 'warn',
+        message: `Plan seats (${totalSeats}) overlap with cohort population (${Math.round(impliedPop)}). Revenue is counted from cohort uplift only; plan subscription is informational.`
+      };
+    }
+  }
+
+  return { status: 'ok', severity: 'ok', message: null };
+}
 
 // ============================================================
 // Scope Override Cascade
@@ -556,7 +665,6 @@ export function calculateScenario(
 ): CalculationResult {
   const projectionMonths = scenario.projection_months ?? 36;
   const annualDiscountRate = scenario.discount_rate ?? 0.10;
-  const revenueSource = scenario.revenue_source ?? 'cohort';
 
   if (!scenario.scope_cohorts || scenario.scope_cohorts.length === 0) {
     throw new Error(`Scenario '${scenario.name}' has no cohort configurations.`);
@@ -670,14 +778,18 @@ export function calculateScenario(
       totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0
     };
     let planSubscriptionRevenue = 0;
-    if (revenueSource === 'monetization' || revenueSource === 'both') {
+
+    // Carrier-based revenue gating (ADR 0001–0004)
+    const carrier = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
+    const carrierIncludesMonetization = carrier === 'plan' || carrier === 'feature' || carrier === 'pack';
+    const carrierIncludesCohort = carrier === 'cohort';
+
+    if (carrierIncludesMonetization) {
       const activeServices = (scenario.services ?? []).filter(s => t >= (s.rollout_month ?? 0));
       monetization = calculateMonetizationRevenue(activeAiUsers, activeServices, creditSettings, providersMap);
+    }
 
-      // Plan subscription revenue: base_price × seats per attached plan, active from its
-      // rollout_month. Treated like monetization revenue (added at full value; the associated
-      // AI usage costs are captured separately in tokenCosts). Seats default to 0, and this
-      // never fires under the default 'cohort' source, so cohort-only scenarios are unchanged.
+    if (carrier === 'plan' || (carrier === 'cohort' && scenario.revenue_bridge === 'separate_market')) {
       for (const plan of scenario.plans ?? []) {
         if (t >= (plan.rollout_month ?? 0)) {
           planSubscriptionRevenue += (plan.base_price ?? 0) * (plan.seats ?? 0);
@@ -687,18 +799,24 @@ export function calculateScenario(
 
     let upperRevenue: number;
     let lowerRevenue: number;
-    switch (revenueSource) {
-      case 'monetization':
+    switch (carrier) {
+      case 'feature':
+      case 'pack':
+        // Revenue comes solely from monetization (addon/usage/hybrid)
+        upperRevenue = monetization.totalRevenue;
+        lowerRevenue = monetization.totalRevenue;
+        break;
+      case 'plan':
+        // Revenue = plan subscription + monetization on plan-inherited services
         upperRevenue = monetization.totalRevenue + planSubscriptionRevenue;
         lowerRevenue = monetization.totalRevenue + planSubscriptionRevenue;
         break;
-      case 'both':
-        upperRevenue = upperMarginSum + monetization.totalRevenue + planSubscriptionRevenue;
-        lowerRevenue = lowerMarginSum + monetization.totalRevenue + planSubscriptionRevenue;
-        break;
+      case 'cohort':
       default:
-        upperRevenue = upperMarginSum;
-        lowerRevenue = lowerMarginSum;
+        // Revenue = incremental cohort MRR (upper/lower bands)
+        // If bridge is 'separate_market', plan subscription is additive
+        upperRevenue = upperMarginSum + planSubscriptionRevenue;
+        lowerRevenue = lowerMarginSum + planSubscriptionRevenue;
     }
 
     totalRevenueLowerSum += lowerRevenue;
@@ -947,9 +1065,9 @@ export function runSensitivityAnalysis(
     };
   }
 
-  const revenueSource = scenario.revenue_source ?? 'cohort';
+  const carrier = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
   const monetizationActive =
-    (revenueSource === 'monetization' || revenueSource === 'both') &&
+    (carrier === 'plan' || carrier === 'feature' || carrier === 'pack') &&
     (scenario.services ?? []).some(s => s.monetization && s.monetization.monetization_type !== 'none');
 
   const baseResult = calculateScenario(scenario, allProviders, creditSettings);

@@ -117,11 +117,13 @@ Typical ROI calculators don't understand LLM economics; token cost calculators d
 - **Scenario comparison** — side-by-side KPIs, cumulative ROI curves and opportunity cost (ΔNPV) between alternatives.
 - **Import & export** — model your real customer base from a CSV export (CRM/billing), export scenarios to JSON/CSV, download the dashboard as a high-res PNG.
 - **Current model prices** — bundled price list for OpenAI, Anthropic and Google models with a visible "prices as of" date and one-click sync.
-- **MCP server** — 12 consolidated tools (including a dedicated monetization manager) and 2 resources exposing the same engine to LLM hosts; includes full database CRUD capabilities with action parameters and Human-in-the-Loop safety confirmation for deletions, natural-language scenario generation, and 4 bundled agent skills.
+- **MCP server** — 14 consolidated tools (including a dedicated monetization manager) and 2 resources exposing the same engine to LLM hosts; includes full database CRUD capabilities with action parameters and Human-in-the-Loop safety confirmation for deletions, natural-language scenario generation, and 4 bundled agent skills.
 
 ## Methodology & ROI Calculations
 
 Sherpa operates on an **incremental value** model: all KPIs are computed on the delta between a "With AI" projection and a "Without AI" counterfactual baseline. That delta is booked at **contribution margin** (not top-line revenue) and reported as an **upper/lower band** rather than a single point estimate.
+
+> **Scenario modeling types.** Every scenario picks one of three modeling types, each with a single revenue carrier, so revenue is never double-counted across cohort, plan and monetization streams — see [Scenario modeling](#scenario-modeling) and the [`Architecture/`](Architecture/) ADRs. The incremental-value description below applies to the *incremental* type and to the cohort math underlying all three.
 
 ### Uplift Parameters
 Four AI impact parameters can be configured at cohort, vertical, or scenario override levels:
@@ -164,6 +166,20 @@ The engine never treats top-line revenue as value. Each cohort carries a `gross_
 3. **IRR is conditional, by design:** For non-conventional cash flows (multiple sign changes) or very short paybacks, a single annualized IRR is misleading, so the guard reports `n/d` rather than a spurious root. Lean on NPV + payback.
 4. **Adoption-ramp retention:** The linear ramp blends the full-adoption and baseline projections, so customers who adopt mid-ramp inherit the lower churn as if they had adopted at month 0 — a slight upward bias on retention during the ramp.
 
+## Scenario modeling
+
+The four architecture decision records under [`Architecture/`](Architecture/) restructure how a scenario books revenue. They were prompted by a concrete failure: a scenario could report an NPV of ~$761M (Profitability Index ~7525x) because three descriptions of the *same money* were summed — a cohort ARPU uplift, a per-seat plan charge, and a monetization override — with no single, explicit unit of analysis. The decisions are **accepted and implemented** (the full "expansion as its own cohort" case from ADR 0002 is staged for a later iteration):
+
+- **[ADR 0001](Architecture/0001-trzy-typy-modelowania.md) — three modeling types.** A scenario starts by choosing one of three mutually exclusive modeling types, each framed as a business question instead of jargon:
+  - *"What will this feature do to my existing customers?"* → incremental / cohort-uplift modeling (unit: **customer**; measures the delta in ARPU/churn/retention).
+  - *"How will this product sell on the market?"* → bottom-up / GTM revenue modeling (unit: **seat**; measures the revenue level, seats × price).
+  - *"Is it worth building this thing?"* → investment appraisal / capital budgeting (unit: **interaction/outlay**; NPV/IRR/payback). This is Sherpa's original purpose; the other two are deliberate extensions.
+- **[ADR 0002](Architecture/0002-jeden-nosnik-przychodu.md) — one revenue carrier per type.** Exactly one level (cohort, plan, pack or feature) generates revenue in a given scenario; the chosen type fixes which one. The rest are demoted to cost-to-serve or to a containing context. Expansion beyond the cohort is modeled as a *separate cohort*, never a free-floating `seats` number bolted onto a plan.
+- **[ADR 0003](Architecture/0003-override-monetyzacji-na-nosniku.md) — monetization override only on the carrier.** The monetization override (addon / usage / hybrid) is available only on the level that carries revenue. Type "a" is intentionally flat (monetization = ARPU uplift only); the full pricing model lives in types "b" and "c". The UI signals this so the deliberate simplicity of type "a" doesn't read as a missing feature.
+- **[ADR 0004](Architecture/0004-walidacja-zastap-nie-dodawaj.md) — "replace, don't add" validation.** A cohort-carrier scenario that also carries plan seats is rejected unless an explicit **revenue bridge** (`upsell_on_cohort` / `separate_market`) is set, checked against an `implied_population = current_users × ai_adoption_rate`. The "lots of seats on a small cohort" case becomes a validation block with an actionable message instead of a silent number — consistent with Sherpa's guarded-IRR philosophy of statuses over silent errors.
+
+Guiding principle across all four: **only one level generates revenue; the rest modify it or charge against it. An override is safe when it replaces, dangerous when it adds.** The ADRs follow the Michael Nygard format (context / decision / status / consequences).
+
 ## Architecture
 
 Two independent TypeScript projects share one engine through a symlink — the financial math, domain types, DB schema and demo seed live in `src/lib/shared/` and are compiled into both:
@@ -182,7 +198,7 @@ graph LR
     end
 
     subgraph mcp ["MCP server (stdio)"]
-        TOOLS["11 tools + 2 resources"]
+        TOOLS["14 tools + 2 resources"]
     end
 
     DB[("SQLite<br/>data/sherpa.db")]
@@ -202,6 +218,8 @@ Design decisions worth a look:
 - **Scope override cascade.** A scenario can override cohort parameters at three levels (global → vertical → cohort), resolved by a single cascade function shared by both frontends.
 - **Result cache with invalidation.** Computed KPIs are cached per scenario; every mutation path (services, providers, cohorts, costs…) cascades an invalidation so dashboards never show stale numbers.
 - **Self-initializing MCP server.** On first run it creates the schema and demo data on its own, in an OS-appropriate user data directory — no web app required first.
+
+The scenario-modeling decisions themselves — three modeling types, one revenue carrier per type, and "replace-don't-add" validation — are documented as ADRs under [`Architecture/`](Architecture/) and implemented across the engine and wizard; see [Scenario modeling](#scenario-modeling).
 
 
 **Database sharing**: For packaged extension installs (`.mcpb`), the spawned dashboard automatically connects to the same database located at:

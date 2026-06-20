@@ -15,6 +15,8 @@
   import Badge from '$lib/components/ui/badge/badge.svelte';
   import ScenarioMonetizationOverrides from '$lib/components/catalog/ScenarioMonetizationOverrides.svelte';
   import ScenarioEntityOverrides from '$lib/components/catalog/ScenarioEntityOverrides.svelte';
+  import { resolveCarrier, validateRevenueIntegrity } from '$lib/shared/financial-math';
+  import type { ModelingType, RevenueCarrier, RevenueBridge } from '$lib/shared/types';
 
   // Lucide Icons
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -42,9 +44,33 @@
   const capexContingencyPct = $derived(capexContingencyPctArr[0]);
 
   let scopeType = $state<'all_clients' | 'verticals' | 'cohorts'>('all_clients');
-  let revenueSource = $state<'cohort' | 'monetization' | 'both'>('cohort');
+  let modelingType = $state<ModelingType>('appraisal');
+  let revenueCarrier = $state<RevenueCarrier | null>('cohort');
+  let revenueBridge = $state<RevenueBridge | null>(null);
   let selectedVerticals = $state<Record<string, boolean>>({});
   let selectedCohorts = $state<Record<string, boolean>>({});
+
+  // Derivations for ADR 0001-0004
+  const resolvedCarrier = $derived(resolveCarrier(modelingType, revenueCarrier));
+
+  const draftScenario = $derived({
+    id: scenario?.id || 'draft',
+    name,
+    description,
+    projection_months: projectionMonths,
+    discount_rate: discountRate / 100,
+    scope_type: scopeType,
+    capex_contingency_pct: capexContingencyPct / 100,
+    modeling_type: modelingType,
+    revenue_carrier: resolvedCarrier,
+    revenue_bridge: revenueBridge,
+    scope_cohorts: data.cohorts.filter(c => selectedCohorts[c.id]),
+    plans: data.plans.filter(p => selectedPlans[p.id]).map(p => ({ ...p, seats: seatsPlans[p.id] ?? 0 })),
+    services: data.services.filter(s => selectedServices[s.id]),
+    costs: []
+  });
+
+  const integrityResult = $derived(validateRevenueIntegrity(draftScenario as any));
 
   // Step 2: Overrides
   type OverrideRow = {
@@ -85,6 +111,21 @@
   let selectedPlans = $state<Record<string, boolean>>({});
   let rolloutPlans = $state<Record<string, number>>({});
   let seatsPlans = $state<Record<string, number>>({});
+  const totalSeatsScheduled = $derived(
+    Object.keys(seatsPlans)
+      .filter(id => selectedPlans[id])
+      .reduce((sum, id) => sum + (seatsPlans[id] || 0), 0)
+  );
+
+  // Incremental modeling has no plan-seat revenue (ADR 0001/0003); keep seats at
+  // 0 so the integrity check never blocks and the plan inputs stay consistent.
+  $effect(() => {
+    if (modelingType === 'incremental') {
+      for (const id of Object.keys(seatsPlans)) {
+        if (seatsPlans[id]) seatsPlans[id] = 0;
+      }
+    }
+  });
 
   // Step 4: Cost Items
   let selectedCosts = $state<Record<string, boolean>>({});
@@ -100,7 +141,9 @@
       discountRateArr = [Math.round(s.discount_rate * 100)];
       capexContingencyPctArr = [Math.round((s.capex_contingency_pct || 0) * 100)];
       scopeType = s.scope_type;
-      revenueSource = s.revenue_source ?? 'cohort';
+      modelingType = s.modeling_type ?? 'appraisal';
+      revenueCarrier = s.revenue_carrier ?? 'cohort';
+      revenueBridge = s.revenue_bridge ?? null;
 
       selectedVerticals = {};
       if (s.scope_verticals) {
@@ -582,19 +625,82 @@
             </div>
           </div>
 
-          <!-- Revenue Source -->
-          <div class="space-y-2">
-            <Label for="revenueSource" class="font-semibold">Revenue Source</Label>
-            <select id="revenueSource" name="revenueSource" bind:value={revenueSource} class="w-full glass-inset border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground">
-              <option value="cohort">Cohort ARPU uplift (incremental)</option>
-              <option value="monetization">AI monetization only</option>
-              <option value="both">Both — ARPU uplift + AI monetization</option>
-            </select>
-            <p class="text-xs text-muted-foreground">
-              How this scenario books revenue: incremental cohort ARPU, direct AI monetization
-              (add-on / usage / hybrid models on the included plans, packs and services), or both combined.
+          <!-- Modeling Type (ADR 0001) -->
+          <div class="space-y-3">
+            <Label class="font-semibold text-sm">Modeling Type</Label>
+            <p class="text-xs text-muted-foreground -mt-1">
+              Choose the business-centric modeling style for this scenario.
             </p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
+              <label class="flex flex-col p-4 border rounded-lg cursor-pointer hover:glass-inset transition duration-150 {modelingType === 'incremental' ? 'border-primary bg-primary/5' : 'border-border'}">
+                <div class="flex items-center space-x-2">
+                  <input type="radio" name="modelingType" value="incremental" bind:group={modelingType} class="accent-primary" />
+                  <span class="text-sm font-bold text-foreground">Incremental</span>
+                </div>
+                <span class="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+                  Focuses solely on cohort-level metrics (e.g. churn reduction, ARPU uplift). Monetization and plans are disabled.
+                </span>
+              </label>
+
+              <label class="flex flex-col p-4 border rounded-lg cursor-pointer hover:glass-inset transition duration-150 {modelingType === 'gtm' ? 'border-primary bg-primary/5' : 'border-border'}">
+                <div class="flex items-center space-x-2">
+                  <input type="radio" name="modelingType" value="gtm" bind:group={modelingType} class="accent-primary" />
+                  <span class="text-sm font-bold text-foreground">Go-To-Market (GTM)</span>
+                </div>
+                <span class="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+                  Focuses on packaging and plans. Revenue is carried by plans (pricing plan seats × base price).
+                </span>
+              </label>
+
+              <label class="flex flex-col p-4 border rounded-lg cursor-pointer hover:glass-inset transition duration-150 {modelingType === 'appraisal' ? 'border-primary bg-primary/5' : 'border-border'}">
+                <div class="flex items-center space-x-2">
+                  <input type="radio" name="modelingType" value="appraisal" bind:group={modelingType} class="accent-primary" />
+                  <span class="text-sm font-bold text-foreground">Appraisal</span>
+                </div>
+                <span class="text-[10px] text-muted-foreground mt-2 leading-relaxed">
+                  Advanced hybrid/monetization modeling. Lets you choose a custom revenue carrier level (Cohort, Plan, Pack, or Service).
+                </span>
+              </label>
+            </div>
           </div>
+
+          <!-- Revenue Carrier Selection (ADR 0002) - Only visible for Appraisal -->
+          {#if modelingType === 'appraisal'}
+            <div class="space-y-3 glass-inset border border-border p-4 rounded-lg">
+              <Label class="font-semibold text-sm">Revenue Carrier Level</Label>
+              <p class="text-xs text-muted-foreground -mt-1">
+                Exactly one entity level is the carrier of revenue; others act as cost or context.
+              </p>
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
+                {#each [{value: 'cohort', label: 'Cohort'}, {value: 'plan', label: 'Pricing Plan'}, {value: 'pack', label: 'Feature Pack'}, {value: 'feature', label: 'Atomic Service'}] as carrierOpt}
+                  <label class="flex items-center space-x-2 text-xs cursor-pointer hover:bg-foreground/5 p-2 border rounded border-border/40 {revenueCarrier === carrierOpt.value ? 'bg-primary/5 border-primary/50' : ''}">
+                    <input type="radio" name="revenueCarrier" value={carrierOpt.value} bind:group={revenueCarrier} class="accent-primary" />
+                    <span class="font-medium">{carrierOpt.label}</span>
+                  </label>
+                {/each}
+              </div>
+            </div>
+          {:else}
+            <!-- Hidden inputs to submit values for static/inferred carriers -->
+            <input type="hidden" name="revenueCarrier" value={resolvedCarrier} />
+          {/if}
+
+          <!-- Revenue Bridge Selection (ADR 0004) - Only visible when carrier is cohort and plan seats exist -->
+          {#if resolvedCarrier === 'cohort' && totalSeatsScheduled > 0}
+            <div class="space-y-2 glass-inset border border-border p-4 rounded-lg">
+              <Label for="revenueBridge" class="font-semibold text-sm">Revenue Bridge Relationship</Label>
+              <p class="text-xs text-muted-foreground -mt-1">
+                How do plan seats relate to the cohort population? Choose a bridge to resolve overlap.
+              </p>
+              <select id="revenueBridge" name="revenueBridge" bind:value={revenueBridge} class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-medium">
+                <option value={null}>-- Select Revenue Bridge --</option>
+                <option value="upsell_on_cohort">Upsell on Cohort (Plan seats overlap with/are subset of cohort; plan subscription is informational)</option>
+                <option value="separate_market">Separate Market (Plan seats are a separate market; plan subscription is additive)</option>
+              </select>
+            </div>
+          {:else}
+            <input type="hidden" name="revenueBridge" value="" />
+          {/if}
 
           <hr class="border-border/60" />
 
@@ -915,9 +1021,9 @@
                         <Label class="text-xs text-muted-foreground shrink-0">Rollout Month:</Label>
                         <input type="number" name="rollout_month_plan_{plan.id}" min="0" max={projectionMonths} bind:value={rolloutPlans[plan.id]} class="w-16 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
                         <span class="text-[10px] text-muted-foreground">M{rolloutPlans[plan.id]}</span>
-                        {#if revenueSource !== 'cohort'}
+                        {#if resolvedCarrier === 'plan' || (resolvedCarrier === 'cohort' && modelingType !== 'incremental')}
                           <Label class="text-xs text-muted-foreground shrink-0 ml-1">Seats:</Label>
-                          <input type="number" name="seats_plan_{plan.id}" min="0" bind:value={seatsPlans[plan.id]} title="Subscribers on this plan (drives base_price revenue)" class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
+                          <input type="number" name="seats_plan_{plan.id}" min="0" bind:value={seatsPlans[plan.id]} title="Subscribers on this plan" class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
                         {:else}
                           <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
                         {/if}
@@ -992,13 +1098,16 @@
               </div>
             {/if}
           </div>
-          {#if revenueSource !== 'cohort'}
-            <div class="mt-6">
-              {#key monetizationKey}
-                <ScenarioMonetizationOverrides scenarioId={scenario.id} entities={monetizationEntities} />
-              {/key}
-            </div>
-          {/if}
+          <div class="mt-6">
+            {#key monetizationKey}
+              <ScenarioMonetizationOverrides
+                scenarioId={scenario.id}
+                entities={monetizationEntities}
+                modelingType={modelingType}
+                resolvedCarrier={resolvedCarrier}
+              />
+            {/key}
+          </div>
 
           {#if offeringOverrideRows.length > 0}
             <div class="mt-6">
@@ -1028,6 +1137,20 @@
       <!-- Step 4: Cost Items -->
       <div class={currentStep === 4 ? 'block' : 'hidden'}>
         <CardContent class="py-6 space-y-5 max-h-[60vh] overflow-y-auto select-none">
+          {#if integrityResult.status !== 'ok'}
+            <Card class="border-{integrityResult.status === 'block' ? 'rose' : 'amber'}-500/30 bg-{integrityResult.status === 'block' ? 'rose' : 'amber'}-500/5 p-4 select-none">
+              <CardContent class="flex items-start space-x-3 text-sm p-0">
+                <Info class="h-5 w-5 text-{integrityResult.status === 'block' ? 'rose' : 'amber'}-500 shrink-0 mt-0.5" />
+                <div>
+                  <h4 class="font-bold text-{integrityResult.status === 'block' ? 'rose' : 'amber'}-600 dark:text-{integrityResult.status === 'block' ? 'rose' : 'amber'}-400">
+                    {integrityResult.status === 'block' ? 'Revenue Integrity Block' : 'Revenue Integrity Warning'}
+                  </h4>
+                  <p class="text-muted-foreground mt-1 text-xs">{integrityResult.message}</p>
+                </div>
+              </CardContent>
+            </Card>
+          {/if}
+
           <h3 class="text-sm font-bold text-foreground uppercase tracking-wider flex items-center mb-3">
             <DollarSign class="h-4 w-4 mr-1.5 text-primary" /> Map OPEX & CAPEX Expense Items
           </h3>
@@ -1070,7 +1193,7 @@
           <Button type="button" variant="outline" onclick={prevStep}>
             <ArrowLeft class="h-4 w-4 mr-2" /> Back
           </Button>
-          <Button type="submit">
+          <Button type="submit" disabled={integrityResult.status === 'block'}>
             <Save class="h-4 w-4 mr-2" /> Save Changes
           </Button>
         </CardFooter>

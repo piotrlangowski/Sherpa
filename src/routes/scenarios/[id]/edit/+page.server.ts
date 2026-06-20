@@ -63,6 +63,9 @@ export const actions: Actions = {
     const scopeType = formData.get('scopeType') as 'all_clients' | 'verticals' | 'cohorts';
     const revenueSource = (formData.get('revenueSource') as 'cohort' | 'monetization' | 'both') || 'cohort';
     const capexContingencyPct = parseFloat(formData.get('capexContingencyPct') as string || '0');
+    const modelingType = (formData.get('modelingType') as string) || 'appraisal';
+    const revenueCarrier = (formData.get('revenueCarrier') as string) || null;
+    const revenueBridge = (formData.get('revenueBridge') as string) || null;
 
     let verticalIds: string[] = [];
     if (scopeType === 'verticals') {
@@ -123,6 +126,9 @@ export const actions: Actions = {
         scope_type: scopeType,
         revenue_source: revenueSource,
         capex_contingency_pct: capexContingencyPct,
+        modeling_type: modelingType as any,
+        revenue_carrier: revenueCarrier as any,
+        revenue_bridge: revenueBridge as any,
         vertical_ids: verticalIds,
         cohort_config_ids: cohortConfigIds,
         scope_overrides: scopeOverrides,
