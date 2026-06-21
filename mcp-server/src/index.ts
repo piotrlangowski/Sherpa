@@ -1747,25 +1747,10 @@ server.tool(
         const now = new Date().toISOString();
 
         db.transaction(() => {
-          if (args.cohort_config) {
-            const cohortId = crypto.randomUUID();
-            const cc = args.cohort_config;
-            db.prepare(`
-              INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate ?? 0, cc.monthly_churn_rate ?? 0.05, cc.retention_floor ?? 0.60, cc.monthly_expansion_rate ?? 0.02, cc.ai_adoption_rate ?? 0.30, cc.base_arpu ?? 100, cc.arpu_uplift ?? 0, cc.arpu_uplift_percent ?? 0, cc.churn_reduction ?? 0, cc.acquisition_uplift ?? 0, cc.gross_margin ?? 1.0, cc.adoption_ramp_months ?? 0, now, now);
-
-            db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`)
-              .run(scenarioId, cohortId);
-          }
-
-          if (args.cohort_ids) {
-            const insertCohortLink = db.prepare("INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)");
-            for (const cId of args.cohort_ids) {
-              insertCohortLink.run(scenarioId, cId);
-            }
-          }
-
+          // Insert the parent scenarios row FIRST. The scenario_cohorts / scenario_services /
+          // scenario_costs (etc.) junction tables all have FKs to scenarios(id), and the MCP
+          // connection runs with foreign_keys = ON, so any child row inserted before the parent
+          // exists fails with "FOREIGN KEY constraint failed". (Mirrors scenariosRepository.create.)
           let modeling_type = args.modeling_type;
           let revenue_carrier = args.revenue_carrier;
           let revenue_bridge = args.revenue_bridge;
@@ -1806,6 +1791,25 @@ server.tool(
             args.discount_rate ?? 0.10, revSource, args.capex_contingency_pct ?? 0,
             modeling_type, revenue_carrier || null, revenue_bridge || null, now, now
           );
+
+          if (args.cohort_config) {
+            const cohortId = crypto.randomUUID();
+            const cc = args.cohort_config;
+            db.prepare(`
+              INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(cohortId, cc.name, cc.vertical_id || null, cc.current_users, cc.monthly_acquisition, cc.acquisition_growth_rate ?? 0, cc.monthly_churn_rate ?? 0.05, cc.retention_floor ?? 0.60, cc.monthly_expansion_rate ?? 0.02, cc.ai_adoption_rate ?? 0.30, cc.base_arpu ?? 100, cc.arpu_uplift ?? 0, cc.arpu_uplift_percent ?? 0, cc.churn_reduction ?? 0, cc.acquisition_uplift ?? 0, cc.gross_margin ?? 1.0, cc.adoption_ramp_months ?? 0, now, now);
+
+            db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`)
+              .run(scenarioId, cohortId);
+          }
+
+          if (args.cohort_ids) {
+            const insertCohortLink = db.prepare("INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)");
+            for (const cId of args.cohort_ids) {
+              insertCohortLink.run(scenarioId, cId);
+            }
+          }
 
           if (args.services) {
             const insertServ = db.prepare("INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)");
