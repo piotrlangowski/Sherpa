@@ -67,6 +67,31 @@ describe('db-path resolver', () => {
       expect(resolved).toBe(path.join(os.homedir(), 'Library', 'Application Support', 'Sherpa', 'sherpa.db'));
     });
 
+    it('trims trailing whitespace/newline from SHERPA_DB_PATH', () => {
+      // An mcp_config substitution can leave a trailing space/newline; without
+      // trimming this opens a *different* SQLite file (e.g. "sherpa.db ").
+      const resolved = resolveSherpaDbPath({
+        env: { SHERPA_DB_PATH: '/some/custom/path.db \n' }
+      });
+      expect(resolved).toBe('/some/custom/path.db');
+    });
+
+    it('still applies the "${" placeholder guard after trimming', () => {
+      const resolved = resolveSherpaDbPath({
+        env: { SHERPA_DB_PATH: '  ${user_config.database_path}  ' },
+        platform: 'darwin'
+      });
+      expect(resolved).toBe(path.join(os.homedir(), 'Library', 'Application Support', 'Sherpa', 'sherpa.db'));
+    });
+
+    it('treats a whitespace-only SHERPA_DB_PATH as unset', () => {
+      const resolved = resolveSherpaDbPath({
+        env: { SHERPA_DB_PATH: '   ' },
+        platform: 'darwin'
+      });
+      expect(resolved).toBe(path.join(os.homedir(), 'Library', 'Application Support', 'Sherpa', 'sherpa.db'));
+    });
+
     it('returns repoDbPath if it exists on disk', () => {
       const tempDir = createTempDir();
       const existingFile = path.join(tempDir, 'repo.db');

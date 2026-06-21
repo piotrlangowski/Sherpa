@@ -15,8 +15,11 @@ export function userDataDir(
 /**
  * Resolution order (single source of truth for the app AND the MCP server):
  * 1. SHERPA_DB_PATH — always wins, even for a not-yet-existing file
- *    (dev/test separation depends on this). Guard against an unsubstituted
- *    "${user_config...}" placeholder from an extension host's mcp_config.
+ *    (dev/test separation depends on this). Trimmed first: an extension host's
+ *    mcp_config substitution can leave a trailing space/newline, which would
+ *    silently open a *different* SQLite file (e.g. "sherpa.db " with a trailing
+ *    space) and lose every write. Then guard against an unsubstituted
+ *    "${user_config...}" placeholder from that same mcp_config.
  * 2. repoDbPath — caller-supplied repo candidate; used when it exists,
  *    or unconditionally when preferRepoPath (the SvelteKit dev server).
  * 3. OS user data dir — packaged installs.
@@ -28,9 +31,10 @@ export function resolveSherpaDbPath(opts: {
   platform?: NodeJS.Platform;
 } = {}): string {
   const env = opts.env ?? process.env;
-  const envDbPath = env.SHERPA_DB_PATH && !env.SHERPA_DB_PATH.includes('${')
-    ? env.SHERPA_DB_PATH : undefined;
+  const raw = env.SHERPA_DB_PATH?.trim();
+  const envDbPath = raw && !raw.includes('${') ? raw : undefined;
   if (envDbPath) return envDbPath;
-  if (opts.repoDbPath && (opts.preferRepoPath || fs.existsSync(opts.repoDbPath))) return opts.repoDbPath;
+  const repoDbPath = opts.repoDbPath?.trim();
+  if (repoDbPath && (opts.preferRepoPath || fs.existsSync(repoDbPath))) return repoDbPath;
   return path.join(userDataDir(opts.platform, env), 'sherpa.db');
 }
