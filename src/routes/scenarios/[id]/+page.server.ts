@@ -1,6 +1,10 @@
 import type { PageServerLoad, Actions } from './$types';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
-import { runAndSaveScenario, calculateScenario, resolveScenarioCohorts } from '$lib/server/services/financial-engine';
+import { runAndSaveScenario, calculateScenario, resolveScenarioCohorts, attachMonetization } from '$lib/server/services/financial-engine';
+import { providersRepository } from '$lib/server/repositories/providers';
+import { settingsRepository } from '$lib/server/repositories/settings';
+import { validateScenarioConfig } from '$lib/shared/financial-math';
+import type { ScenarioDiagnostic } from '$lib/shared/types';
 import { error, fail, redirect } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async ({ params }) => {
@@ -21,9 +25,11 @@ export const load: PageServerLoad = async ({ params }) => {
   }
 
   let timeline: any[] = [];
+  let detailedResult: any = null;
   try {
     const detailed = calculateScenario(scenario);
     timeline = detailed.timeline;
+    detailedResult = detailed;
   } catch (err) {
     timeline = [];
   }
@@ -34,12 +40,28 @@ export const load: PageServerLoad = async ({ params }) => {
     totalUsers: resolvedConfigs.reduce((acc, cc) => acc + (cc.current_users || 0), 0)
   };
 
+  // Advisory configuration diagnostics (non-blocking dead-end checks).
+  let diagnostics: ScenarioDiagnostic[] = [];
+  try {
+    const validationScenario = { ...attachMonetization(scenario), scope_cohorts: resolvedConfigs };
+    diagnostics = validateScenarioConfig(
+      validationScenario,
+      settingsRepository.get(),
+      providersRepository.getAll(),
+      undefined,
+      detailedResult ?? undefined
+    );
+  } catch (err) {
+    diagnostics = [];
+  }
+
   return {
     scenario,
     results,
     timeline,
     scopeSummary,
-    resolvedConfigs
+    resolvedConfigs,
+    diagnostics
   };
 };
 

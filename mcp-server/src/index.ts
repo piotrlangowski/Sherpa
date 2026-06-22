@@ -15,7 +15,8 @@ import {
   buildCohortModel,
   applyScopeOverrides,
   resolveCarrier,
-  validateRevenueIntegrity
+  validateRevenueIntegrity,
+  validateScenarioConfig
 } from "./shared/financial-math.js";
 import {
   convertAmount,
@@ -34,7 +35,9 @@ import type {
   ExchangeRates,
   CreditSettings,
   MonetizationConfig,
-  RevenueSource
+  RevenueSource,
+  Settings,
+  ScenarioDiagnostic
 } from "./shared/types.js";
 import { SERVER_INSTRUCTIONS, GUIDANCE_PROMPTS } from "./generated/guidance.js";
 
@@ -129,6 +132,28 @@ function getCreditSettings(): CreditSettings {
     defaultInputTokensPerCredit: parseInt(map['default_input_tokens_per_credit'] || '1000000', 10),
     defaultOutputTokensPerCredit: parseInt(map['default_output_tokens_per_credit'] || '333333', 10)
   };
+}
+
+// Helper: Compute advisory configuration diagnostics ("dead ends") for a scenario.
+// Non-blocking; mirrors what the web UI surfaces. `scenario` is expected pre-normalization
+// (original currencies) with monetization attached, as returned by getFullScenario.
+function getScenarioDiagnostics(scenario: Scenario, result?: CalculationResult): ScenarioDiagnostic[] {
+  try {
+    const providers = scenario.id ? applyProviderOverrides(scenario.id, getProviders()) : getProviders();
+    const { currency } = loadCurrencyContext();
+    const asOf = (db.prepare("SELECT value FROM settings WHERE key = 'exchange_rates_as_of'").get() as { value: string } | undefined)?.value ?? '';
+    const settings = { currency, exchange_rates_as_of: asOf } as Settings;
+    return validateScenarioConfig(scenario, settings, providers, getCreditSettings(), result);
+  } catch {
+    return [];
+  }
+}
+
+// Helper: Render diagnostics as a Markdown section for tool responses (empty string when none).
+function formatDiagnosticsMcp(diagnostics: ScenarioDiagnostic[]): string {
+  if (diagnostics.length === 0) return '';
+  const lines = diagnostics.map(d => `- [${d.severity.toUpperCase()}] ${d.message}`);
+  return `\n\nConfiguration diagnostics:\n${lines.join('\n')}`;
 }
 
 // Helper: Resolve effective monetization config for each service in the scenario
@@ -1733,14 +1758,18 @@ server.tool(
         if (filtered.scope_cohorts) {
           filtered.scope_cohorts = filtered.scope_cohorts.map(({ created_at, updated_at, ...rest }: any) => rest);
         }
-        return { content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }] };
+        const getDiagnostics = getScenarioDiagnostics(scenario as Scenario);
+        return { content: [{ type: "text", text: JSON.stringify({ ...filtered, diagnostics: getDiagnostics }, null, 2) }] };
       }
 
       if (args.action === "create") {
         if (!args.name) {
           throw new z.ZodError([{ code: "custom", path: ["name"], message: "Nazwa jest wymagana przy tworzeniu scenariusza." }]);
         }
-        if (!args.cohort_config && (!args.cohort_ids || args.cohort_ids.length === 0)) {
+        const scopeType = args.scope_type ?? 'cohorts';
+        // all_clients resolves its population from the full cohort base (+ client_base globals),
+        // so it does not require an explicit cohort. Only non-all_clients scopes need one.
+        if (scopeType !== 'all_clients' && !args.cohort_config && (!args.cohort_ids || args.cohort_ids.length === 0)) {
           throw new z.ZodError([{ code: "custom", path: ["cohort_config"], message: "Musisz podać konfigurację kohorty (cohort_config) lub identyfikatory istniejących kohort (cohort_ids) przy tworzeniu scenariusza." }]);
         }
         const scenarioId = crypto.randomUUID();
@@ -1785,10 +1814,10 @@ server.tool(
               revenue_source, capex_contingency_pct, modeling_type, revenue_carrier,
               revenue_bridge, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, 'cohorts', ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             scenarioId, args.name, args.description || null, args.projection_months ?? 36,
-            args.discount_rate ?? 0.10, revSource, args.capex_contingency_pct ?? 0,
+            args.discount_rate ?? 0.10, scopeType, revSource, args.capex_contingency_pct ?? 0,
             modeling_type, revenue_carrier || null, revenue_bridge || null, now, now
           );
 
@@ -1872,7 +1901,7 @@ server.tool(
         return {
           content: [{ 
             type: "text", 
-            text: `${responseText} Projections calculated (NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}, IRR: ${formatIrrMcp(results.irr)}).${warningText}\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}` 
+            text: `${responseText} Projections calculated (NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}, IRR: ${formatIrrMcp(results.irr)}).${warningText}\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}${formatDiagnosticsMcp(getScenarioDiagnostics(fullScenario, results))}`
           }]
         };
       }
@@ -2003,7 +2032,7 @@ server.tool(
         return {
           content: [{
             type: "text",
-            text: `${responseText} ROI re-projected successfully.${warningText}\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}`
+            text: `${responseText} ROI re-projected successfully.${warningText}\nLinked Cohorts: ${linkedCohortsStr}\nLinked Costs: ${linkedCostsStr}${formatDiagnosticsMcp(getScenarioDiagnostics(fullScenario, results))}`
           }]
         };
       }
@@ -2062,7 +2091,7 @@ server.tool(
         return {
           content: [{
             type: "text",
-            text: `ROI Results calculated successfully:\n- NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}\n- IRR (Guarded Annualized): ${formatIrrMcp(results.irr)}\n- Payback Period Range: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n- TCO: ${results.tco.toLocaleString()} ${currency}\n- PI Range: ${results.piLower.toFixed(2)}x – ${results.piUpper.toFixed(2)}x${warningText}`
+            text: `ROI Results calculated successfully:\n- NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}\n- IRR (Guarded Annualized): ${formatIrrMcp(results.irr)}\n- Payback Period Range: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n- TCO: ${results.tco.toLocaleString()} ${currency}\n- PI Range: ${results.piLower.toFixed(2)}x – ${results.piUpper.toFixed(2)}x${warningText}${formatDiagnosticsMcp(getScenarioDiagnostics(scenario, results))}`
           }]
         };
       }
@@ -2296,6 +2325,7 @@ server.tool(
         responseText += `- **Payback period range**: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n`;
         responseText += `- **TCO**: ${results.tco.toLocaleString()} ${currency}\n`;
         responseText += `${warningText}\n\n*Scenario ID: \`${scenarioId}\`. View this scenario inside the SvelteKit dashboard.*`;
+        responseText += formatDiagnosticsMcp(getScenarioDiagnostics(fullScenario, results));
 
         return {
           content: [{ type: "text", text: responseText }]

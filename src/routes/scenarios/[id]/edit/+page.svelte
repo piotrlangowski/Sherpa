@@ -15,7 +15,7 @@
   import Badge from '$lib/components/ui/badge/badge.svelte';
   import ScenarioMonetizationOverrides from '$lib/components/catalog/ScenarioMonetizationOverrides.svelte';
   import ScenarioEntityOverrides from '$lib/components/catalog/ScenarioEntityOverrides.svelte';
-  import { resolveCarrier, validateRevenueIntegrity } from '$lib/shared/financial-math';
+  import { resolveCarrier, validateRevenueIntegrity, validateScenarioConfig } from '$lib/shared/financial-math';
   import type { ModelingType, RevenueCarrier, RevenueBridge } from '$lib/shared/types';
 
   // Lucide Icons
@@ -27,6 +27,7 @@
   import DollarSign from '@lucide/svelte/icons/dollar-sign';
   import Edit2 from '@lucide/svelte/icons/edit-2';
   import Info from '@lucide/svelte/icons/info';
+  import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
 
   let { data } = $props();
   const scenario = $derived(data.scenario);
@@ -71,6 +72,9 @@
   });
 
   const integrityResult = $derived(validateRevenueIntegrity(draftScenario as any));
+  const diagnostics = $derived(
+    validateScenarioConfig(draftScenario as any, data.settings, data.providers)
+  );
 
   // Step 2: Overrides
   type OverrideRow = {
@@ -1150,6 +1154,8 @@
               </CardContent>
             </Card>
           {/if}
+
+          <DiagnosticsBanner {diagnostics} />
 
           <h3 class="text-sm font-bold text-foreground uppercase tracking-wider flex items-center mb-3">
             <DollarSign class="h-4 w-4 mr-1.5 text-primary" /> Map OPEX & CAPEX Expense Items

@@ -25,8 +25,205 @@ import type {
   ModelingType,
   RevenueCarrier,
   RevenueIntegrityResult,
-  RevenueIntegrityStatus
+  RevenueIntegrityStatus,
+  Settings,
+  ScenarioDiagnostic
 } from './types.js';
+
+/**
+ * Advisory configuration sanity checks ("dead ends") for a scenario.
+ *
+ * Pure and additive: unlike `validateRevenueIntegrity` (which can hard-`block`
+ * a calculation), every diagnostic here is non-blocking (`info`/`warn`). The
+ * scenario still computes; these only surface configurations that quietly
+ * produce structurally meaningless or misleading numbers (a percentage uplift
+ * on a $0 base, a plan carrier with 0 seats, an adoption ramp longer than the
+ * horizon, etc.).
+ *
+ * Operates on `scenario.scope_cohorts` already resolved by the caller (same
+ * contract as `validateRevenueIntegrity`). `result` is optional and unlocks the
+ * one result-dependent check (#4, zero benefit despite uplifts).
+ */
+export function validateScenarioConfig(
+  scenario: Scenario,
+  settings: Settings,
+  providers: Provider[],
+  creditSettings?: CreditSettings,
+  result?: CalculationResult,
+): ScenarioDiagnostic[] {
+  const diagnostics: ScenarioDiagnostic[] = [];
+  const EPS = 1e-9;
+  const cs = creditSettings ?? DEFAULT_CREDIT_SETTINGS;
+
+  const cohorts = scenario.scope_cohorts ?? [];
+  const plans = scenario.plans ?? [];
+  const services = scenario.services ?? [];
+  const projectionMonths = scenario.projection_months ?? 36;
+  const carrier = resolveCarrier(scenario.modeling_type ?? 'appraisal', scenario.revenue_carrier);
+
+  // ── Tier 1: dead revenue carrier ─────────────────────────────────────────
+
+  // #1 A percentage ARPU uplift on a $0 base contributes exactly $0 (30% × 0 = 0).
+  for (const c of cohorts) {
+    if (Math.abs(c.base_arpu ?? 0) < EPS && (c.arpu_uplift_percent ?? 0) > 0) {
+      diagnostics.push({
+        code: 'dead_arpu_uplift',
+        severity: 'warn',
+        field: `cohort:${c.id}`,
+        message: `Cohort "${c.name}": a ${((c.arpu_uplift_percent ?? 0) * 100).toFixed(0)}% ARPU uplift on a $0 base contributes $0. Set a non-zero base ARPU, or use a flat uplift (arpu_uplift) instead of a percentage.`
+      });
+    }
+  }
+
+  // #2 A plan-carrier scenario with no seats has a revenue source that produces $0.
+  if (carrier === 'plan') {
+    const totalSeats = plans.reduce((sum, p) => sum + (p.seats ?? 0), 0);
+    if (totalSeats <= 0) {
+      diagnostics.push({
+        code: 'carrier_no_revenue',
+        severity: 'warn',
+        field: 'plans',
+        message: `Revenue carrier is "plan" but total plan seats = 0, so the designated revenue source produces $0 — the scenario is pure cost. Set seats on at least one plan.`
+      });
+    }
+  }
+
+  // #3 Cohort ARPU is silently dropped when the carrier isn't the cohort.
+  if (carrier !== 'cohort') {
+    for (const c of cohorts) {
+      if ((c.base_arpu ?? 0) > EPS) {
+        diagnostics.push({
+          code: 'cohort_revenue_dropped',
+          severity: 'warn',
+          field: `cohort:${c.id}`,
+          message: `Cohort "${c.name}" has ARPU $${(c.base_arpu ?? 0).toFixed(0)} but the revenue carrier is "${carrier}", so its revenue is ignored (only its cost remains). Switch the carrier to "cohort" to book it, or keep this cohort as context only.`
+        });
+      }
+    }
+  }
+
+  // ── Tier 2: context-less levers ──────────────────────────────────────────
+
+  // #4 Uplift levers configured, yet the modeled benefit is structurally zero.
+  if (result?.timeline && result.timeline.length > 0) {
+    const hasUplifts = cohorts.some(c =>
+      (c.arpu_uplift_percent ?? 0) > 0 ||
+      (c.arpu_uplift ?? 0) > 0 ||
+      (c.churn_reduction ?? 0) > 0 ||
+      (c.acquisition_uplift ?? 0) > 0
+    );
+    const benefitZero = result.timeline.every(t => Math.abs(t.revenue) < 0.01);
+    if (hasUplifts && benefitZero) {
+      diagnostics.push({
+        code: 'zero_benefit_despite_uplifts',
+        severity: 'warn',
+        message: `Uplift levers are configured but the modeled benefit is ~0 (PI ≈ 0). The per-user value is likely $0 (e.g. base ARPU = 0), so retention/expansion/acquisition levers have nothing to act on.`
+      });
+    }
+  }
+
+  // #5 Adoption ramp at least as long as the horizon never reaches its target.
+  for (const c of cohorts) {
+    const ramp = c.adoption_ramp_months ?? 0;
+    if (ramp > 0 && ramp >= projectionMonths) {
+      diagnostics.push({
+        code: 'ramp_exceeds_horizon',
+        severity: 'warn',
+        field: `cohort:${c.id}`,
+        message: `Cohort "${c.name}": adoption ramp (${ramp} mo) ≥ projection horizon (${projectionMonths} mo), so the target ${((c.ai_adoption_rate ?? 0) * 100).toFixed(0)}% adoption is never reached — the headline adoption is overstated.`
+      });
+    }
+  }
+
+  // #6 Churn reduction above a soft ceiling implies near-immortal customers.
+  for (const c of cohorts) {
+    const cr = c.churn_reduction ?? 0;
+    if (cr > 1.0) {
+      diagnostics.push({
+        code: 'churn_reduction_high',
+        severity: 'warn',
+        field: `cohort:${c.id}`,
+        message: `Cohort "${c.name}": churn reduction of ${(cr * 100).toFixed(0)}% exceeds 100% — clamp it to at most 1.0.`
+      });
+    } else if (cr > 0.7) {
+      diagnostics.push({
+        code: 'churn_reduction_high',
+        severity: 'warn',
+        field: `cohort:${c.id}`,
+        message: `Cohort "${c.name}": churn reduction of ${(cr * 100).toFixed(0)}% implies near-immortal customers; values above ~70% are rarely defensible.`
+      });
+    }
+  }
+
+  // #7 A 0% discount rate turns NPV into the undiscounted sum (NPV → −TCO).
+  if (scenario.discount_rate === 0) {
+    diagnostics.push({
+      code: 'discount_rate_zero',
+      severity: 'warn',
+      field: 'discount_rate',
+      message: `Discount rate is 0%: the time value of money is off, so NPV collapses toward −TCO. Set a non-zero rate (e.g. 0.10 for 10%).`
+    });
+  }
+
+  // ── Tier 3: consistency ──────────────────────────────────────────────────
+
+  const providersMap = new Map(providers.map(p => [p.id, p]));
+
+  // #9 Per-credit price detached from provider token cost → negative unit margin.
+  for (const service of services) {
+    const config = service.monetization;
+    if (!config || config.monetization_type === 'none') continue;
+    const provider = service.provider_id ? providersMap.get(service.provider_id) : undefined;
+    if (!provider) continue;
+
+    const costPerUserMonth = (service.avg_requests_per_user_month || 0) * (
+      (service.avg_input_tokens || 0) * (provider.input_price / 1_000_000) +
+      (service.avg_output_tokens || 0) * (provider.output_price / 1_000_000)
+    );
+    if (costPerUserMonth <= EPS) continue;
+
+    const pricePerCredit = config.price_per_credit ?? cs.defaultPricePerCredit;
+    const creditsPerUser = calculateCreditsPerUserMonth(service, provider, cs);
+    let revenuePerUserMonth = 0;
+    if (config.monetization_type === 'usage') revenuePerUserMonth = creditsPerUser * pricePerCredit;
+    else if (config.monetization_type === 'addon') revenuePerUserMonth = config.addon_monthly_fee ?? 0;
+    else if (config.monetization_type === 'hybrid') revenuePerUserMonth = config.hybrid_monthly_fee ?? 0;
+
+    if (revenuePerUserMonth + EPS < costPerUserMonth) {
+      const detail = config.monetization_type === 'usage' && creditsPerUser > EPS
+        ? `$${pricePerCredit.toFixed(4)}/credit revenue vs ~$${(costPerUserMonth / creditsPerUser).toFixed(4)}/credit provider token cost`
+        : `~$${revenuePerUserMonth.toFixed(2)}/user-mo revenue vs ~$${costPerUserMonth.toFixed(2)}/user-mo provider token cost`;
+      diagnostics.push({
+        code: 'negative_unit_margin',
+        severity: 'warn',
+        field: `service:${service.id}`,
+        message: `Service "${service.name}": negative unit economics — ${detail}. Each unit of usage loses money.`
+      });
+    }
+  }
+
+  // #10 Mixed currencies in one scenario are silently converted — note it.
+  const base = settings.currency;
+  const foreign = new Set<string>();
+  for (const service of services) {
+    const prov = service.provider_id ? providersMap.get(service.provider_id) : undefined;
+    if (prov?.currency && prov.currency !== base) foreign.add(prov.currency);
+    if (service.fixed_cost_currency && service.fixed_cost_currency !== base) foreign.add(service.fixed_cost_currency);
+  }
+  for (const cost of scenario.costs ?? []) {
+    if (cost.currency && cost.currency !== base) foreign.add(cost.currency);
+  }
+  if (foreign.size > 0) {
+    diagnostics.push({
+      code: 'mixed_currency',
+      severity: 'info',
+      message: `This scenario mixes currencies (${[base, ...foreign].join(', ')}); foreign amounts are converted to ${base} at stored exchange rates (as of ${settings.exchange_rates_as_of}). CAPEX contingency applies after conversion.`
+    });
+  }
+
+  return diagnostics;
+}
+
 
 /**
  * Sensible global credit defaults. The DB-aware wrappers pass real settings in;

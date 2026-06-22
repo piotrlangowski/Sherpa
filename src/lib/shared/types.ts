@@ -505,3 +505,13 @@ export interface SensitivityAnalysisResult {
   basePayback: number | null;
   results: SensitivityParamResult[];
 }
+
+export type DiagnosticSeverity = 'info' | 'warn';
+
+export interface ScenarioDiagnostic {
+  code: string;
+  severity: DiagnosticSeverity;
+  message: string;
+  field?: string;
+}
+

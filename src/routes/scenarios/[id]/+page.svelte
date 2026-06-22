@@ -24,6 +24,7 @@
   import TrendingUp from '@lucide/svelte/icons/trending-up';
   import Edit2 from '@lucide/svelte/icons/edit-2';
   import ExportButton from '$lib/components/dashboard/ExportButton.svelte';
+  import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
 
   import { appState } from '$lib/stores/app.svelte';
   import { mode } from 'mode-watcher';
@@ -35,8 +36,19 @@
   const scopeSummary = $derived(data.scopeSummary);
   const resolvedConfigs = $derived(data.resolvedConfigs || []);
 
+  const diagnostics = $derived(data.diagnostics ?? []);
+
+  const hasUplifts = $derived(
+    (resolvedConfigs ?? []).some((c: any) =>
+      (c.arpu_uplift_percent ?? 0) > 0 || (c.arpu_uplift ?? 0) > 0 ||
+      (c.churn_reduction ?? 0) > 0 || (c.acquisition_uplift ?? 0) > 0
+    )
+  );
+
+  // Generic "pure cost" nudge — only when no uplift levers exist at all.
+  // The uplifts-set-but-zero-benefit case is handled by the `zero_benefit_despite_uplifts` diagnostic.
   const hasNoAiBenefit = $derived(
-    timeline && timeline.length > 0 ? timeline.every((t: any) => Math.abs(t.revenue) < 0.01) : true
+    !hasUplifts && (timeline && timeline.length > 0 ? timeline.every((t: any) => Math.abs(t.revenue) < 0.01) : true)
   );
 
   $effect(() => {
@@ -596,6 +608,8 @@
             </CardContent>
           </Card>
         {/if}
+
+        <DiagnosticsBanner {diagnostics} />
 
         {#if hasNoAiBenefit}
           <Card class="border-amber-500/30 bg-amber-500/5 p-4 select-none">

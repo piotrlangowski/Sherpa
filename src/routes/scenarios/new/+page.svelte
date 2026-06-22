@@ -23,9 +23,10 @@
   import DollarSign from '@lucide/svelte/icons/dollar-sign';
   import Edit2 from '@lucide/svelte/icons/edit-2';
   import Info from '@lucide/svelte/icons/info';
+  import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
 
   import { resolveScenarioCohortsClient, buildDraftScenario } from '$lib/shared/scenario-preview';
-  import { calculateScenario, resolveCarrier, validateRevenueIntegrity } from '$lib/shared/financial-math';
+  import { calculateScenario, resolveCarrier, validateRevenueIntegrity, validateScenarioConfig } from '$lib/shared/financial-math';
   import type { ModelingType, RevenueCarrier, RevenueBridge } from '$lib/shared/types';
   import { normalizeScenarioCurrency } from '$lib/shared/currency';
   import { formatCurrency, formatPercent, formatMonths, formatIrr } from '$lib/utils/format';
@@ -255,10 +256,23 @@
     }
   });
 
+  const diagnostics = $derived(
+    validateScenarioConfig(draftScenario as any, data.settings, data.providers, undefined, previewResult ?? undefined)
+  );
+
+  const hasUplifts = $derived(
+    (draftScenario.scope_cohorts ?? []).some((c: any) =>
+      (c.arpu_uplift_percent ?? 0) > 0 || (c.arpu_uplift ?? 0) > 0 ||
+      (c.churn_reduction ?? 0) > 0 || (c.acquisition_uplift ?? 0) > 0
+    )
+  );
+
+  // Generic "pure cost" nudge — only when no uplift levers exist at all.
+  // The uplifts-set-but-zero-benefit case is handled by the `zero_benefit_despite_uplifts` diagnostic.
   const hasNoAiBenefit = $derived(
-    previewResult && previewResult.timeline && previewResult.timeline.length > 0
+    !hasUplifts && (previewResult && previewResult.timeline && previewResult.timeline.length > 0
       ? previewResult.timeline.every((t: any) => Math.abs(t.revenue) < 0.01)
-      : true
+      : true)
   );
 
   // ECharts Logic
@@ -929,6 +943,8 @@
               </CardContent>
             </Card>
           {/if}
+
+          <DiagnosticsBanner {diagnostics} />
 
           {#if hasNoAiBenefit}
             <Card class="border-amber-500/30 bg-amber-500/5 p-4 select-none">

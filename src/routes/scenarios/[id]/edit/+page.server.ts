@@ -7,6 +7,7 @@ import { packsRepository } from '$lib/server/repositories/packs';
 import { plansRepository } from '$lib/server/repositories/plans';
 import { costsRepository } from '$lib/server/repositories/costs';
 import { providersRepository } from '$lib/server/repositories/providers';
+import { settingsRepository } from '$lib/server/repositories/settings';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
 import { monetizationRepository } from '$lib/server/repositories/monetization';
 import { entityOverridesRepository } from '$lib/server/repositories/entity-overrides';
@@ -27,6 +28,7 @@ export const load: PageServerLoad = async ({ params }) => {
   const plans = plansRepository.getAll();
   const costs = costsRepository.getAll();
   const providers = providersRepository.getAll();
+  const settings = settingsRepository.get();
 
   // Monetization: catalog configs (all) + this scenario's overrides, keyed `${type}:${id}`.
   const monetizationCatalog = Object.fromEntries(monetizationRepository.getCatalogMap());
@@ -47,6 +49,7 @@ export const load: PageServerLoad = async ({ params }) => {
     plans,
     costs,
     providers,
+    settings,
     monetizationCatalog,
     monetizationOverrides,
     entityOverrides

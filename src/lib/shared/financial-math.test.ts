@@ -15,9 +15,10 @@ import {
   calculateIRRGuarded,
   validateRevenueIntegrity,
   computeImpliedPopulation,
-  resolveCarrier
+  resolveCarrier,
+  validateScenarioConfig
 } from './financial-math.js';
-import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig } from './types.js';
+import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings } from './types.js';
 
 describe('Financial Math Module Tests', () => {
   describe('calculateNPV', () => {
@@ -473,6 +474,148 @@ describe('Financial Math Module Tests', () => {
       });
     });
 
+  });
+
+  describe('validateScenarioConfig (dead-end diagnostics)', () => {
+    const baseSettings = {
+      company_name: 'Acme', currency: 'USD', default_discount_rate: 0.1, setup_completed: true,
+      projection_horizon_months: 36, exchange_rates: { USD: 1, EUR: 1.1, PLN: 4, GBP: 0.8 },
+      exchange_rates_as_of: '2026-01-01', default_price_per_credit: 0.02,
+      default_input_tokens_per_credit: 1000000, default_output_tokens_per_credit: 333333,
+      default_overcharge_markup: 1.5, default_overcharge_user_pct: 0.2, default_avg_overcharge_pct: 0.5
+    } as Settings;
+
+    const healthyCohort: CohortConfig = {
+      id: 'c1', name: 'Core', current_users: 1000, monthly_acquisition: 50,
+      acquisition_growth_rate: 0, monthly_churn_rate: 0.05, retention_floor: 0.6,
+      monthly_expansion_rate: 0.02, ai_adoption_rate: 0.30, base_arpu: 100,
+      arpu_uplift_percent: 0.10, churn_reduction: 0.2, adoption_ramp_months: 6
+    };
+
+    const makeScenario = (overrides: Partial<Scenario> = {}): Scenario => ({
+      id: 'sc1', name: 'S', projection_months: 36, discount_rate: 0.10, scope_type: 'cohorts',
+      modeling_type: 'appraisal', revenue_carrier: 'cohort', revenue_bridge: null,
+      scope_cohorts: [healthyCohort], services: [], plans: [], costs: [], ...overrides
+    });
+
+    const codes = (s: Scenario, result?: any) =>
+      validateScenarioConfig(s, baseSettings, [], undefined, result).map(d => d.code);
+
+    it('returns no diagnostics for a healthy scenario', () => {
+      expect(codes(makeScenario())).toEqual([]);
+    });
+
+    // #1 dead ARPU uplift
+    it('flags a percentage ARPU uplift on a $0 base', () => {
+      const s = makeScenario({ scope_cohorts: [{ ...healthyCohort, base_arpu: 0, arpu_uplift_percent: 0.3 }] });
+      expect(codes(s)).toContain('dead_arpu_uplift');
+    });
+    it('does not flag a percentage uplift when base ARPU is non-zero', () => {
+      expect(codes(makeScenario())).not.toContain('dead_arpu_uplift');
+    });
+
+    // #2 plan carrier with no seats
+    it('flags a plan carrier with zero total seats', () => {
+      const s = makeScenario({ modeling_type: 'gtm', revenue_carrier: 'plan', plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats: 0 }] });
+      expect(codes(s)).toContain('carrier_no_revenue');
+    });
+    it('does not flag a plan carrier that has seats', () => {
+      const s = makeScenario({ modeling_type: 'gtm', revenue_carrier: 'plan', scope_cohorts: [{ ...healthyCohort, base_arpu: 0 }], plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats: 100 }] });
+      expect(codes(s)).not.toContain('carrier_no_revenue');
+    });
+
+    // #3 cohort revenue dropped under a non-cohort carrier
+    it('flags cohort ARPU dropped when the carrier is a plan', () => {
+      const s = makeScenario({ modeling_type: 'gtm', revenue_carrier: 'plan', plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 99, seats: 100 }] });
+      expect(codes(s)).toContain('cohort_revenue_dropped');
+    });
+    it('does not flag cohort revenue under a cohort carrier', () => {
+      expect(codes(makeScenario())).not.toContain('cohort_revenue_dropped');
+    });
+
+    // #4 zero benefit despite uplifts (result-dependent)
+    it('flags configured uplifts that produce zero modeled benefit', () => {
+      const zeroResult = { timeline: [{ revenue: 0 }, { revenue: 0 }, { revenue: 0 }] };
+      expect(codes(makeScenario(), zeroResult)).toContain('zero_benefit_despite_uplifts');
+    });
+    it('does not flag when modeled benefit is non-zero', () => {
+      const goodResult = { timeline: [{ revenue: 0 }, { revenue: 1500 }] };
+      expect(codes(makeScenario(), goodResult)).not.toContain('zero_benefit_despite_uplifts');
+    });
+
+    // #5 adoption ramp >= horizon
+    it('flags an adoption ramp that meets or exceeds the horizon', () => {
+      const s = makeScenario({ projection_months: 36, scope_cohorts: [{ ...healthyCohort, adoption_ramp_months: 48 }] });
+      expect(codes(s)).toContain('ramp_exceeds_horizon');
+    });
+    it('does not flag a ramp shorter than the horizon', () => {
+      expect(codes(makeScenario())).not.toContain('ramp_exceeds_horizon');
+    });
+
+    // #6 churn reduction soft ceiling
+    it('flags churn reduction above the soft ceiling', () => {
+      const s = makeScenario({ scope_cohorts: [{ ...healthyCohort, churn_reduction: 0.9 }] });
+      expect(codes(s)).toContain('churn_reduction_high');
+    });
+    it('flags churn reduction over 100% with an explicit message', () => {
+      const s = makeScenario({ scope_cohorts: [{ ...healthyCohort, churn_reduction: 1.5 }] });
+      const diags = validateScenarioConfig(s, baseSettings, [], undefined);
+      const d = diags.find(x => x.code === 'churn_reduction_high');
+      expect(d?.message).toContain('exceeds 100%');
+    });
+
+    // #7 zero discount rate
+    it('flags a 0% discount rate', () => {
+      expect(codes(makeScenario({ discount_rate: 0 }))).toContain('discount_rate_zero');
+    });
+    it('does not flag a non-zero discount rate', () => {
+      expect(codes(makeScenario())).not.toContain('discount_rate_zero');
+    });
+
+    // #9 negative unit margin
+    it('flags negative unit economics when price/credit is below token cost', () => {
+      const provider: Provider = {
+        id: 'pv1', name: 'OpenAI', model_name: 'gpt', input_price: 10, output_price: 30,
+        is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000000,
+        output_tokens_per_credit: 333333, updated_at: ''
+      };
+      const service: any = {
+        id: 'svc1', name: 'Copilot', status: 'planned', provider_id: 'pv1',
+        avg_input_tokens: 2000, avg_output_tokens: 1000, avg_requests_per_user_month: 20,
+        fixed_cost_per_month: 0, rollout_month: 0,
+        monetization: { monetization_type: 'usage', price_per_credit: 0.02 } as MonetizationConfig
+      };
+      const s = makeScenario({ services: [service] });
+      const diags = validateScenarioConfig(s, baseSettings, [provider], undefined);
+      expect(diags.map(d => d.code)).toContain('negative_unit_margin');
+    });
+    it('does not flag healthy unit economics', () => {
+      const provider: Provider = {
+        id: 'pv1', name: 'Cheap', model_name: 'mini', input_price: 0.1, output_price: 0.3,
+        is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000000,
+        output_tokens_per_credit: 333333, updated_at: ''
+      };
+      const service: any = {
+        id: 'svc1', name: 'Copilot', status: 'planned', provider_id: 'pv1',
+        avg_input_tokens: 2000, avg_output_tokens: 1000, avg_requests_per_user_month: 20,
+        fixed_cost_per_month: 0, rollout_month: 0,
+        monetization: { monetization_type: 'usage', price_per_credit: 50 } as MonetizationConfig
+      };
+      const s = makeScenario({ services: [service] });
+      expect(validateScenarioConfig(s, baseSettings, [provider], undefined).map(d => d.code)).not.toContain('negative_unit_margin');
+    });
+
+    // #10 mixed currency
+    it('notes mixed currencies in one scenario', () => {
+      const s = makeScenario({ costs: [{ id: 'k1', name: 'CAPEX', category: 'capex', amount: 1000, frequency: 'one_time', currency: 'EUR' }] });
+      const diags = validateScenarioConfig(s, baseSettings, [], undefined);
+      const d = diags.find(x => x.code === 'mixed_currency');
+      expect(d?.severity).toBe('info');
+    });
+    it('does not note currency when everything matches the base', () => {
+      const s = makeScenario({ costs: [{ id: 'k1', name: 'CAPEX', category: 'capex', amount: 1000, frequency: 'one_time', currency: 'USD' }] });
+      expect(codes(s)).not.toContain('mixed_currency');
+    });
   });
 
   describe('runSensitivityAnalysis', () => {
