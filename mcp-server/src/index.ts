@@ -15,6 +15,7 @@ import {
   buildCohortModel,
   applyScopeOverrides,
   resolveCarrier,
+  resolveRevenueModel,
   validateRevenueIntegrity,
   validateScenarioConfig
 } from "./shared/financial-math.js";
@@ -320,7 +321,7 @@ function attachMonetization(scenario: Scenario): void {
 // Helper: Load a full scenario using the current multi-cohort schema (scope_type + junctions)
 function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
-    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge
+    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct
     FROM scenarios
     WHERE id = ?
   `).get(scenarioId) as any;
@@ -1719,6 +1720,10 @@ server.tool(
     packs: z.array(z.object({ id: z.string(), rollout_month: z.number().default(0) })).optional().describe("Feature packs to attach, with rollout month offsets."),
     plans: z.array(z.object({ id: z.string(), rollout_month: z.number().default(0), seats: z.number().default(0) })).optional().describe("Pricing plans to attach, with rollout month offsets and 'seats' (subscriber count). Seats × the plan's base_price contributes subscription revenue when revenue_source is 'monetization' or 'both'."),
     cost_ids: z.array(z.string()).optional().describe("Array of fixed cost item UUIDs to link to the scenario."),
+    expansion_vertical_id: z.string().nullable().optional().describe("UUID of the expansion vertical target (S-Curve)."),
+    penetration_baseline_months: z.number().min(1).optional().describe("Baseline pacing midpoint in months (months to 50% SOM)."),
+    ai_acceleration_factor: z.number().min(0.1).max(1.0).optional().describe("AI acceleration midpoint multiplier (e.g. 0.60 for 40% faster)."),
+    ai_som_lift_pct: z.number().min(0).max(1.0).optional().describe("AI SOM expansion lift percentage as decimal (e.g. 0.25 for +25% SOM)."),
     variation_percent: z.number().optional().describe("Sensitivity analysis variation percent (default: 0.10 for 10% variation)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
@@ -1727,7 +1732,7 @@ server.tool(
       if (args.action === "list") {
         const scenarios = db.prepare(`
           SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct,
-                 s.modeling_type, s.revenue_carrier, s.revenue_bridge,
+                 s.modeling_type, s.revenue_carrier, s.revenue_bridge, s.expansion_vertical_id, s.penetration_baseline_months, s.ai_acceleration_factor, s.ai_som_lift_pct,
                  r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index,
                  r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status,
                  r.revenue_integrity_status, r.revenue_integrity_message
@@ -1780,45 +1785,32 @@ server.tool(
           // scenario_costs (etc.) junction tables all have FKs to scenarios(id), and the MCP
           // connection runs with foreign_keys = ON, so any child row inserted before the parent
           // exists fails with "FOREIGN KEY constraint failed". (Mirrors scenariosRepository.create.)
-          let modeling_type = args.modeling_type;
-          let revenue_carrier = args.revenue_carrier;
-          let revenue_bridge = args.revenue_bridge;
-
-          if (!modeling_type) {
-            const source = args.revenue_source || 'cohort';
-            if (source === 'cohort') {
-              modeling_type = 'incremental';
-              revenue_carrier = revenue_carrier !== undefined ? revenue_carrier : 'cohort';
-            } else if (source === 'monetization') {
-              modeling_type = 'appraisal';
-              revenue_carrier = revenue_carrier !== undefined ? revenue_carrier : 'feature';
-            } else { // both
-              modeling_type = 'appraisal';
-              revenue_carrier = revenue_carrier !== undefined ? revenue_carrier : 'cohort';
-            }
-          } else {
-            if (modeling_type === 'incremental') {
-              revenue_carrier = 'cohort';
-            } else if (modeling_type === 'gtm') {
-              revenue_carrier = 'plan';
-            } else {
-              revenue_carrier = revenue_carrier !== undefined ? revenue_carrier : 'cohort';
-            }
-          }
-
-          const revSource = args.revenue_source || (modeling_type === 'incremental' ? 'cohort' : 'monetization');
+          // revenue_carrier is the authoritative dial; resolveRevenueModel is the
+          // single shared collapse of any legacy modeling_type/revenue_source input
+          // into a consistent { modeling_type, revenue_carrier } pair.
+          const { modeling_type, revenue_carrier } = resolveRevenueModel({
+            modeling_type: args.modeling_type,
+            revenue_carrier: args.revenue_carrier,
+            revenue_source: args.revenue_source,
+            revenue_bridge: args.revenue_bridge
+          });
+          const revenue_bridge = args.revenue_bridge;
+          const revSource = revenue_carrier === 'cohort' ? 'cohort' : 'monetization';
 
           db.prepare(`
             INSERT INTO scenarios (
               id, name, description, projection_months, discount_rate, scope_type,
               revenue_source, capex_contingency_pct, modeling_type, revenue_carrier,
-              revenue_bridge, created_at, updated_at
+              revenue_bridge, expansion_vertical_id, penetration_baseline_months,
+              ai_acceleration_factor, ai_som_lift_pct, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             scenarioId, args.name, args.description || null, args.projection_months ?? 36,
             args.discount_rate ?? 0.10, scopeType, revSource, args.capex_contingency_pct ?? 0,
-            modeling_type, revenue_carrier || null, revenue_bridge || null, now, now
+            modeling_type, revenue_carrier || null, revenue_bridge || null,
+            args.expansion_vertical_id || null, args.penetration_baseline_months ?? null,
+            args.ai_acceleration_factor ?? null, args.ai_som_lift_pct ?? null, now, now
           );
 
           if (args.cohort_config) {
@@ -1923,42 +1915,42 @@ server.tool(
           const capex_contingency_pct = args.capex_contingency_pct !== undefined ? args.capex_contingency_pct : current.capex_contingency_pct;
           const now = new Date().toISOString();
 
-          let modeling_type = args.modeling_type !== undefined ? args.modeling_type : current.modeling_type;
-          let revenue_carrier = args.revenue_carrier !== undefined ? args.revenue_carrier : current.revenue_carrier;
-          let revenue_bridge = args.revenue_bridge !== undefined ? args.revenue_bridge : current.revenue_bridge;
+          // S-curve Expansion (Phase 3)
+          const expansion_vertical_id = args.expansion_vertical_id !== undefined ? args.expansion_vertical_id : current.expansion_vertical_id;
+          const penetration_baseline_months = args.penetration_baseline_months !== undefined ? args.penetration_baseline_months : current.penetration_baseline_months;
+          const ai_acceleration_factor = args.ai_acceleration_factor !== undefined ? args.ai_acceleration_factor : current.ai_acceleration_factor;
+          const ai_som_lift_pct = args.ai_som_lift_pct !== undefined ? args.ai_som_lift_pct : current.ai_som_lift_pct;
 
-          if (args.modeling_type === undefined && args.revenue_source !== undefined) {
-            if (args.revenue_source === 'cohort') {
-              modeling_type = 'incremental';
-              revenue_carrier = 'cohort';
-            } else if (args.revenue_source === 'monetization') {
-              modeling_type = 'appraisal';
-              revenue_carrier = 'feature';
-            } else if (args.revenue_source === 'both') {
-              modeling_type = 'appraisal';
-              revenue_carrier = 'cohort';
-              revenue_bridge = null;
-            }
-          }
-
-          if (modeling_type === 'incremental') {
-            revenue_carrier = 'cohort';
-          } else if (modeling_type === 'gtm') {
-            revenue_carrier = 'plan';
-          }
-
-          const revenue_source = args.revenue_source !== undefined ? args.revenue_source : (modeling_type === 'incremental' ? 'cohort' : 'monetization');
+          // revenue_carrier is the authoritative dial. If the caller supplies any
+          // revenue field, collapse it via the shared resolveRevenueModel;
+          // otherwise keep the stored model unchanged.
+          const revenue_bridge = args.revenue_bridge !== undefined ? args.revenue_bridge : current.revenue_bridge;
+          const resolvedModel = (args.modeling_type !== undefined || args.revenue_carrier !== undefined || args.revenue_source !== undefined)
+            ? resolveRevenueModel({
+                modeling_type: args.modeling_type,
+                revenue_carrier: args.revenue_carrier,
+                revenue_source: args.revenue_source,
+                revenue_bridge
+              })
+            : { modeling_type: current.modeling_type, revenue_carrier: current.revenue_carrier };
+          const modeling_type = resolvedModel.modeling_type;
+          const revenue_carrier = resolvedModel.revenue_carrier;
+          const revenue_source = revenue_carrier === 'cohort' ? 'cohort' : 'monetization';
 
           db.prepare(`
             UPDATE scenarios
             SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?,
                 revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?,
-                revenue_carrier = ?, revenue_bridge = ?, updated_at = ?
+                revenue_carrier = ?, revenue_bridge = ?,
+                expansion_vertical_id = ?, penetration_baseline_months = ?,
+                ai_acceleration_factor = ?, ai_som_lift_pct = ?, updated_at = ?
             WHERE id = ?
           `).run(
             name, description || null, projection_months, discount_rate, scope_type,
             revenue_source, capex_contingency_pct, modeling_type,
-            revenue_carrier || null, revenue_bridge || null, now, args.id
+            revenue_carrier || null, revenue_bridge || null,
+            expansion_vertical_id || null, penetration_baseline_months,
+            ai_acceleration_factor, ai_som_lift_pct, now, args.id
           );
 
           if (args.services !== undefined) {

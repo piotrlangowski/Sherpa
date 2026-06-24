@@ -1,13 +1,12 @@
-import type { CohortConfig, Scenario, ScopeOverride, Service, Pack, Plan, CostItem, ServiceStatus, Currency, CostCategory, CostFrequency, ModelingType, RevenueCarrier, RevenueBridge } from './types.js';
+import type { CohortConfig, Scenario, ScopeOverride, Service, Pack, Plan, CostItem, ServiceStatus, Currency, CostCategory, CostFrequency, ModelingType, RevenueCarrier, RevenueBridge, ExpansionConfig } from './types.js';
 import { applyScopeOverrides } from './financial-math.js';
 
 /**
  * Resolves targeted cohorts on the client side based on selections.
  */
 export function resolveScenarioCohortsClient(
-  scopeType: 'all_clients' | 'verticals' | 'cohorts',
+  scopeType: 'all_clients' | 'cohorts',
   allCohorts: CohortConfig[],
-  selectedVerticals: Record<string, boolean>,
   selectedCohorts: Record<string, boolean>,
   overrides: ScopeOverride[]
 ): CohortConfig[] {
@@ -15,9 +14,6 @@ export function resolveScenarioCohortsClient(
 
   if (scopeType === 'all_clients') {
     resolved = allCohorts;
-  } else if (scopeType === 'verticals') {
-    const activeVerticalIds = Object.keys(selectedVerticals).filter(id => selectedVerticals[id]);
-    resolved = allCohorts.filter(c => c.vertical_id && activeVerticalIds.includes(c.vertical_id));
   } else if (scopeType === 'cohorts') {
     const activeCohortIds = Object.keys(selectedCohorts).filter(id => selectedCohorts[id]);
     resolved = allCohorts.filter(c => activeCohortIds.includes(c.id));
@@ -31,11 +27,15 @@ interface DraftFormState {
   description: string;
   projectionMonths: number;
   discountRate: number;
-  scopeType: 'all_clients' | 'verticals' | 'cohorts';
+  scopeType: 'all_clients' | 'cohorts';
   capexContingencyPct?: number;
   modelingType?: ModelingType;
   revenueCarrier?: RevenueCarrier | null;
   revenueBridge?: RevenueBridge | null;
+  expansion_vertical_id?: string | null;
+  penetration_baseline_months?: number;
+  ai_acceleration_factor?: number;
+  ai_som_lift_pct?: number;
 }
 
 
@@ -56,7 +56,8 @@ export function buildDraftScenario(
   allServices: Service[],
   allPacks: Pack[],
   allPlans: Plan[],
-  allCosts: CostItem[]
+  allCosts: CostItem[],
+  expansionVertical?: { tam_users?: number; sam_users?: number; som_users?: number }
 ): Omit<Scenario, 'created_at' | 'updated_at'> {
   const services = Object.keys(selectedServices)
     .filter(id => selectedServices[id])
@@ -114,6 +115,16 @@ export function buildDraftScenario(
       };
     });
 
+  const expansion: ExpansionConfig | undefined = formState.expansion_vertical_id ? {
+    expansion_vertical_id: formState.expansion_vertical_id,
+    penetration_baseline_months: formState.penetration_baseline_months ?? 0,
+    ai_acceleration_factor: formState.ai_acceleration_factor ?? 1,
+    ai_som_lift_pct: formState.ai_som_lift_pct ?? 0,
+    tam_users: expansionVertical?.tam_users,
+    sam_users: expansionVertical?.sam_users,
+    som_users: expansionVertical?.som_users
+  } : undefined;
+
   return {
     id: 'draft',
     name: formState.name,
@@ -125,6 +136,11 @@ export function buildDraftScenario(
     modeling_type: formState.modelingType || 'appraisal',
     revenue_carrier: formState.revenueCarrier || null,
     revenue_bridge: formState.revenueBridge || null,
+    expansion_vertical_id: formState.expansion_vertical_id || null,
+    penetration_baseline_months: formState.penetration_baseline_months ?? null,
+    ai_acceleration_factor: formState.ai_acceleration_factor ?? null,
+    ai_som_lift_pct: formState.ai_som_lift_pct ?? null,
+    expansion,
     scope_cohorts: resolvedCohorts,
     scope_overrides: overrides,
     services,

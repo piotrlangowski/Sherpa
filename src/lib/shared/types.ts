@@ -351,6 +351,16 @@ export interface EntityOverrideRecord extends EntityOverride {
   entity_id: string;
 }
 
+export interface ExpansionConfig {
+  expansion_vertical_id: string | null;
+  penetration_baseline_months: number;
+  ai_acceleration_factor: number;
+  ai_som_lift_pct: number;
+  tam_users?: number;
+  sam_users?: number;
+  som_users?: number;
+}
+
 export interface Scenario {
   id: string;
   name: string;
@@ -366,6 +376,13 @@ export interface Scenario {
   modeling_type?: ModelingType;
   revenue_carrier?: RevenueCarrier | null;
   revenue_bridge?: RevenueBridge | null;
+
+  // Expansion modeling (Phase 3)
+  expansion_vertical_id?: string | null;
+  penetration_baseline_months?: number | null;
+  ai_acceleration_factor?: number | null;
+  ai_som_lift_pct?: number | null;
+  expansion?: ExpansionConfig;
 
   created_at?: string;
   updated_at?: string;
@@ -444,6 +461,8 @@ export interface MonthlyBreakdown {
   netCashFlow: number;
   cumulativeCashFlow: number;
   cumulativeCashFlowLower?: number; // lower bound: ARPU-uplift-only attribution
+  tokenCostsLower?: number;
+  totalCostsLower?: number;
   grossRevenue: number; // MRR with AI
   baselineRevenue: number; // MRR baseline
   baselineCustomers: number; // baseline customers

@@ -10,6 +10,7 @@ import { scenariosRepository } from '$lib/server/repositories/scenarios';
 import { providersRepository } from '$lib/server/repositories/providers';
 import { settingsRepository } from '$lib/server/repositories/settings';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
+import { validateRevenueIntegrity } from '$lib/shared/financial-math';
 import { fail, redirect } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async () => {
@@ -49,6 +50,12 @@ export const actions: Actions = {
     const modelingType = (formData.get('modelingType') as string) || 'appraisal';
     const revenueCarrier = (formData.get('revenueCarrier') as string) || null;
     const revenueBridge = (formData.get('revenueBridge') as string) || null;
+
+    // S-curve Expansion (Phase 3)
+    const expansion_vertical_id = (formData.get('expansion_vertical_id') as string) || null;
+    const penetration_baseline_months = parseFloat(formData.get('penetration_baseline_months') as string || '12');
+    const ai_acceleration_factor = parseFloat(formData.get('ai_acceleration_factor') as string || '0.6');
+    const ai_som_lift_pct = parseFloat(formData.get('ai_som_lift_pct') as string || '0.25');
 
     let verticalIds: string[] = [];
     if (scopeType === 'verticals') {
@@ -100,6 +107,26 @@ export const actions: Actions = {
       return fail(400, { error: 'Scope type is required' });
     }
 
+    // Resolve cohorts for validation
+    const allCohorts = cohortsRepository.getAll();
+    const scope_cohorts = scopeType === 'all_clients'
+      ? allCohorts
+      : allCohorts.filter(c => cohortConfigIds.includes(c.id));
+
+    // Revenue integrity validation (ADR 0001-0004)
+    const draftScenario = {
+      modeling_type: modelingType as any,
+      revenue_carrier: revenueCarrier as any,
+      revenue_bridge: revenueBridge as any,
+      plans,
+      services,
+      scope_cohorts
+    };
+    const integrity = validateRevenueIntegrity(draftScenario as any);
+    if (integrity.status === 'block') {
+      return fail(400, { error: integrity.message || 'Revenue integrity validation failed.' });
+    }
+
     let scenarioId = '';
 
     try {
@@ -120,7 +147,11 @@ export const actions: Actions = {
         services,
         packs,
         plans,
-        cost_ids: costIds
+        cost_ids: costIds,
+        expansion_vertical_id,
+        penetration_baseline_months,
+        ai_acceleration_factor,
+        ai_som_lift_pct
       });
 
       scenarioId = scenario.id;

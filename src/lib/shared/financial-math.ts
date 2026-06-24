@@ -24,6 +24,8 @@ import type {
   IrrResult,
   ModelingType,
   RevenueCarrier,
+  RevenueSource,
+  RevenueBridge,
   RevenueIntegrityResult,
   RevenueIntegrityStatus,
   Settings,
@@ -274,6 +276,125 @@ export function resolveCarrier(
     case 'appraisal':   return revenueCarrier ?? 'cohort';
     default:            return revenueCarrier ?? 'cohort';
   }
+}
+
+export interface ResolvedRevenueModel {
+  modeling_type: ModelingType;
+  revenue_carrier: RevenueCarrier;
+}
+
+/**
+ * Derives a back-compat `modeling_type` label from the authoritative carrier.
+ * A cohort carrier that also bridges plan seats stays `appraisal` (not
+ * `incremental`) so the integrity check still permits the bridge.
+ */
+export function deriveModelingType(
+  carrier: RevenueCarrier,
+  revenueBridge?: RevenueBridge | null
+): ModelingType {
+  switch (carrier) {
+    case 'plan':    return 'gtm';
+    case 'pack':
+    case 'feature': return 'appraisal';
+    case 'cohort':
+    default:        return revenueBridge ? 'appraisal' : 'incremental';
+  }
+}
+
+/**
+ * Single, carrier-first source of truth for collapsing any combination of
+ * revenue inputs — an explicit `revenue_carrier` (authoritative), a
+ * `modeling_type`, or the deprecated `revenue_source` — into a consistent
+ * `{ modeling_type, revenue_carrier }` pair satisfying the invariant
+ * `resolveCarrier(modeling_type, revenue_carrier) === revenue_carrier` (so the
+ * calc engine, which gates on `resolveCarrier`, agrees with the stored carrier).
+ * Replaces the type→carrier collapse the MCP create/update handlers duplicated.
+ */
+export function resolveRevenueModel(input: {
+  modeling_type?: ModelingType | null;
+  revenue_carrier?: RevenueCarrier | null;
+  revenue_source?: RevenueSource | null;
+  revenue_bridge?: RevenueBridge | null;
+}): ResolvedRevenueModel {
+  // 1. An explicit carrier is authoritative (carrier-first). Keep a provided
+  //    modeling_type only when it already resolves to that carrier; otherwise
+  //    derive a consistent label.
+  if (input.revenue_carrier) {
+    const carrier = input.revenue_carrier;
+    const modeling_type =
+      input.modeling_type && resolveCarrier(input.modeling_type, carrier) === carrier
+        ? input.modeling_type
+        : deriveModelingType(carrier, input.revenue_bridge);
+    return { modeling_type, revenue_carrier: carrier };
+  }
+  // 2. No carrier: a modeling_type drives it (incremental→cohort, gtm→plan,
+  //    appraisal→cohort default).
+  if (input.modeling_type) {
+    return {
+      modeling_type: input.modeling_type,
+      revenue_carrier: resolveCarrier(input.modeling_type, null)
+    };
+  }
+  // 3. Fall back to the deprecated revenue_source mapping.
+  switch (input.revenue_source) {
+    case 'monetization': return { modeling_type: 'appraisal',   revenue_carrier: 'feature' };
+    case 'both':         return { modeling_type: 'appraisal',   revenue_carrier: 'cohort' };
+    case 'cohort':       return { modeling_type: 'incremental', revenue_carrier: 'cohort' };
+  }
+  // 4. Nothing specified.
+  return { modeling_type: 'incremental', revenue_carrier: 'cohort' };
+}
+
+/**
+ * Builds S-curve market penetration curves based on normalized logistic functions.
+ * - withoutAi: slowly reaches baseline SOM (som)
+ * - withAiLower: accelerated pace to the same baseline SOM (som)
+ * - withAiUpper: accelerated pace to AI SOM (somAi = min(som * (1 + lift), sam))
+ */
+export function buildPenetrationCurve(params: {
+  tam: number;
+  sam: number;
+  som: number;
+  baselineMonths: number;
+  accelerationFactor: number;
+  somLiftPct: number;
+  projectionMonths: number;
+}): { withoutAi: number[]; withAiLower: number[]; withAiUpper: number[] } {
+  const { tam, sam, som, baselineMonths, accelerationFactor, somLiftPct, projectionMonths } = params;
+  const k = 0.3; // fixed steepness
+
+  // Calculate midpoints
+  const tMidBase = baselineMonths > 0 ? baselineMonths : 1;
+  const tMidAi = tMidBase * (accelerationFactor > 0 ? accelerationFactor : 1.0);
+
+  // Clamped AI SOM ceiling
+  const somAi = Math.min(som * (1 + somLiftPct), sam);
+
+  const withoutAi: number[] = [];
+  const withAiLower: number[] = [];
+  const withAiUpper: number[] = [];
+
+  // Logistic function L(t, t_mid)
+  const logistic = (t: number, tMid: number) => 1 / (1 + Math.exp(-k * (t - tMid)));
+
+  // Normalize so that at t=0, P(0) = 0
+  const l0Base = logistic(0, tMidBase);
+  const l0Ai = logistic(0, tMidAi);
+
+  const denomBase = 1 - l0Base;
+  const denomAi = 1 - l0Ai;
+
+  for (let t = 1; t <= projectionMonths; t++) {
+    // Standard 1-based indexing for timeline months
+    const valBase = denomBase > 0 ? (logistic(t, tMidBase) - l0Base) / denomBase : 1.0;
+    const valAi = denomAi > 0 ? (logistic(t, tMidAi) - l0Ai) / denomAi : 1.0;
+
+    withoutAi.push(Math.max(0, valBase * som));
+    withAiLower.push(Math.max(0, valAi * som));
+    withAiUpper.push(Math.max(0, valAi * somAi));
+  }
+
+  return { withoutAi, withAiLower, withAiUpper };
 }
 
 /**
@@ -921,6 +1042,20 @@ export function calculateScenario(
 
   const serviceRealizableHistory = new Map<string, number[]>();
 
+  // 2b. Build penetration curve if expansion configured
+  let expansionCurve: { withoutAi: number[]; withAiLower: number[]; withAiUpper: number[] } | null = null;
+  if (scenario.expansion && scenario.expansion.expansion_vertical_id) {
+    expansionCurve = buildPenetrationCurve({
+      tam: scenario.expansion.tam_users ?? 0,
+      sam: scenario.expansion.sam_users ?? 0,
+      som: scenario.expansion.som_users ?? 0,
+      baselineMonths: scenario.expansion.penetration_baseline_months,
+      accelerationFactor: scenario.expansion.ai_acceleration_factor,
+      somLiftPct: scenario.expansion.ai_som_lift_pct,
+      projectionMonths
+    });
+  }
+
   // 3. Loop through projection months
   for (let t = 0; t < projectionMonths; t++) {
     let activeCustomers = 0;
@@ -970,27 +1105,56 @@ export function calculateScenario(
       }
     }
 
+    let activeAiUsersUpper = activeAiUsers;
+    let activeAiUsersLower = activeAiUsers;
+    if (expansionCurve) {
+      activeAiUsersUpper = expansionCurve.withAiUpper[t];
+      activeAiUsersLower = expansionCurve.withAiLower[t];
+    }
+
     // AI monetization revenue
-    let monetization: MonetizationRevenueResult = {
-      totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0
-    };
-    let planSubscriptionRevenue = 0;
+    let monetizationUpper = { totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0 };
+    let monetizationLower = { totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0 };
+    let planSubscriptionRevenueUpper = 0;
+    let planSubscriptionRevenueLower = 0;
 
     // Carrier-based revenue gating (ADR 0001–0004)
     const carrier = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
     const carrierIncludesMonetization = carrier === 'plan' || carrier === 'feature' || carrier === 'pack';
-    const carrierIncludesCohort = carrier === 'cohort';
 
     if (carrierIncludesMonetization) {
       const activeServices = (scenario.services ?? []).filter(s => t >= (s.rollout_month ?? 0));
-      monetization = calculateMonetizationRevenue(activeAiUsers, activeServices, creditSettings, providersMap);
+      if (expansionCurve) {
+        monetizationUpper = calculateMonetizationRevenue(activeAiUsersUpper, activeServices, creditSettings, providersMap);
+        monetizationLower = calculateMonetizationRevenue(activeAiUsersLower, activeServices, creditSettings, providersMap);
+      } else {
+        monetizationUpper = calculateMonetizationRevenue(activeAiUsers, activeServices, creditSettings, providersMap);
+        monetizationLower = monetizationUpper;
+      }
     }
 
     if (carrier === 'plan' || (carrier === 'cohort' && scenario.revenue_bridge === 'separate_market')) {
-      for (const plan of scenario.plans ?? []) {
-        if (t >= (plan.rollout_month ?? 0)) {
-          planSubscriptionRevenue += (plan.base_price ?? 0) * (plan.seats ?? 0);
+      if (expansionCurve) {
+        for (const plan of scenario.plans ?? []) {
+          if (t >= (plan.rollout_month ?? 0)) {
+            const basePrice = plan.base_price ?? 0;
+            // Incremental seats = (with AI - without AI)
+            const seatsUpper = Math.max(0, expansionCurve.withAiUpper[t] - expansionCurve.withoutAi[t]);
+            const seatsLower = Math.max(0, expansionCurve.withAiLower[t] - expansionCurve.withoutAi[t]);
+            
+            planSubscriptionRevenueUpper += basePrice * seatsUpper;
+            planSubscriptionRevenueLower += basePrice * seatsLower;
+          }
         }
+      } else {
+        let planSubscriptionRevenue = 0;
+        for (const plan of scenario.plans ?? []) {
+          if (t >= (plan.rollout_month ?? 0)) {
+            planSubscriptionRevenue += (plan.base_price ?? 0) * (plan.seats ?? 0);
+          }
+        }
+        planSubscriptionRevenueUpper = planSubscriptionRevenue;
+        planSubscriptionRevenueLower = planSubscriptionRevenue;
       }
     }
 
@@ -999,28 +1163,25 @@ export function calculateScenario(
     switch (carrier) {
       case 'feature':
       case 'pack':
-        // Revenue comes solely from monetization (addon/usage/hybrid)
-        upperRevenue = monetization.totalRevenue;
-        lowerRevenue = monetization.totalRevenue;
+        upperRevenue = monetizationUpper.totalRevenue;
+        lowerRevenue = monetizationLower.totalRevenue;
         break;
       case 'plan':
-        // Revenue = plan subscription + monetization on plan-inherited services
-        upperRevenue = monetization.totalRevenue + planSubscriptionRevenue;
-        lowerRevenue = monetization.totalRevenue + planSubscriptionRevenue;
+        upperRevenue = monetizationUpper.totalRevenue + planSubscriptionRevenueUpper;
+        lowerRevenue = monetizationLower.totalRevenue + planSubscriptionRevenueLower;
         break;
       case 'cohort':
       default:
-        // Revenue = incremental cohort MRR (upper/lower bands)
-        // If bridge is 'separate_market', plan subscription is additive
-        upperRevenue = upperMarginSum + planSubscriptionRevenue;
-        lowerRevenue = lowerMarginSum + planSubscriptionRevenue;
+        upperRevenue = upperMarginSum + planSubscriptionRevenueUpper;
+        lowerRevenue = lowerMarginSum + planSubscriptionRevenueLower;
     }
 
     totalRevenueLowerSum += lowerRevenue;
 
     let opex = 0;
     let capex = 0;
-    let tokenCosts = 0;
+    let tokenCostsUpper = 0;
+    let tokenCostsLower = 0;
 
     let monthTotalInteractions = 0;
     let monthDeflectedInteractions = 0;
@@ -1075,9 +1236,6 @@ export function calculateScenario(
             realizableHistory.push(realizable);
 
             const lag = service.staffing_realization_lag_months || 0;
-            // Defer cash recognition by `lag` months: until the staffing reduction
-            // is actually realised, the freed FTE is capacity, not cash. For the
-            // first `lag` months there is no realised headcount yet (src = 0).
             const src = t - lag >= 0 ? realizableHistory[t - lag] : 0;
 
             const serviceLaborCash = Math.floor(src) * fullyLoadedCost;
@@ -1104,7 +1262,8 @@ export function calculateScenario(
             monthFailedDeflectionCost += failedCost;
             monthAgentTokenCosts += totalAgentTokenCost;
 
-            tokenCosts += totalAgentTokenCost;
+            tokenCostsUpper += totalAgentTokenCost;
+            tokenCostsLower += totalAgentTokenCost;
             opex += failedCost;
           } else {
             let realizableHistory = serviceRealizableHistory.get(service.id);
@@ -1117,19 +1276,23 @@ export function calculateScenario(
         } else {
           // Copilot (default)
           if (t >= rolloutMonth) {
-            let serviceTokenCost = 0;
+            let serviceTokenCostUpper = 0;
+            let serviceTokenCostLower = 0;
             if (service.provider_id && providersMap.has(service.provider_id)) {
               const provider = providersMap.get(service.provider_id)!;
               const inputPrice = provider.input_price / 1000000;
               const outputPrice = provider.output_price / 1000000;
 
-              serviceTokenCost = activeAiUsers *
-                (service.avg_requests_per_user_month || 0) *
+              const costMultiplier = (service.avg_requests_per_user_month || 0) *
                 ((service.avg_input_tokens || 0) * inputPrice + (service.avg_output_tokens || 0) * outputPrice);
+
+              serviceTokenCostUpper = activeAiUsersUpper * costMultiplier;
+              serviceTokenCostLower = activeAiUsersLower * costMultiplier;
             }
 
             const serviceFixedCost = service.fixed_cost_per_month || 0;
-            tokenCosts += serviceTokenCost + serviceFixedCost;
+            tokenCostsUpper += serviceTokenCostUpper + serviceFixedCost;
+            tokenCostsLower += serviceTokenCostLower + serviceFixedCost;
           }
         }
       }
@@ -1162,9 +1325,10 @@ export function calculateScenario(
       }
     }
 
-    const totalCosts = opex + capex + tokenCosts;
-    const netCashFlow = upperRevenue - totalCosts;
-    const netCashFlowLower = lowerRevenue - totalCosts;
+    const totalCostsUpper = opex + capex + tokenCostsUpper;
+    const totalCostsLower = opex + capex + tokenCostsLower;
+    const netCashFlow = upperRevenue - totalCostsUpper;
+    const netCashFlowLower = lowerRevenue - totalCostsLower;
     cumulativeCashFlow += netCashFlow;
     cumulativeCashFlowLower += netCashFlowLower;
 
@@ -1172,22 +1336,24 @@ export function calculateScenario(
       month: t,
       revenue: parseFloat(upperRevenue.toFixed(2)),
       customers: activeCustomers,
-      aiUsers: activeAiUsers,
+      aiUsers: expansionCurve ? activeAiUsersUpper : activeAiUsers,
       opex: parseFloat(opex.toFixed(2)),
       capex: parseFloat(capex.toFixed(2)),
-      tokenCosts: parseFloat(tokenCosts.toFixed(2)),
-      totalCosts: parseFloat(totalCosts.toFixed(2)),
+      tokenCosts: parseFloat(tokenCostsUpper.toFixed(2)),
+      totalCosts: parseFloat(totalCostsUpper.toFixed(2)),
       netCashFlow: parseFloat(netCashFlow.toFixed(2)),
       cumulativeCashFlow: parseFloat(cumulativeCashFlow.toFixed(2)),
       cumulativeCashFlowLower: parseFloat(cumulativeCashFlowLower.toFixed(2)),
+      tokenCostsLower: parseFloat(tokenCostsLower.toFixed(2)),
+      totalCostsLower: parseFloat(totalCostsLower.toFixed(2)),
       grossRevenue: parseFloat(grossRevenue.toFixed(2)),
       baselineRevenue: parseFloat(baselineRevenue.toFixed(2)),
       baselineCustomers: Math.round(baselineCustomers),
-      monetizationRevenue: parseFloat(monetization.totalRevenue.toFixed(2)),
-      addonRevenue: parseFloat(monetization.addonRevenue.toFixed(2)),
-      usageRevenue: parseFloat(monetization.usageRevenue.toFixed(2)),
-      hybridBaseRevenue: parseFloat(monetization.hybridBaseRevenue.toFixed(2)),
-      overchargeRevenue: parseFloat(monetization.overchargeRevenue.toFixed(2)),
+      monetizationRevenue: parseFloat(monetizationUpper.totalRevenue.toFixed(2)),
+      addonRevenue: parseFloat(monetizationUpper.addonRevenue.toFixed(2)),
+      usageRevenue: parseFloat(monetizationUpper.usageRevenue.toFixed(2)),
+      hybridBaseRevenue: parseFloat(monetizationUpper.hybridBaseRevenue.toFixed(2)),
+      overchargeRevenue: parseFloat(monetizationUpper.overchargeRevenue.toFixed(2)),
       // Agent archetype fields
       totalInteractions: parseFloat(monthTotalInteractions.toFixed(2)),
       deflectedInteractions: parseFloat(monthDeflectedInteractions.toFixed(2)),
@@ -1212,9 +1378,10 @@ export function calculateScenario(
 
   const rMonthly = Math.pow(1 + annualDiscountRate, 1 / 12) - 1;
   const pvCosts = timeline.reduce((acc, curr) => acc + curr.totalCosts / Math.pow(1 + rMonthly, curr.month), 0);
+  const pvCostsLower = timeline.reduce((acc, curr) => acc + (curr.totalCostsLower ?? curr.totalCosts) / Math.pow(1 + rMonthly, curr.month), 0);
 
   const piUpper = pvCosts > 0 ? parseFloat((npvUpper / pvCosts + 1).toFixed(4)) : 0;
-  const piLower = pvCosts > 0 ? parseFloat((npvLower / pvCosts + 1).toFixed(4)) : 0;
+  const piLower = pvCostsLower > 0 ? parseFloat((npvLower / pvCostsLower + 1).toFixed(4)) : 0;
 
   const irr = calculateIRRGuarded(cashFlowsUpper, paybackUpper);
 

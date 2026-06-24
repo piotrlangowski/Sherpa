@@ -122,6 +122,7 @@ export const scenariosRepository = {
     const r = db.prepare(`
       SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct,
              s.modeling_type, s.revenue_carrier, s.revenue_bridge,
+             s.expansion_vertical_id, s.penetration_baseline_months, s.ai_acceleration_factor, s.ai_som_lift_pct,
              s.created_at, s.updated_at
       FROM scenarios s
       WHERE s.id = ?
@@ -304,6 +305,16 @@ export const scenariosRepository = {
       modeling_type: (r.modeling_type as ModelingType) || 'appraisal',
       revenue_carrier: (r.revenue_carrier as RevenueCarrier) || null,
       revenue_bridge: (r.revenue_bridge as RevenueBridge) || null,
+      expansion_vertical_id: r.expansion_vertical_id,
+      penetration_baseline_months: r.penetration_baseline_months,
+      ai_acceleration_factor: r.ai_acceleration_factor,
+      ai_som_lift_pct: r.ai_som_lift_pct,
+      expansion: r.expansion_vertical_id ? {
+        expansion_vertical_id: r.expansion_vertical_id,
+        penetration_baseline_months: r.penetration_baseline_months || 0,
+        ai_acceleration_factor: r.ai_acceleration_factor || 1,
+        ai_som_lift_pct: r.ai_som_lift_pct || 0
+      } : undefined,
       created_at: r.created_at,
       updated_at: r.updated_at,
       scope_verticals: verticalRows,
@@ -329,11 +340,26 @@ export const scenariosRepository = {
     const id = uuidv4();
     const now = new Date().toISOString();
 
+    // revenue_source is deprecated (no longer read by the engine). Store a value
+    // derived from the authoritative revenue_carrier so the dead column stays
+    // internally consistent for any external reader. See resolveRevenueModel().
+    const legacyRevenueSource: RevenueSource = (data.revenue_carrier ?? 'cohort') === 'cohort' ? 'cohort' : 'monetization';
+
     db.transaction(() => {
       db.prepare(`
-        INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, data.revenue_source || 'cohort', data.capex_contingency_pct ?? 0, data.modeling_type || 'appraisal', data.revenue_carrier || null, data.revenue_bridge || null, now, now);
+        INSERT INTO scenarios (
+          id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct,
+          modeling_type, revenue_carrier, revenue_bridge,
+          expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
+          created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, legacyRevenueSource, data.capex_contingency_pct ?? 0,
+        data.modeling_type || 'appraisal', data.revenue_carrier || null, data.revenue_bridge || null,
+        data.expansion_vertical_id || null, data.penetration_baseline_months ?? null, data.ai_acceleration_factor ?? null, data.ai_som_lift_pct ?? null,
+        now, now
+      );
 
       if (data.vertical_ids && data.vertical_ids.length > 0) {
         const insertLink = db.prepare("INSERT INTO scenario_verticals (scenario_id, vertical_id) VALUES (?, ?)");
@@ -409,19 +435,29 @@ export const scenariosRepository = {
     const projection_months = data.projection_months !== undefined ? data.projection_months : current.projection_months;
     const discount_rate = data.discount_rate !== undefined ? data.discount_rate : current.discount_rate;
     const scope_type = data.scope_type !== undefined ? data.scope_type : current.scope_type;
-    const revenue_source = data.revenue_source !== undefined ? data.revenue_source : (current.revenue_source || 'cohort');
     const modeling_type = data.modeling_type !== undefined ? data.modeling_type : (current.modeling_type || 'appraisal');
     const revenue_carrier = data.revenue_carrier !== undefined ? data.revenue_carrier : current.revenue_carrier;
     const revenue_bridge = data.revenue_bridge !== undefined ? data.revenue_bridge : current.revenue_bridge;
+    // revenue_source is deprecated (no longer read by the engine); keep it
+    // consistent with the authoritative revenue_carrier for external readers.
+    const revenue_source: RevenueSource = (revenue_carrier ?? 'cohort') === 'cohort' ? 'cohort' : 'monetization';
+    const expansion_vertical_id = data.expansion_vertical_id !== undefined ? data.expansion_vertical_id : current.expansion_vertical_id;
+    const penetration_baseline_months = data.penetration_baseline_months !== undefined ? data.penetration_baseline_months : current.penetration_baseline_months;
+    const ai_acceleration_factor = data.ai_acceleration_factor !== undefined ? data.ai_acceleration_factor : current.ai_acceleration_factor;
+    const ai_som_lift_pct = data.ai_som_lift_pct !== undefined ? data.ai_som_lift_pct : current.ai_som_lift_pct;
     const now = new Date().toISOString();
 
     db.transaction(() => {
       const capex_contingency_pct = data.capex_contingency_pct !== undefined ? data.capex_contingency_pct : current.capex_contingency_pct;
       db.prepare(`
         UPDATE scenarios
-        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, updated_at = ?
+        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, description || null, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier || null, revenue_bridge || null, now, id);
+      `).run(
+        name, description || null, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier || null, revenue_bridge || null,
+        expansion_vertical_id || null, penetration_baseline_months ?? null, ai_acceleration_factor ?? null, ai_som_lift_pct ?? null,
+        now, id
+      );
 
       if (data.vertical_ids !== undefined) {
         db.prepare("DELETE FROM scenario_verticals WHERE scenario_id = ?").run(id);

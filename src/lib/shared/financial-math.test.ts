@@ -16,9 +16,12 @@ import {
   validateRevenueIntegrity,
   computeImpliedPopulation,
   resolveCarrier,
-  validateScenarioConfig
+  resolveRevenueModel,
+  deriveModelingType,
+  validateScenarioConfig,
+  buildPenetrationCurve
 } from './financial-math.js';
-import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings } from './types.js';
+import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings, Plan } from './types.js';
 
 describe('Financial Math Module Tests', () => {
   describe('calculateNPV', () => {
@@ -1164,3 +1167,206 @@ describe('Financial Math Module Tests', () => {
     });
   });
 });
+
+describe('resolveRevenueModel (carrier-first revenue resolution)', () => {
+  it('treats an explicit revenue_carrier as authoritative and derives the label', () => {
+    expect(resolveRevenueModel({ revenue_carrier: 'plan' })).toEqual({ modeling_type: 'gtm', revenue_carrier: 'plan' });
+    expect(resolveRevenueModel({ revenue_carrier: 'cohort' })).toEqual({ modeling_type: 'incremental', revenue_carrier: 'cohort' });
+    expect(resolveRevenueModel({ revenue_carrier: 'feature' })).toEqual({ modeling_type: 'appraisal', revenue_carrier: 'feature' });
+  });
+
+  it('keeps a cohort carrier on appraisal when a revenue bridge is present (so the bridge stays permitted)', () => {
+    expect(resolveRevenueModel({ revenue_carrier: 'cohort', revenue_bridge: 'separate_market' }))
+      .toEqual({ modeling_type: 'appraisal', revenue_carrier: 'cohort' });
+  });
+
+  it('lets an explicit carrier win over a conflicting modeling_type (carrier-first)', () => {
+    // incremental would normally force cohort, but an explicit carrier wins.
+    expect(resolveRevenueModel({ modeling_type: 'incremental', revenue_carrier: 'plan' }))
+      .toEqual({ modeling_type: 'gtm', revenue_carrier: 'plan' });
+  });
+
+  it('falls back to modeling_type when no carrier is given', () => {
+    expect(resolveRevenueModel({ modeling_type: 'incremental' })).toEqual({ modeling_type: 'incremental', revenue_carrier: 'cohort' });
+    expect(resolveRevenueModel({ modeling_type: 'gtm' })).toEqual({ modeling_type: 'gtm', revenue_carrier: 'plan' });
+    expect(resolveRevenueModel({ modeling_type: 'appraisal' })).toEqual({ modeling_type: 'appraisal', revenue_carrier: 'cohort' });
+  });
+
+  it('maps the deprecated revenue_source only as a last resort', () => {
+    expect(resolveRevenueModel({ revenue_source: 'cohort' })).toEqual({ modeling_type: 'incremental', revenue_carrier: 'cohort' });
+    expect(resolveRevenueModel({ revenue_source: 'monetization' })).toEqual({ modeling_type: 'appraisal', revenue_carrier: 'feature' });
+    expect(resolveRevenueModel({ revenue_source: 'both' })).toEqual({ modeling_type: 'appraisal', revenue_carrier: 'cohort' });
+  });
+
+  it('defaults to incremental/cohort when nothing is specified', () => {
+    expect(resolveRevenueModel({})).toEqual({ modeling_type: 'incremental', revenue_carrier: 'cohort' });
+  });
+
+  it('always returns a pair consistent under resolveCarrier (no double-counting drift)', () => {
+    const carriers = ['cohort', 'plan', 'pack', 'feature'] as const;
+    for (const c of carriers) {
+      const r = resolveRevenueModel({ revenue_carrier: c });
+      expect(resolveCarrier(r.modeling_type, r.revenue_carrier)).toBe(c);
+    }
+  });
+});
+
+describe('deriveModelingType', () => {
+  it('maps a carrier to its back-compat modeling_type label', () => {
+    expect(deriveModelingType('plan')).toBe('gtm');
+    expect(deriveModelingType('pack')).toBe('appraisal');
+    expect(deriveModelingType('feature')).toBe('appraisal');
+    expect(deriveModelingType('cohort')).toBe('incremental');
+  });
+
+  it('keeps a cohort carrier on appraisal when a bridge is present', () => {
+    expect(deriveModelingType('cohort', 'separate_market')).toBe('appraisal');
+    expect(deriveModelingType('cohort', null)).toBe('incremental');
+  });
+});
+
+describe('S-Curve Market Expansion (Phase 3)', () => {
+  describe('buildPenetrationCurve', () => {
+    it('returns monotonic curves starting from 0 and approaching their limits', () => {
+      const tam = 10000;
+      const sam = 5000;
+      const som = 1000;
+      const baselineMonths = 12;
+      const accelerationFactor = 0.6;
+      const somLiftPct = 0.25;
+      const projectionMonths = 36;
+
+      const curves = buildPenetrationCurve({
+        tam,
+        sam,
+        som,
+        baselineMonths,
+        accelerationFactor,
+        somLiftPct,
+        projectionMonths
+      });
+
+      // Monotonicity checks
+      for (let t = 1; t < projectionMonths; t++) {
+        expect(curves.withoutAi[t]).toBeGreaterThanOrEqual(curves.withoutAi[t - 1]);
+        expect(curves.withAiLower[t]).toBeGreaterThanOrEqual(curves.withAiLower[t - 1]);
+        expect(curves.withAiUpper[t]).toBeGreaterThanOrEqual(curves.withAiUpper[t - 1]);
+      }
+
+      // Check first elements (t=1) are small positive numbers
+      expect(curves.withoutAi[0]).toBeGreaterThan(0);
+      expect(curves.withAiLower[0]).toBeGreaterThan(0);
+      expect(curves.withAiUpper[0]).toBeGreaterThan(0);
+
+      // Check withAiUpper has lift but is clamped to SAM
+      const curvesClamped = buildPenetrationCurve({
+        tam: 2000,
+        sam: 1100, // SAM is close to SOM
+        som: 1000,
+        baselineMonths: 12,
+        accelerationFactor: 0.6,
+        somLiftPct: 0.5, // 50% lift on 1000 is 1500, but SAM is 1100
+        projectionMonths: 36
+      });
+      // The limit for withAiUpper should be clamped to SAM (1100)
+      const lastVal = curvesClamped.withAiUpper[35];
+      expect(lastVal).toBeLessThanOrEqual(1100);
+    });
+
+    it('accelerates penetration under AI adoption', () => {
+      const curves = buildPenetrationCurve({
+        tam: 10000,
+        sam: 5000,
+        som: 2000,
+        baselineMonths: 20,
+        accelerationFactor: 0.5,
+        somLiftPct: 0,
+        projectionMonths: 40
+      });
+
+      // AI accelerated curve (midpoint 10 months) should exceed baseline curve (midpoint 20 months) at intermediate steps
+      expect(curves.withAiLower[10]).toBeGreaterThan(curves.withoutAi[10]);
+      expect(curves.withAiLower[20]).toBeGreaterThan(curves.withoutAi[20]);
+    });
+  });
+
+  describe('Integration in calculateScenario', () => {
+    it('calculates dynamic seats and dual-band token costs per month', () => {
+      // Mock scenario with S-curve expansion config
+      const provider: Provider = {
+        id: 'p1', name: 'OpenAI', model_name: 'gpt-4o',
+        input_price: 5.0, output_price: 15.0,
+        input_tokens_per_credit: 1000000, output_tokens_per_credit: 1000000,
+        is_predefined: false, currency: 'USD', updated_at: ''
+      };
+
+      const plan: Plan = {
+        id: 'pl1',
+        name: 'AI Plan',
+        base_price: 100,
+        services: [{
+          id: 's1',
+          name: 'AI Support',
+          status: 'existing',
+          avg_input_tokens: 1000,
+          avg_output_tokens: 2000,
+          avg_requests_per_user_month: 100,
+          provider_id: 'p1'
+        }]
+      };
+
+      const scenario: Scenario = {
+        id: 'sc_exp',
+        name: 'S-curve Expansion Scenario',
+        projection_months: 12,
+        discount_rate: 0.1,
+        scope_type: 'all_clients',
+        modeling_type: 'gtm',
+        revenue_carrier: 'plan',
+        expansion_vertical_id: 'v1',
+        penetration_baseline_months: 6,
+        ai_acceleration_factor: 0.5,
+        ai_som_lift_pct: 0.25,
+        expansion: {
+          expansion_vertical_id: 'v1',
+          penetration_baseline_months: 6,
+          ai_acceleration_factor: 0.5,
+          ai_som_lift_pct: 0.25,
+          tam_users: 10000,
+          sam_users: 5000,
+          som_users: 2000
+        },
+        plans: [{ id: 'pl1', name: 'AI Plan', rollout_month: 0, base_price: 100, seats: 0 }],
+        services: [],
+        scope_cohorts: [{
+          id: 'c1',
+          name: 'Cohort 1',
+          current_users: 100,
+          monthly_acquisition: 10,
+          acquisition_growth_rate: 0,
+          monthly_churn_rate: 0.05,
+          retention_floor: 0.5,
+          monthly_expansion_rate: 0.02,
+          ai_adoption_rate: 0.3,
+          base_arpu: 100
+        }]
+      };
+
+      // Since the vertical resolver attaches vertical metrics, the engine can execute calculateScenario directly.
+      const result = calculateScenario(scenario, [provider]);
+      expect(result.timeline.length).toBe(12);
+
+      // Verify revenue is derived dynamically and is non-zero after month 0
+      const lastMonth = result.timeline[11];
+      expect(lastMonth.revenue).toBeGreaterThan(0);
+      expect(result.npvUpper).toBeDefined();
+      expect(result.npvLower).toBeDefined();
+
+      // Verify dual-band token costs are populated
+      expect(lastMonth.tokenCostsLower).toBeDefined();
+      expect(lastMonth.tokenCosts).toBeDefined();
+      expect(lastMonth.tokenCosts!).toBeGreaterThanOrEqual(lastMonth.tokenCostsLower!);
+    });
+  });
+});
+

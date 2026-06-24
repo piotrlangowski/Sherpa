@@ -14,21 +14,13 @@ describe('Scenario Preview Utility Tests', () => {
   ];
 
   it('resolveScenarioCohortsClient: all_clients scope', () => {
-    const res = resolveScenarioCohortsClient('all_clients', cohorts, {}, {}, overrides);
+    const res = resolveScenarioCohortsClient('all_clients', cohorts, {}, overrides);
     expect(res.length).toBe(3);
     expect(res[0].monthly_churn_rate).toBe(0.1); // overridden
   });
 
-  it('resolveScenarioCohortsClient: verticals scope', () => {
-    const res = resolveScenarioCohortsClient('verticals', cohorts, { v1: true }, {}, []);
-    expect(res.length).toBe(2);
-    expect(res.map(c => c.id)).toContain('c1');
-    expect(res.map(c => c.id)).toContain('c2');
-    expect(res.map(c => c.id)).not.toContain('c3');
-  });
-
   it('resolveScenarioCohortsClient: cohorts scope', () => {
-    const res = resolveScenarioCohortsClient('cohorts', cohorts, {}, { c1: true, c3: true }, []);
+    const res = resolveScenarioCohortsClient('cohorts', cohorts, { c1: true, c3: true }, []);
     expect(res.length).toBe(2);
     expect(res.map(c => c.id)).toContain('c1');
     expect(res.map(c => c.id)).toContain('c3');

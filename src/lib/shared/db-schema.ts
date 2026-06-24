@@ -226,16 +226,23 @@ export function runMigrations(db: DatabaseConnection): void {
     // 11. Scenarios
     db.prepare(`
       CREATE TABLE IF NOT EXISTS scenarios (
-        id                     TEXT PRIMARY KEY,
-        name                   TEXT NOT NULL,
-        description            TEXT,
-        projection_months      INTEGER DEFAULT 36,
-        discount_rate          REAL DEFAULT 0.10,
-        scope_type             TEXT NOT NULL DEFAULT 'cohorts',
-        revenue_source         TEXT NOT NULL DEFAULT 'cohort',
-        capex_contingency_pct  REAL DEFAULT 0,
-        created_at             TEXT NOT NULL,
-        updated_at             TEXT NOT NULL
+        id                          TEXT PRIMARY KEY,
+        name                        TEXT NOT NULL,
+        description                 TEXT,
+        projection_months           INTEGER DEFAULT 36,
+        discount_rate               REAL DEFAULT 0.10,
+        scope_type                  TEXT NOT NULL DEFAULT 'cohorts',
+        revenue_source              TEXT NOT NULL DEFAULT 'cohort',
+        capex_contingency_pct       REAL DEFAULT 0,
+        modeling_type               TEXT DEFAULT 'appraisal',
+        revenue_carrier             TEXT DEFAULT 'cohort',
+        revenue_bridge              TEXT,
+        expansion_vertical_id       TEXT REFERENCES verticals(id),
+        penetration_baseline_months REAL,
+        ai_acceleration_factor      REAL,
+        ai_som_lift_pct             REAL,
+        created_at                  TEXT NOT NULL,
+        updated_at                  TEXT NOT NULL
       )
     `).run();
 
@@ -774,6 +781,72 @@ function runDataMigrations(db: DatabaseConnection): void {
   }
 
   if (resultsInvalidated11) {
+    db.prepare("DELETE FROM scenario_results").run();
+  }
+
+  // Migration 12: Make revenue_carrier the authoritative dial (carrier-first
+  // redesign, follow-up to ADR 0001–0004). Backfill any NULL/empty carrier
+  // from modeling_type so the column is never null going forward. This mirrors
+  // resolveCarrier() exactly (incremental/appraisal→cohort, gtm→plan), so the
+  // effective carrier the engine already used is unchanged → cached KPIs stay
+  // valid and scenario_results are NOT invalidated. The deprecated
+  // revenue_source column is left in place (SQLite cannot drop columns) and is
+  // no longer read by the engine.
+  db.prepare(`
+    UPDATE scenarios SET revenue_carrier = CASE
+      WHEN modeling_type = 'gtm' THEN 'plan'
+      ELSE 'cohort'
+    END
+    WHERE revenue_carrier IS NULL OR revenue_carrier = ''
+  `).run();
+
+  // Migration 13: Retire 'verticals' as a scope_type (carrier-first redesign,
+  // Phase 2). The new wizard offers only "whole base" (all_clients) vs
+  // "selected cohorts" (cohorts); a vertical is now just a tag/filter inside the
+  // cohort picker, not a scope category. Convert existing scope_type='verticals'
+  // scenarios to 'cohorts' by materialising the cohorts of their selected
+  // verticals into scenario_cohorts. The resolved cohort set is identical, so
+  // KPIs are unchanged → scenario_results are NOT invalidated. (The engine keeps
+  // defensive read-support for 'verticals'; this only stops new writes of it.)
+  const verticalsScopeScenarios = (db.prepare(
+    "SELECT id FROM scenarios WHERE scope_type = 'verticals'"
+  ).all() as { id: string }[]);
+  if (verticalsScopeScenarios.length > 0) {
+    const materialiseCohorts = db.prepare(`
+      INSERT OR IGNORE INTO scenario_cohorts (scenario_id, cohort_config_id)
+      SELECT sv.scenario_id, c.id
+        FROM scenario_verticals sv
+        JOIN cohort_configs c ON c.vertical_id = sv.vertical_id
+       WHERE sv.scenario_id = ?
+    `);
+    for (const s of verticalsScopeScenarios) {
+      materialiseCohorts.run(s.id);
+    }
+    db.prepare("UPDATE scenarios SET scope_type = 'cohorts' WHERE scope_type = 'verticals'").run();
+  }
+
+  // Migration 14: Add S-curve market penetration params for GTM plan expansion
+  const scenarioCols14 = (db.prepare("PRAGMA table_info(scenarios)").all() as any[]).map(c => c.name);
+  let resultsInvalidated14 = false;
+
+  if (!scenarioCols14.includes('expansion_vertical_id')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN expansion_vertical_id TEXT REFERENCES verticals(id)").run();
+    resultsInvalidated14 = true;
+  }
+  if (!scenarioCols14.includes('penetration_baseline_months')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN penetration_baseline_months REAL").run();
+    resultsInvalidated14 = true;
+  }
+  if (!scenarioCols14.includes('ai_acceleration_factor')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN ai_acceleration_factor REAL").run();
+    resultsInvalidated14 = true;
+  }
+  if (!scenarioCols14.includes('ai_som_lift_pct')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN ai_som_lift_pct REAL").run();
+    resultsInvalidated14 = true;
+  }
+
+  if (resultsInvalidated14) {
     db.prepare("DELETE FROM scenario_results").run();
   }
 }
