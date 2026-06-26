@@ -123,6 +123,8 @@ export const scenariosRepository = {
       SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct,
              s.modeling_type, s.revenue_carrier, s.revenue_bridge,
              s.expansion_vertical_id, s.penetration_baseline_months, s.ai_acceleration_factor, s.ai_som_lift_pct,
+             s.evc_nba_annual_value, s.evc_extra_positive_value, s.evc_negative_value,
+             s.evc_capture_ceiling_pct, s.evc_capture_target_pct, s.evc_capture_floor_pct,
              s.created_at, s.updated_at
       FROM scenarios s
       WHERE s.id = ?
@@ -315,6 +317,12 @@ export const scenariosRepository = {
         ai_acceleration_factor: r.ai_acceleration_factor || 1,
         ai_som_lift_pct: r.ai_som_lift_pct || 0
       } : undefined,
+      evc_nba_annual_value: r.evc_nba_annual_value,
+      evc_extra_positive_value: r.evc_extra_positive_value,
+      evc_negative_value: r.evc_negative_value,
+      evc_capture_ceiling_pct: r.evc_capture_ceiling_pct,
+      evc_capture_target_pct: r.evc_capture_target_pct,
+      evc_capture_floor_pct: r.evc_capture_floor_pct,
       created_at: r.created_at,
       updated_at: r.updated_at,
       scope_verticals: verticalRows,
@@ -351,13 +359,17 @@ export const scenariosRepository = {
           id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct,
           modeling_type, revenue_carrier, revenue_bridge,
           expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
+          evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
+          evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
           created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, legacyRevenueSource, data.capex_contingency_pct ?? 0,
         data.modeling_type || 'appraisal', data.revenue_carrier || null, data.revenue_bridge || null,
         data.expansion_vertical_id || null, data.penetration_baseline_months ?? null, data.ai_acceleration_factor ?? null, data.ai_som_lift_pct ?? null,
+        data.evc_nba_annual_value ?? null, data.evc_extra_positive_value ?? null, data.evc_negative_value ?? null,
+        data.evc_capture_ceiling_pct ?? null, data.evc_capture_target_pct ?? null, data.evc_capture_floor_pct ?? null,
         now, now
       );
 
@@ -445,17 +457,26 @@ export const scenariosRepository = {
     const penetration_baseline_months = data.penetration_baseline_months !== undefined ? data.penetration_baseline_months : current.penetration_baseline_months;
     const ai_acceleration_factor = data.ai_acceleration_factor !== undefined ? data.ai_acceleration_factor : current.ai_acceleration_factor;
     const ai_som_lift_pct = data.ai_som_lift_pct !== undefined ? data.ai_som_lift_pct : current.ai_som_lift_pct;
+    
+    const evc_nba_annual_value = data.evc_nba_annual_value !== undefined ? data.evc_nba_annual_value : current.evc_nba_annual_value;
+    const evc_extra_positive_value = data.evc_extra_positive_value !== undefined ? data.evc_extra_positive_value : current.evc_extra_positive_value;
+    const evc_negative_value = data.evc_negative_value !== undefined ? data.evc_negative_value : current.evc_negative_value;
+    const evc_capture_ceiling_pct = data.evc_capture_ceiling_pct !== undefined ? data.evc_capture_ceiling_pct : current.evc_capture_ceiling_pct;
+    const evc_capture_target_pct = data.evc_capture_target_pct !== undefined ? data.evc_capture_target_pct : current.evc_capture_target_pct;
+    const evc_capture_floor_pct = data.evc_capture_floor_pct !== undefined ? data.evc_capture_floor_pct : current.evc_capture_floor_pct;
     const now = new Date().toISOString();
 
     db.transaction(() => {
       const capex_contingency_pct = data.capex_contingency_pct !== undefined ? data.capex_contingency_pct : current.capex_contingency_pct;
       db.prepare(`
         UPDATE scenarios
-        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, updated_at = ?
+        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?, evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?, updated_at = ?
         WHERE id = ?
       `).run(
         name, description || null, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier || null, revenue_bridge || null,
         expansion_vertical_id || null, penetration_baseline_months ?? null, ai_acceleration_factor ?? null, ai_som_lift_pct ?? null,
+        evc_nba_annual_value ?? null, evc_extra_positive_value ?? null, evc_negative_value ?? null,
+        evc_capture_ceiling_pct ?? null, evc_capture_target_pct ?? null, evc_capture_floor_pct ?? null,
         now, id
       );
 
@@ -542,7 +563,8 @@ export const scenariosRepository = {
     const r = db.prepare(`
       SELECT id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
              payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
-             revenue_integrity_status, revenue_integrity_message
+             revenue_integrity_status, revenue_integrity_message,
+             evc, evc_price_floor, evc_price_target, evc_price_ceiling
       FROM scenario_results
       WHERE scenario_id = ?
     `).get(scenarioId) as any;
@@ -567,7 +589,11 @@ export const scenariosRepository = {
       irr_annual_nominal: r.irr_annual_nominal,
       irr_status: r.irr_status,
       revenue_integrity_status: r.revenue_integrity_status || null,
-      revenue_integrity_message: r.revenue_integrity_message || null
+      revenue_integrity_message: r.revenue_integrity_message || null,
+      evc: r.evc ? JSON.parse(r.evc) : null,
+      evc_price_floor: r.evc_price_floor,
+      evc_price_target: r.evc_price_target,
+      evc_price_ceiling: r.evc_price_ceiling
     };
   },
 
@@ -580,8 +606,9 @@ export const scenariosRepository = {
         id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index, 
         monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
-        revenue_integrity_status, revenue_integrity_message
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        revenue_integrity_status, revenue_integrity_message,
+        evc, evc_price_floor, evc_price_target, evc_price_ceiling
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       results.scenario_id,
@@ -601,7 +628,11 @@ export const scenariosRepository = {
       results.irr_annual_nominal,
       results.irr_status,
       results.revenue_integrity_status || null,
-      results.revenue_integrity_message || null
+      results.revenue_integrity_message || null,
+      results.evc ? JSON.stringify(results.evc) : null,
+      results.evc_price_floor ?? null,
+      results.evc_price_target ?? null,
+      results.evc_price_ceiling ?? null
     );
   },
 

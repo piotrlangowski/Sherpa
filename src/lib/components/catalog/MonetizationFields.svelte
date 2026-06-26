@@ -36,6 +36,11 @@
   let overchargeUserPct = $state(monetization?.overcharge_user_pct ?? '');
   let avgOverchargePct = $state(monetization?.avg_overcharge_pct ?? '');
 
+  // Outcome
+  let outcomeBasis = $state(monetization?.outcome_basis ?? 'per_user');
+  let pricePerOutcome = $state(monetization?.price_per_outcome ?? '');
+  let outcomesPerUserMonth = $state(monetization?.outcomes_per_user_month ?? '');
+
   const selectClass =
     'flex h-9 w-full rounded-md border border-input bg-(--glass-inset-bg) px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring';
 
@@ -60,6 +65,7 @@
       <option value="addon">Add-on — flat monthly fee</option>
       <option value="usage">Usage-based — credits</option>
       <option value="hybrid">Hybrid — fee + included credits</option>
+      <option value="outcome">Outcome-based pricing</option>
     </select>
   </div>
 
@@ -149,6 +155,31 @@
         <Input id="hybrid_price_per_credit" name="price_per_credit" type="number" step="0.0001" min="0"
           bind:value={pricePerCredit} placeholder="global default" class="bg-(--glass-inset-bg) text-right" />
       </div>
+    </div>
+  {/if}
+
+  {#if monType === 'outcome'}
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div class="space-y-1.5">
+        <Label for="outcome_basis">Outcome basis</Label>
+        <select id="outcome_basis" name="outcome_basis" bind:value={outcomeBasis} class={selectClass}>
+          <option value="deflected">Deflected interactions (AI Agent)</option>
+          <option value="per_user">Outcomes per user month</option>
+          <option value="interactions">Total interactions (AI Copilot / Agent)</option>
+        </select>
+      </div>
+      <div class="space-y-1.5">
+        <Label for="price_per_outcome">Price per outcome ($)</Label>
+        <Input id="price_per_outcome" name="price_per_outcome" type="number" step="0.0001" min="0"
+          bind:value={pricePerOutcome} placeholder="e.g. 0.50" class="bg-(--glass-inset-bg) text-right" />
+      </div>
+      {#if outcomeBasis === 'per_user'}
+        <div class="space-y-1.5 col-span-2 sm:col-span-1">
+          <Label for="outcomes_per_user_month">Estimated outcomes / user / month</Label>
+          <Input id="outcomes_per_user_month" name="outcomes_per_user_month" type="number" step="1" min="0"
+            bind:value={outcomesPerUserMonth} placeholder="e.g. 100" class="bg-(--glass-inset-bg) text-right" />
+        </div>
+      {/if}
     </div>
   {/if}
 

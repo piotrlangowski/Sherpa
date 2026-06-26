@@ -280,7 +280,11 @@ export function runAndSaveScenario(scenarioId: string): CalculationResult {
     irr_annual_nominal: result.irr.annualNominal,
     irr_status: result.irr.status,
     revenue_integrity_status: integrity.status,
-    revenue_integrity_message: integrity.message
+    revenue_integrity_message: integrity.message,
+    evc: result.evc ?? null,
+    evc_price_floor: result.evc?.priceFloor ?? null,
+    evc_price_target: result.evc?.priceTarget ?? null,
+    evc_price_ceiling: result.evc?.priceCeiling ?? null
   });
 
   return result;

@@ -36,6 +36,12 @@ interface DraftFormState {
   penetration_baseline_months?: number;
   ai_acceleration_factor?: number;
   ai_som_lift_pct?: number;
+  evc_nba_annual_value?: number | null;
+  evc_extra_positive_value?: number | null;
+  evc_negative_value?: number | null;
+  evc_capture_ceiling_pct?: number | null;
+  evc_capture_target_pct?: number | null;
+  evc_capture_floor_pct?: number | null;
 }
 
 
@@ -140,6 +146,12 @@ export function buildDraftScenario(
     penetration_baseline_months: formState.penetration_baseline_months ?? null,
     ai_acceleration_factor: formState.ai_acceleration_factor ?? null,
     ai_som_lift_pct: formState.ai_som_lift_pct ?? null,
+    evc_nba_annual_value: formState.evc_nba_annual_value ?? null,
+    evc_extra_positive_value: formState.evc_extra_positive_value ?? null,
+    evc_negative_value: formState.evc_negative_value ?? null,
+    evc_capture_ceiling_pct: formState.evc_capture_ceiling_pct ?? null,
+    evc_capture_target_pct: formState.evc_capture_target_pct ?? null,
+    evc_capture_floor_pct: formState.evc_capture_floor_pct ?? null,
     expansion,
     scope_cohorts: resolvedCohorts,
     scope_overrides: overrides,

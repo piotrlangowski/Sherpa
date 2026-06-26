@@ -9,6 +9,7 @@
   import CardDescription from '$lib/components/ui/card/card-description.svelte';
   import CardContent from '$lib/components/ui/card/card-content.svelte';
   import CardFooter from '$lib/components/ui/card/card-footer.svelte';
+  import { NumberField } from '$lib/components/forms';
 
   // Lucide Icons
   import Save from '@lucide/svelte/icons/save';
@@ -81,16 +82,28 @@
         <div class="space-y-4">
           <h3 class="text-sm font-bold text-foreground uppercase tracking-wider text-primary">Scale & Audience</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="space-y-2">
-              <Label for="total_users" class="font-semibold">Total Users (Base)</Label>
-              <Input id="total_users" name="total_users" type="number" min="0" bind:value={total_users} required class="bg-(--glass-inset-bg) border-border font-mono" />
-              <p class="text-[10px] text-muted-foreground mt-1">The sum of all users in the application/database today.</p>
-            </div>
-            <div class="space-y-2">
-              <Label for="default_monthly_acquisition" class="font-semibold">Default Monthly Acquisition</Label>
-              <Input id="default_monthly_acquisition" name="default_monthly_acquisition" type="number" min="0" bind:value={default_monthly_acquisition} required class="bg-(--glass-inset-bg) border-border font-mono" />
-              <p class="text-[10px] text-muted-foreground mt-1">Average number of new users acquired per month globally.</p>
-            </div>
+            <NumberField
+              id="total_users"
+              name="total_users"
+              label="Total Users (Base)"
+              bind:value={total_users}
+              min="0"
+              required
+              grouped={true}
+              decimals={0}
+              help="The sum of all users in the application/database today."
+            />
+            <NumberField
+              id="default_monthly_acquisition"
+              name="default_monthly_acquisition"
+              label="Default Monthly Acquisition"
+              bind:value={default_monthly_acquisition}
+              min="0"
+              required
+              grouped={true}
+              decimals={0}
+              help="Average number of new users acquired per month globally."
+            />
           </div>
         </div>
 
@@ -100,11 +113,18 @@
         <div class="space-y-4">
           <h3 class="text-sm font-bold text-foreground uppercase tracking-wider text-emerald-500">Monetization</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="space-y-2">
-              <Label for="default_arpu" class="font-semibold">Default ARPU ($)</Label>
-              <Input id="default_arpu" name="default_arpu" type="number" step="0.01" min="0" bind:value={default_arpu} required class="bg-(--glass-inset-bg) border-border font-mono" />
-              <p class="text-[10px] text-muted-foreground mt-1">Average Revenue Per User globally.</p>
-            </div>
+            <NumberField
+              id="default_arpu"
+              name="default_arpu"
+              label="Default ARPU ($)"
+              bind:value={default_arpu}
+              min="0"
+              step="0.01"
+              required
+              grouped={true}
+              decimals={2}
+              help="Average Revenue Per User globally."
+            />
             <div class="space-y-2">
               <Label for="default_ai_adoption_rate" class="font-semibold">Default AI Adoption Rate (%)</Label>
               <Input id="default_ai_adoption_rate" name="default_ai_adoption_rate" type="number" step="0.1" min="0" max="100" bind:value={default_ai_adoption_rate} required class="bg-(--glass-inset-bg) border-border font-mono" />
@@ -145,11 +165,18 @@
         <div class="space-y-4">
           <h3 class="text-sm font-bold text-foreground uppercase tracking-wider text-primary">AI Impact Assumptions (vs. Baseline)</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="space-y-2">
-              <Label for="default_arpu_uplift" class="font-semibold">Default AI ARPU Uplift ($ Flat)</Label>
-              <Input id="default_arpu_uplift" name="default_arpu_uplift" type="number" step="0.01" min="0" bind:value={default_arpu_uplift} required class="bg-(--glass-inset-bg) border-border font-mono" />
-              <p class="text-[10px] text-muted-foreground mt-1">Flat monthly ARPU increase for users adopting AI.</p>
-            </div>
+            <NumberField
+              id="default_arpu_uplift"
+              name="default_arpu_uplift"
+              label="Default AI ARPU Uplift ($ Flat)"
+              bind:value={default_arpu_uplift}
+              min="0"
+              step="0.01"
+              required
+              grouped={true}
+              decimals={2}
+              help="Flat monthly ARPU increase for users adopting AI."
+            />
             <div class="space-y-2">
               <Label for="default_arpu_uplift_percent" class="font-semibold">Default AI ARPU Uplift (%)</Label>
               <Input id="default_arpu_uplift_percent" name="default_arpu_uplift_percent" type="number" step="0.1" min="0" max="200" bind:value={default_arpu_uplift_percent} required class="bg-(--glass-inset-bg) border-border font-mono" />

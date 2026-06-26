@@ -6,7 +6,7 @@ const numOrNull = (schema: z.ZodTypeAny = z.coerce.number().nonnegative()) =>
   z.preprocess((v) => (v === '' || v === undefined ? null : v), schema.nullable().optional());
 
 export const MonetizationConfigSchema = z.object({
-  monetization_type: z.enum(['none', 'addon', 'usage', 'hybrid']).default('none'),
+  monetization_type: z.enum(['none', 'addon', 'usage', 'hybrid', 'outcome']).default('none'),
   addon_monthly_fee: numOrNull(),
   addon_has_usage_limit: z.preprocess(
     (v) => v === 'true' || v === true || v === 1 || v === 'on',
@@ -21,7 +21,10 @@ export const MonetizationConfigSchema = z.object({
   hybrid_overcharge_policy: z.enum(['hard_stop', 'credit_pack', 'payg']).nullable().optional(),
   overcharge_markup: numOrNull(),
   overcharge_user_pct: numOrNull(z.coerce.number().min(0).max(1)),
-  avg_overcharge_pct: numOrNull()
+  avg_overcharge_pct: numOrNull(),
+  outcome_basis: z.enum(['deflected', 'per_user', 'interactions']).nullable().optional(),
+  price_per_outcome: numOrNull(),
+  outcomes_per_user_month: numOrNull(z.coerce.number().int().nonnegative())
 });
 
 export const SettingsSchema = z.object({
@@ -153,5 +156,11 @@ export const ScenarioSchema = z.object({
     id: z.string(),
     rollout_month: z.coerce.number().int().nonnegative().default(0)
   })).default([]),
-  cost_ids: z.array(z.string()).default([])
+  cost_ids: z.array(z.string()).default([]),
+  evc_nba_annual_value: numOrNull(),
+  evc_extra_positive_value: numOrNull(),
+  evc_negative_value: numOrNull(),
+  evc_capture_ceiling_pct: numOrNull(z.coerce.number().min(0).max(1)),
+  evc_capture_target_pct: numOrNull(z.coerce.number().min(0).max(1)),
+  evc_capture_floor_pct: numOrNull(z.coerce.number().min(0).max(1))
 });

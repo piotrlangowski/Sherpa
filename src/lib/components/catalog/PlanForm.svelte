@@ -4,6 +4,7 @@
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
   import Textarea from '$lib/components/ui/textarea/textarea.svelte';
+  import { NumberField } from '$lib/components/forms';
   
   // Lucide Icons
   import Save from '@lucide/svelte/icons/save';
@@ -92,7 +93,7 @@
         <!-- Base Price -->
         <div class="space-y-1.5 max-w-xs">
           <Label for="basePrice">Base License Price ($ / month)</Label>
-          <Input id="basePrice" name="basePrice" type="number" step="0.01" min="0" bind:value={basePrice} required class="bg-(--glass-inset-bg) text-right" />
+          <NumberField id="basePrice" name="basePrice" min="0" step="0.01" bind:value={basePrice} required raw={true} grouped={true} decimals={2} class="text-right" />
         </div>
 
         <!-- Packs Checkbox List -->

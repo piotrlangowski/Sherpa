@@ -16,7 +16,7 @@ export type ScopeType = 'all_clients' | 'verticals' | 'cohorts';
 // ============================================================
 
 /** Monetization model attached to a Service / Pack / Plan. */
-export type MonetizationType = 'none' | 'addon' | 'usage' | 'hybrid';
+export type MonetizationType = 'none' | 'addon' | 'usage' | 'hybrid' | 'outcome';
 /** Usage-based billing variant. */
 export type UsageVariant = 'prepaid' | 'payg';
 /** Behaviour once a usage limit / credit pool is exhausted. */
@@ -71,6 +71,11 @@ export interface MonetizationConfig {
   overcharge_user_pct?: number | null;
   avg_overcharge_pct?: number | null;
 
+  // Outcome-based pricing fields
+  outcome_basis?: 'deflected' | 'per_user' | 'interactions' | null;
+  price_per_outcome?: number | null;
+  outcomes_per_user_month?: number | null;
+
   // Resolver metadata (not persisted) — describes where an effective config was inherited from.
   inherited_from?: 'service' | 'pack' | 'plan' | null;
   inherited_from_name?: string | null;
@@ -96,6 +101,7 @@ export interface MonetizationRevenueResult {
   usageRevenue: number;
   hybridBaseRevenue: number;
   overchargeRevenue: number;
+  outcomeRevenue: number;
 }
 
 export interface ClientBase {
@@ -384,6 +390,14 @@ export interface Scenario {
   ai_som_lift_pct?: number | null;
   expansion?: ExpansionConfig;
 
+  // EVC inputs
+  evc_nba_annual_value?: number | null;
+  evc_extra_positive_value?: number | null;
+  evc_negative_value?: number | null;
+  evc_capture_ceiling_pct?: number | null;
+  evc_capture_target_pct?: number | null;
+  evc_capture_floor_pct?: number | null;
+
   created_at?: string;
   updated_at?: string;
 
@@ -409,6 +423,26 @@ export interface Scenario {
   };
 }
 
+export interface EvcInputs {
+  nbaAnnualValue: number;
+  extraPositiveValue: number;
+  negativeValue: number;
+  captureCeilingPct: number;
+  captureTargetPct: number;
+  captureFloorPct: number;
+}
+
+export interface EvcResult {
+  evc: number;
+  referenceValue: number;
+  positiveValueTotal: number;
+  negativeValueTotal: number;
+  netCreatedValue: number;
+  priceFloor: number;
+  priceTarget: number;
+  priceCeiling: number;
+}
+
 export interface ScenarioResult {
   id: string;
   scenario_id: string;
@@ -431,6 +465,12 @@ export interface ScenarioResult {
   // Revenue integrity (ADR 0004)
   revenue_integrity_status?: RevenueIntegrityStatus | null;
   revenue_integrity_message?: string | null;
+
+  // EVC results
+  evc?: EvcResult | null;
+  evc_price_floor?: number | null;
+  evc_price_target?: number | null;
+  evc_price_ceiling?: number | null;
 }
 
 export interface CohortTimelineResult {
@@ -472,6 +512,7 @@ export interface MonthlyBreakdown {
   usageRevenue: number;
   hybridBaseRevenue: number;
   overchargeRevenue: number;
+  outcomeRevenue: number;
 
   // Agent archetype fields
   totalInteractions?: number;
@@ -501,6 +542,7 @@ export interface CalculationResult {
   piLower: number;
   irr: IrrResult;
   tco: number;
+  evc?: EvcResult | null;
 }
 
 export interface SensitivityParamResult {

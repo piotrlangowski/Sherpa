@@ -40,7 +40,10 @@ export function parseMonetizationFromForm(formData: FormData): MonetizationConfi
     hybrid_overcharge_policy: strField(formData, 'hybrid_overcharge_policy') as OverchargePolicy | null,
     overcharge_markup: numField(formData, 'overcharge_markup'),
     overcharge_user_pct: numField(formData, 'overcharge_user_pct'),
-    avg_overcharge_pct: numField(formData, 'avg_overcharge_pct')
+    avg_overcharge_pct: numField(formData, 'avg_overcharge_pct'),
+    outcome_basis: strField(formData, 'outcome_basis') as any,
+    price_per_outcome: numField(formData, 'price_per_outcome'),
+    outcomes_per_user_month: numField(formData, 'outcomes_per_user_month')
   };
 }
 

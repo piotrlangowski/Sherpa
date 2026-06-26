@@ -29,8 +29,38 @@ import type {
   RevenueIntegrityResult,
   RevenueIntegrityStatus,
   Settings,
-  ScenarioDiagnostic
+  ScenarioDiagnostic,
+  EvcInputs,
+  EvcResult,
+  Currency
 } from './types.js';
+
+/**
+ * Currency symbol + position, mirroring `src/lib/utils/constants.ts` CURRENCIES.
+ * Duplicated here (not imported) because the MCP build only symlinks
+ * `src/lib/shared/`, not `src/lib/utils/`. Keep the two in sync when adding a currency.
+ */
+const CURRENCY_DISPLAY: Record<Currency, { symbol: string; position: 'prefix' | 'suffix' }> = {
+  USD: { symbol: '$', position: 'prefix' },
+  EUR: { symbol: '€', position: 'prefix' },
+  PLN: { symbol: 'zł', position: 'suffix' },
+  GBP: { symbol: '£', position: 'prefix' }
+};
+
+/**
+ * Formats an amount already expressed in the workspace currency. Diagnostics
+ * report engine outputs (revenue, EVC, token costs), which are normalized to
+ * `settings.currency` upstream, so this only fixes the displayed symbol — it does
+ * not convert. Pure (Intl only) so it is safe in the shared/MCP build.
+ */
+function formatMoney(value: number, currency: Currency, decimals = 0): string {
+  const info = CURRENCY_DISPLAY[currency] ?? CURRENCY_DISPLAY.USD;
+  const formatted = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(value);
+  return info.position === 'prefix' ? `${info.symbol}${formatted}` : `${formatted} ${info.symbol}`;
+}
 
 /**
  * Advisory configuration sanity checks ("dead ends") for a scenario.
@@ -56,6 +86,8 @@ export function validateScenarioConfig(
   const diagnostics: ScenarioDiagnostic[] = [];
   const EPS = 1e-9;
   const cs = creditSettings ?? DEFAULT_CREDIT_SETTINGS;
+  // Amounts in messages are already in the workspace currency; render the symbol.
+  const money = (value: number, decimals = 0) => formatMoney(value, settings.currency, decimals);
 
   const cohorts = scenario.scope_cohorts ?? [];
   const plans = scenario.plans ?? [];
@@ -72,7 +104,7 @@ export function validateScenarioConfig(
         code: 'dead_arpu_uplift',
         severity: 'warn',
         field: `cohort:${c.id}`,
-        message: `Cohort "${c.name}": a ${((c.arpu_uplift_percent ?? 0) * 100).toFixed(0)}% ARPU uplift on a $0 base contributes $0. Set a non-zero base ARPU, or use a flat uplift (arpu_uplift) instead of a percentage.`
+        message: `Cohort "${c.name}": a ${((c.arpu_uplift_percent ?? 0) * 100).toFixed(0)}% ARPU uplift on a ${money(0)} base contributes ${money(0)}. Set a non-zero base ARPU, or use a flat uplift (arpu_uplift) instead of a percentage.`
       });
     }
   }
@@ -85,7 +117,7 @@ export function validateScenarioConfig(
         code: 'carrier_no_revenue',
         severity: 'warn',
         field: 'plans',
-        message: `Revenue carrier is "plan" but total plan seats = 0, so the designated revenue source produces $0 — the scenario is pure cost. Set seats on at least one plan.`
+        message: `Revenue carrier is "plan" but total plan seats = 0, so the designated revenue source produces ${money(0)} — the scenario is pure cost. Set seats on at least one plan.`
       });
     }
   }
@@ -98,7 +130,7 @@ export function validateScenarioConfig(
           code: 'cohort_revenue_dropped',
           severity: 'warn',
           field: `cohort:${c.id}`,
-          message: `Cohort "${c.name}" has ARPU $${(c.base_arpu ?? 0).toFixed(0)} but the revenue carrier is "${carrier}", so its revenue is ignored (only its cost remains). Switch the carrier to "cohort" to book it, or keep this cohort as context only.`
+          message: `Cohort "${c.name}" has ARPU ${money(c.base_arpu ?? 0)} but the revenue carrier is "${carrier}", so its revenue is ignored (only its cost remains). Switch the carrier to "cohort" to book it, or keep this cohort as context only.`
         });
       }
     }
@@ -119,7 +151,7 @@ export function validateScenarioConfig(
       diagnostics.push({
         code: 'zero_benefit_despite_uplifts',
         severity: 'warn',
-        message: `Uplift levers are configured but the modeled benefit is ~0 (PI ≈ 0). The per-user value is likely $0 (e.g. base ARPU = 0), so retention/expansion/acquisition levers have nothing to act on.`
+        message: `Uplift levers are configured but the modeled benefit is ~0 (PI ≈ 0). The per-user value is likely ${money(0)} (e.g. base ARPU = 0), so retention/expansion/acquisition levers have nothing to act on.`
       });
     }
   }
@@ -193,8 +225,8 @@ export function validateScenarioConfig(
 
     if (revenuePerUserMonth + EPS < costPerUserMonth) {
       const detail = config.monetization_type === 'usage' && creditsPerUser > EPS
-        ? `$${pricePerCredit.toFixed(4)}/credit revenue vs ~$${(costPerUserMonth / creditsPerUser).toFixed(4)}/credit provider token cost`
-        : `~$${revenuePerUserMonth.toFixed(2)}/user-mo revenue vs ~$${costPerUserMonth.toFixed(2)}/user-mo provider token cost`;
+        ? `${money(pricePerCredit, 4)}/credit revenue vs ~${money(costPerUserMonth / creditsPerUser, 4)}/credit provider token cost`
+        : `~${money(revenuePerUserMonth, 2)}/user-mo revenue vs ~${money(costPerUserMonth, 2)}/user-mo provider token cost`;
       diagnostics.push({
         code: 'negative_unit_margin',
         severity: 'warn',
@@ -221,6 +253,68 @@ export function validateScenarioConfig(
       severity: 'info',
       message: `This scenario mixes currencies (${[base, ...foreign].join(', ')}); foreign amounts are converted to ${base} at stored exchange rates (as of ${settings.exchange_rates_as_of}). CAPEX contingency applies after conversion.`
     });
+  }
+
+  // ── Outcome-based Pricing Diagnostics (Gap A) ───────────────────────────
+  for (const service of services) {
+    const config = service.monetization;
+    if (!config || config.monetization_type !== 'outcome') continue;
+
+    const price = config.price_per_outcome ?? 0;
+    if (price <= 0) {
+      diagnostics.push({
+        code: 'outcome_price_zero',
+        severity: 'warn',
+        field: `service:${service.id}`,
+        message: `Service "${service.name}": outcome-based pricing is active but price per outcome is ${money(price, 2)}. Set a positive price per outcome.`
+      });
+    }
+
+    if (config.outcome_basis === 'per_user') {
+      const volume = config.outcomes_per_user_month ?? 0;
+      if (volume <= 0) {
+        diagnostics.push({
+          code: 'outcome_volume_zero',
+          severity: 'warn',
+          field: `service:${service.id}`,
+          message: `Service "${service.name}": outcome basis is "per_user" but outcomes per user month is ${volume}. Set a positive outcomes volume.`
+        });
+      }
+    } else if (config.outcome_basis === 'deflected') {
+      if (service.service_type !== 'agent') {
+        diagnostics.push({
+          code: 'outcome_deflected_non_agent',
+          severity: 'warn',
+          field: `service:${service.id}`,
+          message: `Service "${service.name}": outcome basis is "deflected" but the service type is not "agent". Only agent services support deflected interaction metrics.`
+        });
+      }
+    }
+  }
+
+  // ── Value-based / EVC Pricing Diagnostics (Gap B) ───────────────────────────
+  if (result?.evc) {
+    const evc = result.evc;
+    if (evc.negativeValueTotal > evc.positiveValueTotal) {
+      diagnostics.push({
+        code: 'evc_negative_net_value',
+        severity: 'info',
+        message: `EVC analysis: The total negative value (${money(evc.negativeValueTotal)}) exceeds the positive value (${money(evc.positiveValueTotal)}). The net created value is negative (${money(evc.netCreatedValue)}).`
+      });
+    }
+
+    // Sum first 12 months revenue of the scenario (m.revenue under upper bound)
+    const first12Months = result.timeline.slice(0, 12);
+    const annualizedPrice = first12Months.reduce((sum, m) => sum + m.revenue, 0);
+
+    // If walk-away priceFloor exceeds the actual scenario pricing (underpricing)
+    if (evc.priceFloor > annualizedPrice) {
+      diagnostics.push({
+        code: 'evc_price_under_floor',
+        severity: 'info',
+        message: `EVC analysis: Annualized scenario pricing (${money(annualizedPrice)}) is below the calculated walk-away price floor (${money(evc.priceFloor)}). You may be underpricing the solution.`
+      });
+    }
   }
 
   return diagnostics;
@@ -924,6 +1018,7 @@ export function calculateMonetizationRevenue(
   let usageRevenue = 0;
   let hybridBaseRevenue = 0;
   let overchargeRevenue = 0;
+  let outcomeRevenue = 0;
 
   for (const service of services) {
     const config = service.monetization;
@@ -960,11 +1055,17 @@ export function calculateMonetizationRevenue(
           overchargeRevenue += calculateOverchargeRevenue(service, config, aiUsers, pricePerCredit, creditSettings, provider);
         }
         break;
+
+      case 'outcome':
+        // Outcome revenue is accrued in the calculateScenario service loop, which is
+        // band-aware (upper/lower) and where the 'deflected'/'interactions' bases need
+        // the agent interaction metrics. No-op here to avoid double-counting 'per_user'.
+        break;
     }
   }
 
-  const totalRevenue = addonRevenue + usageRevenue + hybridBaseRevenue + overchargeRevenue;
-  return { totalRevenue, addonRevenue, usageRevenue, hybridBaseRevenue, overchargeRevenue };
+  const totalRevenue = addonRevenue + usageRevenue + hybridBaseRevenue + overchargeRevenue + outcomeRevenue;
+  return { totalRevenue, addonRevenue, usageRevenue, hybridBaseRevenue, overchargeRevenue, outcomeRevenue };
 }
 
 // ============================================================
@@ -1113,8 +1214,8 @@ export function calculateScenario(
     }
 
     // AI monetization revenue
-    let monetizationUpper = { totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0 };
-    let monetizationLower = { totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0 };
+    let monetizationUpper = { totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0, outcomeRevenue: 0 };
+    let monetizationLower = { totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0, outcomeRevenue: 0 };
     let planSubscriptionRevenueUpper = 0;
     let planSubscriptionRevenueLower = 0;
 
@@ -1189,6 +1290,8 @@ export function calculateScenario(
     let monthLaborSavingsCapacity = 0;
     let monthFailedDeflectionCost = 0;
     let monthAgentTokenCosts = 0;
+    let monthOutcomeRevenueUpper = 0;
+    let monthOutcomeRevenueLower = 0;
 
     // A. Direct AI Services Costs (from scenario_services rollout)
     if (scenario.services) {
@@ -1265,6 +1368,22 @@ export function calculateScenario(
             tokenCostsUpper += totalAgentTokenCost;
             tokenCostsLower += totalAgentTokenCost;
             opex += failedCost;
+
+            // Outcome pricing logic for Agent
+            if (service.monetization?.monetization_type === 'outcome') {
+              const config = service.monetization;
+              const price = config.price_per_outcome || 0;
+              if (config.outcome_basis === 'per_user') {
+                monthOutcomeRevenueUpper += activeAiUsersUpper * (config.outcomes_per_user_month || 0) * price;
+                monthOutcomeRevenueLower += activeAiUsersLower * (config.outcomes_per_user_month || 0) * price;
+              } else if (config.outcome_basis === 'deflected') {
+                monthOutcomeRevenueUpper += deflected * price;
+                monthOutcomeRevenueLower += deflected * price;
+              } else if (config.outcome_basis === 'interactions') {
+                monthOutcomeRevenueUpper += serviceInteractions * price;
+                monthOutcomeRevenueLower += serviceInteractions * price;
+              }
+            }
           } else {
             let realizableHistory = serviceRealizableHistory.get(service.id);
             if (!realizableHistory) {
@@ -1293,6 +1412,21 @@ export function calculateScenario(
             const serviceFixedCost = service.fixed_cost_per_month || 0;
             tokenCostsUpper += serviceTokenCostUpper + serviceFixedCost;
             tokenCostsLower += serviceTokenCostLower + serviceFixedCost;
+
+            // Outcome pricing logic for Copilot
+            if (service.monetization?.monetization_type === 'outcome') {
+              const config = service.monetization;
+              const price = config.price_per_outcome || 0;
+              if (config.outcome_basis === 'per_user') {
+                monthOutcomeRevenueUpper += activeAiUsersUpper * (config.outcomes_per_user_month || 0) * price;
+                monthOutcomeRevenueLower += activeAiUsersLower * (config.outcomes_per_user_month || 0) * price;
+              } else if (config.outcome_basis === 'interactions') {
+                const serviceInteractionsUpper = activeAiUsersUpper * (service.avg_requests_per_user_month || 0);
+                const serviceInteractionsLower = activeAiUsersLower * (service.avg_requests_per_user_month || 0);
+                monthOutcomeRevenueUpper += serviceInteractionsUpper * price;
+                monthOutcomeRevenueLower += serviceInteractionsLower * price;
+              }
+            }
           }
         }
       }
@@ -1301,6 +1435,11 @@ export function calculateScenario(
     // Add labor savings cash (Decision 2: labor cash in BOTH bands)
     upperRevenue += monthLaborSavingsCash;
     lowerRevenue += monthLaborSavingsCash;
+
+    if (carrierIncludesMonetization) {
+      upperRevenue += monthOutcomeRevenueUpper;
+      lowerRevenue += monthOutcomeRevenueLower;
+    }
 
     // B. OPEX / CAPEX Line Items (from scenario_costs)
     if (scenario.costs) {
@@ -1349,11 +1488,12 @@ export function calculateScenario(
       grossRevenue: parseFloat(grossRevenue.toFixed(2)),
       baselineRevenue: parseFloat(baselineRevenue.toFixed(2)),
       baselineCustomers: Math.round(baselineCustomers),
-      monetizationRevenue: parseFloat(monetizationUpper.totalRevenue.toFixed(2)),
+      monetizationRevenue: parseFloat((monetizationUpper.totalRevenue + monthOutcomeRevenueUpper).toFixed(2)),
       addonRevenue: parseFloat(monetizationUpper.addonRevenue.toFixed(2)),
       usageRevenue: parseFloat(monetizationUpper.usageRevenue.toFixed(2)),
       hybridBaseRevenue: parseFloat(monetizationUpper.hybridBaseRevenue.toFixed(2)),
       overchargeRevenue: parseFloat(monetizationUpper.overchargeRevenue.toFixed(2)),
+      outcomeRevenue: parseFloat(monthOutcomeRevenueUpper.toFixed(2)),
       // Agent archetype fields
       totalInteractions: parseFloat(monthTotalInteractions.toFixed(2)),
       deflectedInteractions: parseFloat(monthDeflectedInteractions.toFixed(2)),
@@ -1385,6 +1525,19 @@ export function calculateScenario(
 
   const irr = calculateIRRGuarded(cashFlowsUpper, paybackUpper);
 
+  let evc: EvcResult | null = null;
+  if (scenario.evc_nba_annual_value !== undefined && scenario.evc_nba_annual_value !== null) {
+    const evcInputs: EvcInputs = {
+      nbaAnnualValue: scenario.evc_nba_annual_value,
+      extraPositiveValue: scenario.evc_extra_positive_value ?? 0,
+      negativeValue: scenario.evc_negative_value ?? 0,
+      captureCeilingPct: scenario.evc_capture_ceiling_pct ?? 0.50,
+      captureTargetPct: scenario.evc_capture_target_pct ?? 0.30,
+      captureFloorPct: scenario.evc_capture_floor_pct ?? 0.15
+    };
+    evc = calculateEVC(timeline, evcInputs);
+  }
+
   return {
     timeline,
     paybackUpper,
@@ -1394,7 +1547,35 @@ export function calculateScenario(
     piUpper,
     piLower,
     irr,
-    tco
+    tco,
+    evc
+  };
+}
+
+export function calculateEVC(timeline: MonthlyBreakdown[], inputs: EvcInputs): EvcResult {
+  const first12Months = timeline.slice(0, 12);
+  const laborSavings = first12Months.reduce(
+    (sum, m) => sum + (m.laborSavingsCash ?? 0) + (m.laborSavingsCapacity ?? 0),
+    0
+  );
+  const incrementalMargin = first12Months.reduce(
+    (sum, m) => sum + (m.grossRevenue - m.baselineRevenue),
+    0
+  );
+  const positiveValueTotal = laborSavings + incrementalMargin + inputs.extraPositiveValue;
+  const negativeValueTotal = inputs.negativeValue;
+  const netCreatedValue = positiveValueTotal - negativeValueTotal;
+  const evc = inputs.nbaAnnualValue + netCreatedValue;
+
+  return {
+    evc,
+    referenceValue: inputs.nbaAnnualValue,
+    positiveValueTotal,
+    negativeValueTotal,
+    netCreatedValue,
+    priceFloor: inputs.nbaAnnualValue + (inputs.captureFloorPct * netCreatedValue),
+    priceTarget: inputs.nbaAnnualValue + (inputs.captureTargetPct * netCreatedValue),
+    priceCeiling: inputs.nbaAnnualValue + (inputs.captureCeilingPct * netCreatedValue)
   };
 }
 
@@ -1739,6 +1920,40 @@ export function runSensitivityAnalysis(
       results.push({
         parameter: 'Overcharge Users %',
         key: 'overcharge_user_pct',
+        lowValueText: varLabelLow,
+        highValueText: varLabelHigh,
+        lowNpv: resLow.npvUpper,
+        highNpv: resHigh.npvUpper,
+        lowIrr: resLow.irr.annualNominal,
+        highIrr: resHigh.irr.annualNominal,
+        lowPayback: resLow.paybackUpper,
+        highPayback: resHigh.paybackUpper,
+        impactRange: Math.abs(resHigh.npvUpper - resLow.npvUpper)
+      });
+    }
+
+    // 8d. Price Per Outcome (Gap A)
+    const outcomeMonetizationActive = (scenario.services ?? []).some(s => s.monetization?.monetization_type === 'outcome');
+    if (outcomeMonetizationActive) {
+      const cloneLow = cloneScenario(scenario);
+      for (const s of cloneLow.services ?? []) {
+        if (s.monetization?.price_per_outcome != null) {
+          s.monetization.price_per_outcome *= (1 - variationPercent);
+        }
+      }
+      const resLow = calculateScenario(cloneLow, allProviders, creditSettings);
+
+      const cloneHigh = cloneScenario(scenario);
+      for (const s of cloneHigh.services ?? []) {
+        if (s.monetization?.price_per_outcome != null) {
+          s.monetization.price_per_outcome *= (1 + variationPercent);
+        }
+      }
+      const resHigh = calculateScenario(cloneHigh, allProviders, creditSettings);
+
+      results.push({
+        parameter: 'Price per Outcome',
+        key: 'price_per_outcome',
         lowValueText: varLabelLow,
         highValueText: varLabelHigh,
         lowNpv: resLow.npvUpper,

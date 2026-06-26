@@ -31,6 +31,12 @@ export interface ScenarioExportSnapshot {
     providers: Provider[];
     monetization_overrides: { entity_type: 'service' | 'pack' | 'plan'; entity_name: string; config: MonetizationConfig }[];
     entity_overrides: { entity_type: 'service' | 'cost' | 'provider' | 'plan'; entity_name: string; entity_model_name?: string; override: EntityOverride }[];
+    evc_nba_annual_value?: number | null;
+    evc_extra_positive_value?: number | null;
+    evc_negative_value?: number | null;
+    evc_capture_ceiling_pct?: number | null;
+    evc_capture_target_pct?: number | null;
+    evc_capture_floor_pct?: number | null;
   };
 }
 
@@ -144,7 +150,13 @@ export function exportScenarioToJSON(scenarioId: string): string {
       costs: scenario.costs || [],
       providers: Array.from(providersSet.values()),
       monetization_overrides,
-      entity_overrides
+      entity_overrides,
+      evc_nba_annual_value: scenario.evc_nba_annual_value,
+      evc_extra_positive_value: scenario.evc_extra_positive_value,
+      evc_negative_value: scenario.evc_negative_value,
+      evc_capture_ceiling_pct: scenario.evc_capture_ceiling_pct,
+      evc_capture_target_pct: scenario.evc_capture_target_pct,
+      evc_capture_floor_pct: scenario.evc_capture_floor_pct
     }
   };
 
@@ -176,6 +188,14 @@ export function exportScenarioToCSV(scenarioId: string): string {
   lines.push(`TCO,${results.tco}`);
   lines.push(`Profitability Index Upper,${results.piUpper.toFixed(2)}`);
   lines.push(`Profitability Index Lower,${results.piLower.toFixed(2)}`);
+  if (results.evc) {
+    lines.push(`EVC reference (NBA),${results.evc.referenceValue}`);
+    lines.push(`EVC net created value,${results.evc.netCreatedValue}`);
+    lines.push(`EVC total value,${results.evc.evc}`);
+    lines.push(`EVC Price Floor,${results.evc.priceFloor}`);
+    lines.push(`EVC Price Target,${results.evc.priceTarget}`);
+    lines.push(`EVC Price Ceiling,${results.evc.priceCeiling}`);
+  }
   lines.push(''); // spacing row
 
   // Column headers
@@ -192,7 +212,8 @@ export function exportScenarioToCSV(scenarioId: string): string {
     'Cumulative Cash Flow',
     'Gross MRR',
     'Baseline MRR',
-    'Baseline Customers'
+    'Baseline Customers',
+    'Outcome Revenue'
   ];
   lines.push(headers.join(','));
 
@@ -211,7 +232,8 @@ export function exportScenarioToCSV(scenarioId: string): string {
       m.cumulativeCashFlow.toFixed(2),
       m.grossRevenue.toFixed(2),
       m.baselineRevenue.toFixed(2),
-      m.baselineCustomers
+      m.baselineCustomers,
+      m.outcomeRevenue.toFixed(2)
     ];
     lines.push(row.join(','));
   }

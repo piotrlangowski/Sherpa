@@ -57,6 +57,19 @@ export const actions: Actions = {
     const ai_acceleration_factor = parseFloat(formData.get('ai_acceleration_factor') as string || '0.6');
     const ai_som_lift_pct = parseFloat(formData.get('ai_som_lift_pct') as string || '0.25');
 
+    // EVC inputs (Gap B)
+    const getFloatOrNull = (key: string) => {
+      const val = formData.get(key);
+      if (val === null || val === undefined || val === '') return null;
+      return parseFloat(val as string);
+    };
+    const evc_nba_annual_value = getFloatOrNull('evc_nba_annual_value');
+    const evc_extra_positive_value = getFloatOrNull('evc_extra_positive_value');
+    const evc_negative_value = getFloatOrNull('evc_negative_value');
+    const evc_capture_ceiling_pct = getFloatOrNull('evc_capture_ceiling_pct');
+    const evc_capture_target_pct = getFloatOrNull('evc_capture_target_pct');
+    const evc_capture_floor_pct = getFloatOrNull('evc_capture_floor_pct');
+
     let verticalIds: string[] = [];
     if (scopeType === 'verticals') {
       verticalIds = formData.getAll('verticalIds') as string[];
@@ -151,7 +164,13 @@ export const actions: Actions = {
         expansion_vertical_id,
         penetration_baseline_months,
         ai_acceleration_factor,
-        ai_som_lift_pct
+        ai_som_lift_pct,
+        evc_nba_annual_value,
+        evc_extra_positive_value,
+        evc_negative_value,
+        evc_capture_ceiling_pct,
+        evc_capture_target_pct,
+        evc_capture_floor_pct
       });
 
       scenarioId = scenario.id;

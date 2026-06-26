@@ -4,6 +4,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import { NumberField } from '$lib/components/forms';
   import Textarea from '$lib/components/ui/textarea/textarea.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
@@ -72,6 +73,17 @@
   const ai_acceleration_factor = $derived(ai_acceleration_factor_arr[0]);
   let ai_som_lift_pct_arr = $state([25]);
   const ai_som_lift_pct = $derived(ai_som_lift_pct_arr[0]);
+
+  // EVC inputs
+  let evc_nba_annual_value = $state<number | null>(null);
+  let evc_extra_positive_value = $state<number | null>(null);
+  let evc_negative_value = $state<number | null>(null);
+  let evc_capture_ceiling_pct_arr = $state([50]);
+  const evc_capture_ceiling_pct = $derived(evc_capture_ceiling_pct_arr[0] / 100);
+  let evc_capture_target_pct_arr = $state([30]);
+  const evc_capture_target_pct = $derived(evc_capture_target_pct_arr[0] / 100);
+  let evc_capture_floor_pct_arr = $state([15]);
+  const evc_capture_floor_pct = $derived(evc_capture_floor_pct_arr[0] / 100);
 
   // Derived resolved carrier
   const resolvedCarrier = $derived(resolveCarrier(modelingType, revenueCarrier));
@@ -221,6 +233,12 @@
       penetration_baseline_months = s.penetration_baseline_months ?? 12;
       ai_acceleration_factor_arr = [s.ai_acceleration_factor ?? 0.6];
       ai_som_lift_pct_arr = [Math.round((s.ai_som_lift_pct ?? 0.25) * 100)];
+      evc_nba_annual_value = s.evc_nba_annual_value ?? null;
+      evc_extra_positive_value = s.evc_extra_positive_value ?? null;
+      evc_negative_value = s.evc_negative_value ?? null;
+      evc_capture_ceiling_pct_arr = [Math.round((s.evc_capture_ceiling_pct ?? 0.50) * 100)];
+      evc_capture_target_pct_arr = [Math.round((s.evc_capture_target_pct ?? 0.30) * 100)];
+      evc_capture_floor_pct_arr = [Math.round((s.evc_capture_floor_pct ?? 0.15) * 100)];
 
       selectedCohorts = {};
       if (s.scope_cohorts) {
@@ -342,7 +360,13 @@
         expansion_vertical_id,
         penetration_baseline_months,
         ai_acceleration_factor,
-        ai_som_lift_pct: ai_som_lift_pct / 100
+        ai_som_lift_pct: ai_som_lift_pct / 100,
+        evc_nba_annual_value,
+        evc_extra_positive_value,
+        evc_negative_value,
+        evc_capture_ceiling_pct,
+        evc_capture_target_pct,
+        evc_capture_floor_pct
       },
       resolvedCohortsClient,
       formattedOverrides as any[],
@@ -627,7 +651,7 @@
   $effect(() => {
     const _options = chartOptions;
     const currentRunId = ++activeEffectId;
-    if (currentStep === 5 && previewResult && mode.current) {
+    if (((wizardMode === 'create' && currentStep === 6) || (wizardMode === 'edit' && currentStep === 5)) && previewResult && mode.current) {
       renderChart(currentRunId);
     } else {
       cleanupChart();
@@ -750,15 +774,15 @@
   let selectedCohortIdForInspector = $state<Record<string, string>>({});
   let activeInspectorParam = $state<Record<string, string | null>>({});
 
-  const paramMeta: Record<string, { label: string, isPercent: boolean, symbol: string }> = {
-    arpu_override: { label: 'ARPU Override', isPercent: false, symbol: '$' },
-    monthly_acquisition: { label: 'Monthly Acquisition', isPercent: false, symbol: '' },
-    monthly_churn_rate: { label: 'Monthly Churn Rate', isPercent: true, symbol: '%' },
-    ai_adoption_rate: { label: 'AI Adoption Rate', isPercent: true, symbol: '%' },
-    arpu_uplift: { label: 'AI ARPU Uplift ($ Flat)', isPercent: false, symbol: '$' },
-    arpu_uplift_percent: { label: 'AI ARPU Uplift (%)', isPercent: true, symbol: '%' },
-    churn_reduction: { label: 'AI Churn Reduction', isPercent: true, symbol: '%' },
-    acquisition_uplift: { label: 'AI Acquisition Uplift', isPercent: true, symbol: '%' }
+  const paramMeta: Record<string, { label: string, chip: string, isPercent: boolean, symbol: string }> = {
+    arpu_override: { label: 'ARPU Override', chip: 'ARPU', isPercent: false, symbol: '$' },
+    monthly_acquisition: { label: 'Monthly Acquisition', chip: 'Acquisition', isPercent: false, symbol: '' },
+    monthly_churn_rate: { label: 'Monthly Churn Rate', chip: 'Churn', isPercent: true, symbol: '%' },
+    ai_adoption_rate: { label: 'AI Adoption Rate', chip: 'Adoption', isPercent: true, symbol: '%' },
+    arpu_uplift: { label: 'AI ARPU Uplift ($ Flat)', chip: 'ARPU Uplift $', isPercent: false, symbol: '$' },
+    arpu_uplift_percent: { label: 'AI ARPU Uplift (%)', chip: 'ARPU Uplift %', isPercent: true, symbol: '%' },
+    churn_reduction: { label: 'AI Churn Reduction', chip: 'Churn Reduction', isPercent: true, symbol: '%' },
+    acquisition_uplift: { label: 'AI Acquisition Uplift', chip: 'Acquisition Uplift', isPercent: true, symbol: '%' }
   };
 
   function getCohortListForTarget(ov: OverrideRow) {
@@ -881,14 +905,10 @@
     </Button>
 
     <div class="flex items-center space-x-2 text-xs select-none">
-      {#each [1, 2, 3, 4] as step}
+      {#each (wizardMode === 'create' ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5]) as step}
         <span class="px-2.5 py-1 rounded-full font-bold {currentStep === step ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}">{step}</span>
-        {#if step < 4}<span class="text-muted-foreground font-medium">➔</span>{/if}
+        {#if step < (wizardMode === 'create' ? 6 : 5)}<span class="text-muted-foreground font-medium">➔</span>{/if}
       {/each}
-      {#if wizardMode === 'create'}
-        <span class="text-muted-foreground font-medium">➔</span>
-        <span class="px-2.5 py-1 rounded-full font-bold {currentStep === 5 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}">5</span>
-      {/if}
     </div>
   </div>
 
@@ -923,7 +943,11 @@
               {#if currentStep === 4}
                 Map OPEX / CAPEX expenses and review final overrides.
               {:else}
-                Review provisional forecast, net cashflows, and aggregate ROI.
+                {#if currentStep === 5}
+                  Configure EVC parameters (Next Best Alternative, extra value, negative value) and review capture bands.
+                {:else}
+                  Review provisional forecast, net cashflows, and aggregate ROI.
+                {/if}
               {/if}
             {/if}
           {/if}
@@ -1171,11 +1195,11 @@
                           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">ARPU Override ($)</Label>
-                              <Input type="number" step="0.01" min="0" placeholder="Inherit" bind:value={ov.arpu_override} class="bg-background text-xs font-mono" />
+                              <NumberField id="arpu_override" bind:value={ov.arpu_override} min="0" step="0.01" placeholder="Inherit" raw={true} grouped={true} decimals={2} class="bg-background text-xs font-mono" />
                             </div>
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">Monthly Acquisition (/mo)</Label>
-                              <Input type="number" min="0" placeholder="Inherit" bind:value={ov.monthly_acquisition} class="bg-background text-xs font-mono" />
+                              <NumberField id="monthly_acquisition" bind:value={ov.monthly_acquisition} min="0" placeholder="Inherit" raw={true} grouped={true} decimals={0} class="bg-background text-xs font-mono" />
                             </div>
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">Monthly Churn (%)</Label>
@@ -1194,7 +1218,7 @@
                           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">AI ARPU Uplift ($ Flat)</Label>
-                              <Input type="number" step="0.01" min="0" placeholder="Inherit" bind:value={ov.arpu_uplift} class="bg-background text-xs font-mono" />
+                              <NumberField id="arpu_uplift" bind:value={ov.arpu_uplift} min="0" step="0.01" placeholder="Inherit" raw={true} grouped={true} decimals={2} class="bg-background text-xs font-mono" />
                             </div>
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">AI ARPU Uplift (%)</Label>
@@ -1219,7 +1243,7 @@
                               <div class="flex items-center space-x-2">
                                 {#each Object.keys(paramMeta) as paramKey}
                                   <Button type="button" variant="outline" size="sm" class="text-[9px] py-0.5 px-2" onclick={() => toggleInspector(ov.target_id, paramKey)}>
-                                    Inspect {paramMeta[paramKey].label.split(' ')[0]}
+                                    {paramMeta[paramKey].chip}
                                   </Button>
                                 {/each}
                               </div>
@@ -1375,7 +1399,10 @@
             </Card>
           {/if}
 
-          <!-- Pricing Plans -->
+          <!-- Pricing Plans — hidden for the pure 'Improve existing clients' (incremental) route,
+               where plan seats can never carry revenue. Still shown for appraisal+cohort bridge
+               scenarios (separate_market), so plan seats are never silently dropped on edit-save. -->
+          {#if modelingType !== 'incremental'}
           <div class="space-y-3">
             <h3 class="text-sm font-bold text-foreground uppercase tracking-wider flex items-center">
               <CalendarRange class="h-4 w-4 mr-1.5 text-primary" /> Pricing Plans & Rollout Offsets
@@ -1407,7 +1434,7 @@
                             <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
                           {:else}
                             <Label class="text-xs text-muted-foreground shrink-0 ml-1">Seats:</Label>
-                            <input type="number" name="seats_plan_{plan.id}" min="0" bind:value={seatsPlans[plan.id]} title="Subscribers on this plan" class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
+                            <NumberField id="seats_plan_{plan.id}" name="seats_plan_{plan.id}" bind:value={seatsPlans[plan.id]} min="0" raw={true} grouped={true} decimals={0} class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
                           {/if}
                         {:else}
                           <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
@@ -1421,6 +1448,7 @@
           </div>
 
           <hr class="border-border/60" />
+          {/if}
 
           <!-- Feature Packs (only if carrier !== cohort) -->
           {#if resolvedCarrier !== 'cohort'}
@@ -1590,6 +1618,143 @@
           <Button type="button" variant="outline" onclick={prevStep}>
             <ArrowLeft class="h-4 w-4 mr-2" /> Back
           </Button>
+          <Button type="button" onclick={nextStep}>
+            Next: EVC Modeling <ArrowRight class="h-4 w-4 ml-2" />
+          </Button>
+        </CardFooter>
+      </div>
+
+      <!-- Step 5: EVC Modeling -->
+      <div class={currentStep === 5 ? 'block' : 'hidden'}>
+        <CardContent class="py-6 space-y-6 max-h-[60vh] overflow-y-auto select-none">
+          <h3 class="text-sm font-bold text-foreground uppercase tracking-wider flex items-center mb-3">
+            <DollarSign class="h-4 w-4 mr-1.5 text-primary" /> Economic Value to Customer (EVC) & Capture Bands
+          </h3>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="space-y-4">
+              <div class="space-y-1.5">
+                <Label for="evc_nba_annual_value" class="font-semibold text-xs">Next Best Alternative (Annual Reference Value, $)</Label>
+                <NumberField id="evc_nba_annual_value" name="evc_nba_annual_value" min="0" step="0.01" bind:value={evc_nba_annual_value} placeholder="e.g. 50000.00" raw={true} grouped={true} decimals={2} class="text-right" />
+                <p class="text-[10px] text-muted-foreground">The annual cost/value of the customer's current non-AI alternative solution (e.g. human labor, legacy vendor).</p>
+              </div>
+
+              <div class="space-y-1.5">
+                <Label for="evc_extra_positive_value" class="font-semibold text-xs">Extra Positive Value (Annual, $)</Label>
+                <NumberField id="evc_extra_positive_value" name="evc_extra_positive_value" min="0" step="0.01" bind:value={evc_extra_positive_value} placeholder="e.g. 10000.00" raw={true} grouped={true} decimals={2} class="text-right" />
+                <p class="text-[10px] text-muted-foreground">Other soft/hard annual benefits (e.g., higher quality, CSAT lift, risk reduction) not captured in labor/margin savings.</p>
+              </div>
+
+              <div class="space-y-1.5">
+                <Label for="evc_negative_value" class="font-semibold text-xs">Negative Value / Switching Costs ($)</Label>
+                <NumberField id="evc_negative_value" name="evc_negative_value" min="0" step="0.01" bind:value={evc_negative_value} placeholder="e.g. 5000.00" raw={true} grouped={true} decimals={2} class="text-right" />
+                <p class="text-[10px] text-muted-foreground">Implementation fees, training costs, or any disadvantage compared to the Next Best Alternative.</p>
+              </div>
+            </div>
+
+            <!-- Live Calculation & Projections Box -->
+            <div class="space-y-4">
+              <div class="glass border rounded-xl p-5 space-y-4 bg-primary/5">
+                <h4 class="text-xs font-bold text-primary uppercase tracking-wider">Live EVC Projections (First 12 Months)</h4>
+                
+                {#if previewResult && previewResult.evc}
+                  {@const evcObj = previewResult.evc}
+                  <div class="space-y-2 text-xs">
+                    <div class="flex justify-between border-b border-border/40 pb-1.5">
+                      <span class="text-muted-foreground">Reference Value (NBA)</span>
+                      <span class="font-mono font-semibold">{formatCurrency(evcObj.referenceValue, data.settings.currency, 0)}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-border/40 pb-1.5">
+                      <span class="text-muted-foreground">Labor Savings (Cash + Capacity)</span>
+                      <span class="font-mono text-emerald-600 dark:text-emerald-400">+{formatCurrency(evcObj.positiveValueTotal - evcObj.referenceValue - (evc_extra_positive_value ?? 0) - (previewResult.timeline.slice(0, 12).reduce((sum, m) => sum + (m.grossRevenue - m.baselineRevenue), 0)), data.settings.currency, 0)}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-border/40 pb-1.5">
+                      <span class="text-muted-foreground">Incremental Vendor Margin</span>
+                      <span class="font-mono text-emerald-600 dark:text-emerald-400">+{formatCurrency(previewResult.timeline.slice(0, 12).reduce((sum, m) => sum + (m.grossRevenue - m.baselineRevenue), 0), data.settings.currency, 0)}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-border/40 pb-1.5">
+                      <span class="text-muted-foreground">Extra Positive Value</span>
+                      <span class="font-mono text-emerald-600 dark:text-emerald-400">+{formatCurrency(evc_extra_positive_value ?? 0, data.settings.currency, 0)}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-border/40 pb-1.5 font-semibold text-foreground">
+                      <span class="text-muted-foreground">Positive Value Total</span>
+                      <span class="font-mono text-emerald-600 dark:text-emerald-400">{formatCurrency(evcObj.positiveValueTotal, data.settings.currency, 0)}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-border/40 pb-1.5">
+                      <span class="text-muted-foreground">Negative Value / Switching Costs</span>
+                      <span class="font-mono text-rose-600 dark:text-rose-400">-{formatCurrency(evcObj.negativeValueTotal, data.settings.currency, 0)}</span>
+                    </div>
+                    <div class="flex justify-between border-b border-border/40 pb-1.5 font-semibold text-foreground">
+                      <span>Net Created Value</span>
+                      <span class="font-mono">{formatCurrency(evcObj.netCreatedValue, data.settings.currency, 0)}</span>
+                    </div>
+                    <div class="flex justify-between pt-1 text-sm font-bold text-primary">
+                      <span>Economic Value to Customer (EVC)</span>
+                      <span class="font-mono">{formatCurrency(evcObj.evc, data.settings.currency, 0)}</span>
+                    </div>
+                  </div>
+
+                  <hr class="border-border/40" />
+
+                  <!-- Value Capture Bands -->
+                  <div class="space-y-2">
+                    <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Recommended Pricing Capture Bands</span>
+                    
+                    <div class="grid grid-cols-3 gap-2 text-center text-[10px]">
+                      <div class="p-2 rounded bg-background/50 border border-border">
+                        <span class="text-muted-foreground block">Floor ({(evc_capture_floor_pct * 100).toFixed(0)}%)</span>
+                        <span class="font-mono font-bold text-sm block mt-1">{formatCurrency(evcObj.priceFloor, data.settings.currency, 0)}</span>
+                      </div>
+                      <div class="p-2 rounded bg-primary/10 border border-primary/20">
+                        <span class="text-primary block font-bold">Target ({(evc_capture_target_pct * 100).toFixed(0)}%)</span>
+                        <span class="font-mono font-black text-sm block mt-1 text-primary">{formatCurrency(evcObj.priceTarget, data.settings.currency, 0)}</span>
+                      </div>
+                      <div class="p-2 rounded bg-background/50 border border-border">
+                        <span class="text-muted-foreground block">Ceiling ({(evc_capture_ceiling_pct * 100).toFixed(0)}%)</span>
+                        <span class="font-mono font-bold text-sm block mt-1">{formatCurrency(evcObj.priceCeiling, data.settings.currency, 0)}</span>
+                      </div>
+                    </div>
+                  </div>
+                {:else}
+                  <p class="text-xs text-muted-foreground italic text-center py-6">Enter reference Next Best Alternative value to calculate EVC bands.</p>
+                {/if}
+              </div>
+
+              <!-- Tuning sliders for capture bands (Optional/Custom share) -->
+              <div class="space-y-4">
+                <div class="space-y-2">
+                  <div class="flex justify-between text-xs font-semibold">
+                    <span class="text-muted-foreground">Capture Floor Share</span>
+                    <span class="text-primary font-mono">{evc_capture_floor_pct_arr[0]}%</span>
+                  </div>
+                  <Slider bind:value={evc_capture_floor_pct_arr} min={0} max={100} step={1} type="multiple" />
+                  <input type="hidden" name="evc_capture_floor_pct" value={evc_capture_floor_pct} />
+                </div>
+                <div class="space-y-2">
+                  <div class="flex justify-between text-xs font-semibold">
+                    <span class="text-muted-foreground">Capture Target Share</span>
+                    <span class="text-primary font-mono">{evc_capture_target_pct_arr[0]}%</span>
+                  </div>
+                  <Slider bind:value={evc_capture_target_pct_arr} min={0} max={100} step={1} type="multiple" />
+                  <input type="hidden" name="evc_capture_target_pct" value={evc_capture_target_pct} />
+                </div>
+                <div class="space-y-2">
+                  <div class="flex justify-between text-xs font-semibold">
+                    <span class="text-muted-foreground">Capture Ceiling Share</span>
+                    <span class="text-primary font-mono">{evc_capture_ceiling_pct_arr[0]}%</span>
+                  </div>
+                  <Slider bind:value={evc_capture_ceiling_pct_arr} min={0} max={100} step={1} type="multiple" />
+                  <input type="hidden" name="evc_capture_ceiling_pct" value={evc_capture_ceiling_pct} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+
+        <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">
+          <Button type="button" variant="outline" onclick={prevStep}>
+            <ArrowLeft class="h-4 w-4 mr-2" /> Back
+          </Button>
           {#if wizardMode === 'create'}
             <Button type="button" onclick={nextStep}>
               Next: Review & Save <ArrowRight class="h-4 w-4 ml-2" />
@@ -1602,9 +1767,9 @@
         </CardFooter>
       </div>
 
-      <!-- Step 5: Review & Save (Create mode only) -->
+      <!-- Step 6: Review & Save (Create mode only) -->
       {#if wizardMode === 'create'}
-        <div class={currentStep === 5 ? 'block' : 'hidden'}>
+        <div class={currentStep === 6 ? 'block' : 'hidden'}>
           <CardContent class="py-6 space-y-6 max-h-[60vh] overflow-y-auto">
             
             {#if integrityResult.status !== 'ok'}

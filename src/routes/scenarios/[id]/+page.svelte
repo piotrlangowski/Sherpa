@@ -91,6 +91,7 @@
 
     const monthsLabel = timeline.map((t: any) => `Month ${t.month}`);
     const hasMonetization = timeline.some((t: any) => (t.monetizationRevenue ?? 0) > 0);
+    const hasOutcome = timeline.some((t: any) => (t.outcomeRevenue ?? 0) > 0);
     const hasAgent = timeline.some((t: any) => (t.totalInteractions ?? 0) > 0);
  
     const cashflow = {
@@ -105,6 +106,7 @@
       legend: {
         data: [
           ...(hasMonetization ? ['AI Monetization'] : []),
+          ...(hasOutcome ? ['Outcome Revenue'] : []),
           'Gross MRR',
           'Baseline MRR',
           'OPEX Costs',
@@ -171,6 +173,14 @@
           type: 'line',
           data: timeline.map((t: any) => t.monetizationRevenue),
           itemStyle: { color: '#a855f7' },
+          lineStyle: { width: 2 },
+          symbolSize: 4
+        }] : []),
+        ...(hasOutcome ? [{
+          name: 'Outcome Revenue',
+          type: 'line',
+          data: timeline.map((t: any) => t.outcomeRevenue),
+          itemStyle: { color: '#ec4899' },
           lineStyle: { width: 2 },
           symbolSize: 4
         }] : []),
@@ -624,7 +634,22 @@
         {/if}
 
       <!-- KPI widgets grid -->
-      <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-4 {results.evc ? 'lg:grid-cols-6' : 'lg:grid-cols-5'}">
+        <!-- EVC -->
+        {#if results.evc}
+          <Card class="glass border glass-glow [--glow-color:var(--primary)] select-none p-4 flex flex-col justify-between">
+            <div>
+              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Economic Value (EVC)</span>
+              <CardTitle class="text-base font-black text-primary mt-2 block">
+                {formatCurrency(results.evc.evc, appState.currency, 0)}
+              </CardTitle>
+            </div>
+            <div class="text-[9px] text-muted-foreground/80 mt-1">
+              Target Price: <span class="font-bold text-foreground">{formatCurrency(results.evc.priceTarget, appState.currency, 0)}</span> (30%)
+            </div>
+          </Card>
+        {/if}
+
         <!-- NPV -->
         <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between">
           <div>

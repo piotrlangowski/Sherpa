@@ -55,6 +55,8 @@
         return `Usage · ${c.price_per_credit != null ? c.price_per_credit + '/credit' : 'default price'}`;
       case 'hybrid':
         return `Hybrid · ${c.hybrid_monthly_fee ?? 0} + ${c.hybrid_included_credits ?? 0} credits`;
+      case 'outcome':
+        return `Outcome · $${c.price_per_outcome ?? 0}/outcome (${c.outcome_basis ?? 'per_user'})`;
       default:
         return 'No model';
     }
@@ -175,6 +177,7 @@
                     <option value="addon">Add-on — flat monthly fee</option>
                     <option value="usage">Usage-based — credits</option>
                     <option value="hybrid">Hybrid — fee + included credits</option>
+                    <option value="outcome">Outcome-based pricing</option>
                   </select>
                 </div>
 
@@ -243,6 +246,29 @@
                       <Label for="hybrid_price_{key}">Overage price per credit (blank = default)</Label>
                       <Input id="hybrid_price_{key}" type="number" step="0.0001" min="0" bind:value={draft[key].price_per_credit} class="bg-(--glass-inset-bg) text-right" />
                     </div>
+                  </div>
+                {/if}
+
+                {#if draft[key].monetization_type === 'outcome'}
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="space-y-1.5">
+                      <Label for="outcome_basis_{key}">Outcome basis</Label>
+                      <select id="outcome_basis_{key}" bind:value={draft[key].outcome_basis} class={selectClass}>
+                        <option value="deflected">Deflected interactions</option>
+                        <option value="per_user">Outcomes per user month</option>
+                        <option value="interactions">Total interactions</option>
+                      </select>
+                    </div>
+                    <div class="space-y-1.5">
+                      <Label for="outcome_price_{key}">Price per outcome ($)</Label>
+                      <Input id="outcome_price_{key}" type="number" step="0.0001" min="0" bind:value={draft[key].price_per_outcome} class="bg-(--glass-inset-bg) text-right" />
+                    </div>
+                    {#if draft[key].outcome_basis === 'per_user'}
+                      <div class="space-y-1.5 col-span-2 sm:col-span-1">
+                        <Label for="outcome_per_user_month_{key}">Estimated outcomes / user / month</Label>
+                        <Input id="outcome_per_user_month_{key}" type="number" step="1" min="0" bind:value={draft[key].outcomes_per_user_month} class="bg-(--glass-inset-bg) text-right" />
+                      </div>
+                    {/if}
                   </div>
                 {/if}
 

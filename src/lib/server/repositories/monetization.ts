@@ -14,7 +14,8 @@ const SELECT_COLUMNS = `
   addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
   usage_variant, price_per_credit,
   hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
-  overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+  overcharge_markup, overcharge_user_pct, avg_overcharge_pct,
+  outcome_basis, price_per_outcome, outcomes_per_user_month
 `;
 
 function rowToConfig(r: any): MonetizationConfig {
@@ -31,7 +32,10 @@ function rowToConfig(r: any): MonetizationConfig {
     hybrid_overcharge_policy: (r.hybrid_overcharge_policy as OverchargePolicy) ?? null,
     overcharge_markup: r.overcharge_markup,
     overcharge_user_pct: r.overcharge_user_pct,
-    avg_overcharge_pct: r.avg_overcharge_pct
+    avg_overcharge_pct: r.avg_overcharge_pct,
+    outcome_basis: r.outcome_basis ?? null,
+    price_per_outcome: r.price_per_outcome ?? null,
+    outcomes_per_user_month: r.outcomes_per_user_month ?? null
   };
 }
 
@@ -50,7 +54,10 @@ function configValues(config: MonetizationConfig): any[] {
     config.hybrid_overcharge_policy ?? null,
     config.overcharge_markup ?? null,
     config.overcharge_user_pct ?? null,
-    config.avg_overcharge_pct ?? null
+    config.avg_overcharge_pct ?? null,
+    config.outcome_basis ?? null,
+    config.price_per_outcome ?? null,
+    config.outcomes_per_user_month ?? null
   ];
 }
 
@@ -124,7 +131,8 @@ export const monetizationRepository = {
           monetization_type = ?, addon_monthly_fee = ?, addon_has_usage_limit = ?, addon_usage_limit = ?, addon_overcharge_policy = ?,
           usage_variant = ?, price_per_credit = ?,
           hybrid_monthly_fee = ?, hybrid_included_credits = ?, hybrid_overcharge_policy = ?,
-          overcharge_markup = ?, overcharge_user_pct = ?, avg_overcharge_pct = ?
+          overcharge_markup = ?, overcharge_user_pct = ?, avg_overcharge_pct = ?,
+          outcome_basis = ?, price_per_outcome = ?, outcomes_per_user_month = ?
         WHERE id = ?
       `).run(...values, existing.id);
     } else {
@@ -134,8 +142,9 @@ export const monetizationRepository = {
           addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
           usage_variant, price_per_credit,
           hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
-          overcharge_markup, overcharge_user_pct, avg_overcharge_pct
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          overcharge_markup, overcharge_user_pct, avg_overcharge_pct,
+          outcome_basis, price_per_outcome, outcomes_per_user_month
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(uuidv4(), entityType, entityId, scenarioId, ...values);
     }
   },

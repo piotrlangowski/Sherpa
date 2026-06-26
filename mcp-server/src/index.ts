@@ -167,7 +167,8 @@ function attachMonetization(scenario: Scenario): void {
            addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
            usage_variant, price_per_credit,
            hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
-           overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+           overcharge_markup, overcharge_user_pct, avg_overcharge_pct,
+           outcome_basis, price_per_outcome, outcomes_per_user_month
     FROM monetization_configs
     WHERE scenario_id IS NULL
   `).all() as any[];
@@ -187,7 +188,10 @@ function attachMonetization(scenario: Scenario): void {
       hybrid_overcharge_policy: r.hybrid_overcharge_policy,
       overcharge_markup: r.overcharge_markup,
       overcharge_user_pct: r.overcharge_user_pct,
-      avg_overcharge_pct: r.avg_overcharge_pct
+      avg_overcharge_pct: r.avg_overcharge_pct,
+      outcome_basis: r.outcome_basis,
+      price_per_outcome: r.price_per_outcome,
+      outcomes_per_user_month: r.outcomes_per_user_month
     });
   }
 
@@ -198,7 +202,8 @@ function attachMonetization(scenario: Scenario): void {
              addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
              usage_variant, price_per_credit,
              hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
-             overcharge_markup, overcharge_user_pct, avg_overcharge_pct
+             overcharge_markup, overcharge_user_pct, avg_overcharge_pct,
+             outcome_basis, price_per_outcome, outcomes_per_user_month
       FROM monetization_configs
       WHERE scenario_id = ?
     `).all(scenario.id) as any[];
@@ -217,7 +222,10 @@ function attachMonetization(scenario: Scenario): void {
         hybrid_overcharge_policy: r.hybrid_overcharge_policy,
         overcharge_markup: r.overcharge_markup,
         overcharge_user_pct: r.overcharge_user_pct,
-        avg_overcharge_pct: r.avg_overcharge_pct
+        avg_overcharge_pct: r.avg_overcharge_pct,
+        outcome_basis: r.outcome_basis,
+        price_per_outcome: r.price_per_outcome,
+        outcomes_per_user_month: r.outcomes_per_user_month
       });
     }
   }
@@ -321,7 +329,8 @@ function attachMonetization(scenario: Scenario): void {
 // Helper: Load a full scenario using the current multi-cohort schema (scope_type + junctions)
 function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
-    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct
+    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
+           evc_nba_annual_value, evc_extra_positive_value, evc_negative_value, evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct
     FROM scenarios
     WHERE id = ?
   `).get(scenarioId) as any;
@@ -1653,14 +1662,19 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
         id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index,
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
         monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
-        revenue_integrity_status, revenue_integrity_message
+        revenue_integrity_status, revenue_integrity_message,
+        evc, evc_price_floor, evc_price_target, evc_price_ceiling
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       resultsId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
       results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
       JSON.stringify(results.timeline.map((t: any) => t.netCashFlow)), JSON.stringify(results.timeline.map((t: any) => t.revenue)), JSON.stringify(results.timeline.map((t: any) => t.customers)), now,
-      integrity.status, integrity.message
+      integrity.status, integrity.message,
+      results.evc ? JSON.stringify(results.evc) : null,
+      results.evc?.priceFloor ?? null,
+      results.evc?.priceTarget ?? null,
+      results.evc?.priceCeiling ?? null
     );
   } else {
     db.prepare(`
@@ -1668,14 +1682,19 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
         id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index,
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
         monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
-        revenue_integrity_status, revenue_integrity_message
+        revenue_integrity_status, revenue_integrity_message,
+        evc, evc_price_floor, evc_price_target, evc_price_ceiling
       )
-      VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       scenarioId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
       results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
       JSON.stringify(results.timeline.map((t: any) => t.netCashFlow)), JSON.stringify(results.timeline.map((t: any) => t.revenue)), JSON.stringify(results.timeline.map((t: any) => t.customers)), now,
-      integrity.status, integrity.message
+      integrity.status, integrity.message,
+      results.evc ? JSON.stringify(results.evc) : null,
+      results.evc?.priceFloor ?? null,
+      results.evc?.priceTarget ?? null,
+      results.evc?.priceCeiling ?? null
     );
   }
 }
@@ -1724,6 +1743,12 @@ server.tool(
     penetration_baseline_months: z.number().min(1).optional().describe("Baseline pacing midpoint in months (months to 50% SOM)."),
     ai_acceleration_factor: z.number().min(0.1).max(1.0).optional().describe("AI acceleration midpoint multiplier (e.g. 0.60 for 40% faster)."),
     ai_som_lift_pct: z.number().min(0).max(1.0).optional().describe("AI SOM expansion lift percentage as decimal (e.g. 0.25 for +25% SOM)."),
+    evc_nba_annual_value: z.number().nullable().optional().describe("Next Best Alternative annual value ($)."),
+    evc_extra_positive_value: z.number().nullable().optional().describe("Extra positive annual value ($)."),
+    evc_negative_value: z.number().nullable().optional().describe("Negative value/switching costs ($)."),
+    evc_capture_ceiling_pct: z.number().nullable().optional().describe("Capture ceiling percentage share (e.g. 0.50)."),
+    evc_capture_target_pct: z.number().nullable().optional().describe("Capture target percentage share (e.g. 0.30)."),
+    evc_capture_floor_pct: z.number().nullable().optional().describe("Capture floor percentage share (e.g. 0.15)."),
     variation_percent: z.number().optional().describe("Sensitivity analysis variation percent (default: 0.10 for 10% variation)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
@@ -1733,9 +1758,11 @@ server.tool(
         const scenarios = db.prepare(`
           SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct,
                  s.modeling_type, s.revenue_carrier, s.revenue_bridge, s.expansion_vertical_id, s.penetration_baseline_months, s.ai_acceleration_factor, s.ai_som_lift_pct,
+                 s.evc_nba_annual_value, s.evc_extra_positive_value, s.evc_negative_value, s.evc_capture_ceiling_pct, s.evc_capture_target_pct, s.evc_capture_floor_pct,
                  r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index,
                  r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status,
-                 r.revenue_integrity_status, r.revenue_integrity_message
+                 r.revenue_integrity_status, r.revenue_integrity_message,
+                 r.evc, r.evc_price_floor, r.evc_price_target, r.evc_price_ceiling
           FROM scenarios s
           LEFT JOIN scenario_results r ON s.id = r.scenario_id
           ORDER BY s.updated_at DESC
@@ -1802,15 +1829,22 @@ server.tool(
               id, name, description, projection_months, discount_rate, scope_type,
               revenue_source, capex_contingency_pct, modeling_type, revenue_carrier,
               revenue_bridge, expansion_vertical_id, penetration_baseline_months,
-              ai_acceleration_factor, ai_som_lift_pct, created_at, updated_at
+              ai_acceleration_factor, ai_som_lift_pct,
+              evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
+              evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
+              created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             scenarioId, args.name, args.description || null, args.projection_months ?? 36,
             args.discount_rate ?? 0.10, scopeType, revSource, args.capex_contingency_pct ?? 0,
             modeling_type, revenue_carrier || null, revenue_bridge || null,
             args.expansion_vertical_id || null, args.penetration_baseline_months ?? null,
-            args.ai_acceleration_factor ?? null, args.ai_som_lift_pct ?? null, now, now
+            args.ai_acceleration_factor ?? null, args.ai_som_lift_pct ?? null,
+            args.evc_nba_annual_value ?? null, args.evc_extra_positive_value ?? null,
+            args.evc_negative_value ?? null, args.evc_capture_ceiling_pct ?? null,
+            args.evc_capture_target_pct ?? null, args.evc_capture_floor_pct ?? null,
+            now, now
           );
 
           if (args.cohort_config) {
@@ -1937,20 +1971,33 @@ server.tool(
           const revenue_carrier = resolvedModel.revenue_carrier;
           const revenue_source = revenue_carrier === 'cohort' ? 'cohort' : 'monetization';
 
+          const evc_nba_annual_value = args.evc_nba_annual_value !== undefined ? args.evc_nba_annual_value : current.evc_nba_annual_value;
+          const evc_extra_positive_value = args.evc_extra_positive_value !== undefined ? args.evc_extra_positive_value : current.evc_extra_positive_value;
+          const evc_negative_value = args.evc_negative_value !== undefined ? args.evc_negative_value : current.evc_negative_value;
+          const evc_capture_ceiling_pct = args.evc_capture_ceiling_pct !== undefined ? args.evc_capture_ceiling_pct : current.evc_capture_ceiling_pct;
+          const evc_capture_target_pct = args.evc_capture_target_pct !== undefined ? args.evc_capture_target_pct : current.evc_capture_target_pct;
+          const evc_capture_floor_pct = args.evc_capture_floor_pct !== undefined ? args.evc_capture_floor_pct : current.evc_capture_floor_pct;
+
           db.prepare(`
             UPDATE scenarios
             SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?,
                 revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?,
                 revenue_carrier = ?, revenue_bridge = ?,
                 expansion_vertical_id = ?, penetration_baseline_months = ?,
-                ai_acceleration_factor = ?, ai_som_lift_pct = ?, updated_at = ?
+                ai_acceleration_factor = ?, ai_som_lift_pct = ?,
+                evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?,
+                evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?,
+                updated_at = ?
             WHERE id = ?
           `).run(
             name, description || null, projection_months, discount_rate, scope_type,
             revenue_source, capex_contingency_pct, modeling_type,
             revenue_carrier || null, revenue_bridge || null,
             expansion_vertical_id || null, penetration_baseline_months,
-            ai_acceleration_factor, ai_som_lift_pct, now, args.id
+            ai_acceleration_factor, ai_som_lift_pct,
+            evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
+            evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
+            now, args.id
           );
 
           if (args.services !== undefined) {
@@ -2355,7 +2402,8 @@ server.resource(
 
       const row = db.prepare(`
         SELECT id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
-               payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status
+               payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
+               evc, evc_price_floor, evc_price_target, evc_price_ceiling
         FROM scenario_results
         WHERE scenario_id = ?
       `).get(scenarioId) as any;
@@ -2387,7 +2435,11 @@ server.resource(
         monthly_cashflows: JSON.parse(row.monthly_cashflows || '[]'),
         monthly_mrr: JSON.parse(row.monthly_mrr || '[]'),
         monthly_customers: JSON.parse(row.monthly_customers || '[]'),
-        calculated_at: row.calculated_at
+        calculated_at: row.calculated_at,
+        evc: row.evc ? JSON.parse(row.evc) : null,
+        evc_price_floor: row.evc_price_floor,
+        evc_price_target: row.evc_price_target,
+        evc_price_ceiling: row.evc_price_ceiling
       };
 
       return {
@@ -2418,7 +2470,8 @@ server.resource(
       const rows = db.prepare(`
         SELECT s.id, s.name, s.projection_months, s.discount_rate,
                r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index,
-               r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status
+               r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status,
+               r.evc_price_floor, r.evc_price_target, r.evc_price_ceiling
         FROM scenarios s
         LEFT JOIN scenario_results r ON s.id = r.scenario_id
         ORDER BY s.name ASC
@@ -2439,7 +2492,10 @@ server.resource(
         profitability_index_lower: r.profitability_index_lower ?? null,
         irr_monthly: r.irr_monthly ?? null,
         irr_annual_nominal: r.irr_annual_nominal ?? null,
-        irr_status: r.irr_status ?? null
+        irr_status: r.irr_status ?? null,
+        evc_price_floor: r.evc_price_floor ?? null,
+        evc_price_target: r.evc_price_target ?? null,
+        evc_price_ceiling: r.evc_price_ceiling ?? null
       }));
 
       return {
@@ -2534,7 +2590,7 @@ server.tool(
     scenario_id: z.string().nullable().optional().describe("Scenario UUID for scenario-level override. If null/omitted, applies to the catalog definition."),
     
     // MonetizationConfig parameters (optional/nullable)
-    monetization_type: z.enum(["none", "addon", "usage", "hybrid"]).optional().describe("Monetization model type (default: none)."),
+    monetization_type: z.enum(["none", "addon", "usage", "hybrid", "outcome"]).optional().describe("Monetization model type (default: none)."),
     addon_monthly_fee: z.number().nullable().optional().describe("Monthly flat fee for add-on."),
     addon_has_usage_limit: z.boolean().optional().describe("Whether the add-on has usage limits."),
     addon_usage_limit: z.number().nullable().optional().describe("Usage credit limit for add-on."),
@@ -2546,7 +2602,10 @@ server.tool(
     hybrid_overcharge_policy: z.enum(["hard_stop", "credit_pack", "payg"]).nullable().optional().describe("Policy when hybrid credit pool is exhausted."),
     overcharge_markup: z.number().nullable().optional().describe("Markup multiplier for overcharge credits."),
     overcharge_user_pct: z.number().min(0).max(1).nullable().optional().describe("Percentage of users exceeding usage limits."),
-    avg_overcharge_pct: z.number().nullable().optional().describe("Average amount of overcharge as a percentage of standard limit.")
+    avg_overcharge_pct: z.number().nullable().optional().describe("Average amount of overcharge as a percentage of standard limit."),
+    outcome_basis: z.enum(["deflected", "per_user", "interactions"]).nullable().optional().describe("Basis for outcome billing."),
+    price_per_outcome: z.number().nullable().optional().describe("Price charged per outcome."),
+    outcomes_per_user_month: z.number().nullable().optional().describe("Estimated outcomes volume per user per month.")
   },
   async (args) => {
     try {
@@ -2695,7 +2754,10 @@ server.tool(
             args.hybrid_overcharge_policy ?? null,
             args.overcharge_markup ?? null,
             args.overcharge_user_pct ?? null,
-            args.avg_overcharge_pct ?? null
+            args.avg_overcharge_pct ?? null,
+            args.outcome_basis ?? null,
+            args.price_per_outcome ?? null,
+            args.outcomes_per_user_month ?? null
           ];
 
           if (existing) {
@@ -2704,7 +2766,8 @@ server.tool(
                 monetization_type = ?, addon_monthly_fee = ?, addon_has_usage_limit = ?, addon_usage_limit = ?, addon_overcharge_policy = ?,
                 usage_variant = ?, price_per_credit = ?,
                 hybrid_monthly_fee = ?, hybrid_included_credits = ?, hybrid_overcharge_policy = ?,
-                overcharge_markup = ?, overcharge_user_pct = ?, avg_overcharge_pct = ?
+                overcharge_markup = ?, overcharge_user_pct = ?, avg_overcharge_pct = ?,
+                outcome_basis = ?, price_per_outcome = ?, outcomes_per_user_month = ?
               WHERE id = ?
             `).run(...values, existing.id);
           } else {
@@ -2714,8 +2777,9 @@ server.tool(
                 addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
                 usage_variant, price_per_credit,
                 hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
-                overcharge_markup, overcharge_user_pct, avg_overcharge_pct
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                overcharge_markup, overcharge_user_pct, avg_overcharge_pct,
+                outcome_basis, price_per_outcome, outcomes_per_user_month
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(crypto.randomUUID(), entityType, entityId, scenarioId, ...values);
           }
           db.prepare("DELETE FROM scenario_results").run();

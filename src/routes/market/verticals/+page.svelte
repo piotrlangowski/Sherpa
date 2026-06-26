@@ -28,7 +28,6 @@
   import Users from '@lucide/svelte/icons/users';
   import Layers from '@lucide/svelte/icons/layers';
   import Landmark from '@lucide/svelte/icons/landmark';
-  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import LayoutGrid from '@lucide/svelte/icons/layout-grid';
   import List from '@lucide/svelte/icons/list';
   import Search from '@lucide/svelte/icons/search';
@@ -83,9 +82,6 @@
       <p class="text-muted-foreground text-sm font-normal">Define business segments, estimate market sizes, and link to plans and packs.</p>
     </div>
     <div class="flex items-center gap-2">
-      <Button href="/market/import" variant="outline">
-        <RefreshCw class="h-4 w-4 mr-2" /> Import / Sync CRM
-      </Button>
       <Button href="/market/verticals/new">
         <Plus class="h-4 w-4 mr-2" /> Add Vertical
       </Button>

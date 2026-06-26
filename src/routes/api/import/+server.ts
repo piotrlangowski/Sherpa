@@ -153,7 +153,13 @@ const ScenarioSchema = z.object({
     entity_name: z.string(),
     config: MonetizationConfigSchema
   })).optional(),
-  entity_overrides: z.array(EntityOverrideEntrySchema).optional()
+  entity_overrides: z.array(EntityOverrideEntrySchema).optional(),
+  evc_nba_annual_value: z.number().nullable().optional(),
+  evc_extra_positive_value: z.number().nullable().optional(),
+  evc_negative_value: z.number().nullable().optional(),
+  evc_capture_ceiling_pct: z.number().nullable().optional(),
+  evc_capture_target_pct: z.number().nullable().optional(),
+  evc_capture_floor_pct: z.number().nullable().optional()
 });
 
 const SnapshotSchema = z.object({
@@ -529,7 +535,13 @@ export const POST: RequestHandler = async ({ request }) => {
         services: serviceRollouts,
         packs: packRollouts,
         plans: planRollouts,
-        cost_ids: costIds
+        cost_ids: costIds,
+        evc_nba_annual_value: scenario.evc_nba_annual_value ?? null,
+        evc_extra_positive_value: scenario.evc_extra_positive_value ?? null,
+        evc_negative_value: scenario.evc_negative_value ?? null,
+        evc_capture_ceiling_pct: scenario.evc_capture_ceiling_pct ?? null,
+        evc_capture_target_pct: scenario.evc_capture_target_pct ?? null,
+        evc_capture_floor_pct: scenario.evc_capture_floor_pct ?? null
       });
 
       newScenarioId = createdScenario.id;

@@ -241,6 +241,12 @@ export function runMigrations(db: DatabaseConnection): void {
         penetration_baseline_months REAL,
         ai_acceleration_factor      REAL,
         ai_som_lift_pct             REAL,
+        evc_nba_annual_value        REAL,
+        evc_extra_positive_value    REAL,
+        evc_negative_value          REAL,
+        evc_capture_ceiling_pct     REAL,
+        evc_capture_target_pct      REAL,
+        evc_capture_floor_pct       REAL,
         created_at                  TEXT NOT NULL,
         updated_at                  TEXT NOT NULL
       )
@@ -347,7 +353,11 @@ export function runMigrations(db: DatabaseConnection): void {
         profitability_index_lower REAL,
         irr_monthly           REAL,
         irr_status            TEXT,
-        irr_annual_nominal    REAL
+        irr_annual_nominal    REAL,
+        evc                   TEXT,
+        evc_price_floor       REAL,
+        evc_price_target      REAL,
+        evc_price_ceiling     REAL
       )
     `).run();
 
@@ -372,7 +382,10 @@ export function runMigrations(db: DatabaseConnection): void {
         hybrid_overcharge_policy TEXT,
         overcharge_markup        REAL,
         overcharge_user_pct      REAL,
-        avg_overcharge_pct       REAL
+        avg_overcharge_pct       REAL,
+        outcome_basis            TEXT,
+        price_per_outcome        REAL,
+        outcomes_per_user_month  REAL
       )
     `).run();
 
@@ -848,5 +861,52 @@ function runDataMigrations(db: DatabaseConnection): void {
 
   if (resultsInvalidated14) {
     db.prepare("DELETE FROM scenario_results").run();
+  }
+
+  // Migration 15: Add outcome-based monetization fields to monetization_configs
+  const monetizationCols15 = (db.prepare("PRAGMA table_info(monetization_configs)").all() as any[]).map(c => c.name);
+  if (!monetizationCols15.includes('outcome_basis')) {
+    db.prepare("ALTER TABLE monetization_configs ADD COLUMN outcome_basis TEXT").run();
+  }
+  if (!monetizationCols15.includes('price_per_outcome')) {
+    db.prepare("ALTER TABLE monetization_configs ADD COLUMN price_per_outcome REAL").run();
+  }
+  if (!monetizationCols15.includes('outcomes_per_user_month')) {
+    db.prepare("ALTER TABLE monetization_configs ADD COLUMN outcomes_per_user_month REAL").run();
+  }
+
+  // Migration 16: Add EVC inputs to scenarios and EVC outputs to scenario_results
+  const scenarioCols16 = (db.prepare("PRAGMA table_info(scenarios)").all() as any[]).map(c => c.name);
+  if (!scenarioCols16.includes('evc_nba_annual_value')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN evc_nba_annual_value REAL").run();
+  }
+  if (!scenarioCols16.includes('evc_extra_positive_value')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN evc_extra_positive_value REAL").run();
+  }
+  if (!scenarioCols16.includes('evc_negative_value')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN evc_negative_value REAL").run();
+  }
+  if (!scenarioCols16.includes('evc_capture_ceiling_pct')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN evc_capture_ceiling_pct REAL").run();
+  }
+  if (!scenarioCols16.includes('evc_capture_target_pct')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN evc_capture_target_pct REAL").run();
+  }
+  if (!scenarioCols16.includes('evc_capture_floor_pct')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN evc_capture_floor_pct REAL").run();
+  }
+
+  const resultsCols16 = (db.prepare("PRAGMA table_info(scenario_results)").all() as any[]).map(c => c.name);
+  if (!resultsCols16.includes('evc')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN evc TEXT").run();
+  }
+  if (!resultsCols16.includes('evc_price_floor')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN evc_price_floor REAL").run();
+  }
+  if (!resultsCols16.includes('evc_price_target')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN evc_price_target REAL").run();
+  }
+  if (!resultsCols16.includes('evc_price_ceiling')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN evc_price_ceiling REAL").run();
   }
 }

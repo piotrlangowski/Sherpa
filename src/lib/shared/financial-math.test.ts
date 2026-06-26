@@ -19,7 +19,8 @@ import {
   resolveRevenueModel,
   deriveModelingType,
   validateScenarioConfig,
-  buildPenetrationCurve
+  buildPenetrationCurve,
+  calculateEVC
 } from './financial-math.js';
 import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings, Plan } from './types.js';
 
@@ -1366,6 +1367,164 @@ describe('S-Curve Market Expansion (Phase 3)', () => {
       expect(lastMonth.tokenCostsLower).toBeDefined();
       expect(lastMonth.tokenCosts).toBeDefined();
       expect(lastMonth.tokenCosts!).toBeGreaterThanOrEqual(lastMonth.tokenCostsLower!);
+    });
+  });
+
+  describe('Outcome-Based & EVC Modeling Tests', () => {
+    it('should calculate EVC and capture bands correctly', () => {
+      const timeline = Array.from({ length: 12 }, (_, i) => ({
+        month: i,
+        grossRevenue: 15000,
+        baselineRevenue: 10000,
+        laborSavingsCash: 2000,
+        laborSavingsCapacity: 1000,
+        opex: 500,
+        capex: 0,
+        tokenCosts: 200,
+        netCashFlow: 5000,
+        customers: 100
+      })) as any[];
+
+      const inputs = {
+        nbaAnnualValue: 50000,
+        extraPositiveValue: 10000,
+        negativeValue: 5000,
+        captureCeilingPct: 0.50,
+        captureTargetPct: 0.30,
+        captureFloorPct: 0.15
+      };
+
+      const result = calculateEVC(timeline, inputs);
+
+      expect(result).not.toBeNull();
+      expect(result.referenceValue).toBe(50000);
+      // laborSavings (12 * 3000 = 36000) + incrementalMargin (12 * 5000 = 60000) + extraPositiveValue (10000) = 106000
+      expect(result.positiveValueTotal).toBe(106000);
+      expect(result.negativeValueTotal).toBe(5000);
+      // Net created = 106000 - 5000 = 101000
+      expect(result.netCreatedValue).toBe(101000);
+      // EVC = NBA + Net Created = 50000 + 101000 = 151000
+      expect(result.evc).toBe(151000);
+
+      // Floor: 50000 + 0.15 * 101000 = 50000 + 15150 = 65150
+      expect(result.priceFloor).toBe(65150);
+      // Target: 50000 + 0.30 * 101000 = 50000 + 30300 = 80300
+      expect(result.priceTarget).toBe(80300);
+      // Ceiling: 50000 + 0.50 * 101000 = 50000 + 50500 = 100500
+      expect(result.priceCeiling).toBe(100500);
+    });
+
+    it('should compute deflected interaction outcome revenue', () => {
+      const provider: Provider = {
+        id: 'p1', name: 'OpenAI', model_name: 'gpt-4', input_price: 0, output_price: 0,
+        is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000, output_tokens_per_credit: 1000, updated_at: ''
+      };
+
+      const srv: Service = {
+        id: 's1',
+        name: 'Agent Service',
+        status: 'planned',
+        service_type: 'agent',
+        provider_id: 'p1',
+        avg_input_tokens: 0,
+        avg_output_tokens: 0,
+        interaction_driver_type: 'flat',
+        monthly_volume: 100000,
+        avg_requests_per_user_month: 100,
+        average_handle_time_seconds: 60,
+        fully_loaded_cost_per_fte_month: 5000,
+        containment_rate: 0.5,
+        monetization: {
+          monetization_type: 'outcome',
+          outcome_basis: 'deflected',
+          price_per_outcome: 2.0
+        }
+      };
+
+      const cohort: CohortConfig = {
+        id: 'c1',
+        name: 'Cohort 1',
+        current_users: 1000,
+        monthly_acquisition: 0,
+        acquisition_growth_rate: 0,
+        monthly_churn_rate: 0,
+        retention_floor: 0,
+        monthly_expansion_rate: 0,
+        ai_adoption_rate: 1.0,
+        base_arpu: 0
+      };
+
+      const result = calculateScenario({
+        id: 'test-outcome',
+        name: 'Outcome Test',
+        projection_months: 1,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        modeling_type: 'appraisal',
+        revenue_carrier: 'feature',
+        services: [{ ...srv, rollout_month: 0 } as any],
+        scope_cohorts: [cohort]
+      }, [provider]);
+
+      // month 1 active users = 1000
+      // interactions = 100000
+      // deflected = 100000 * 0.5 = 50000
+      // outcome revenue = 50000 * $2 = $100000
+      const breakdown = result.timeline[0];
+      expect(breakdown.outcomeRevenue).toBe(100000);
+      expect(breakdown.monetizationRevenue).toBe(100000);
+    });
+
+    it('should count per_user outcome revenue exactly once (no double-count)', () => {
+      const srv: Service = {
+        id: 's1',
+        name: 'Copilot Service',
+        status: 'planned',
+        service_type: 'copilot',
+        avg_input_tokens: 0,
+        avg_output_tokens: 0,
+        interaction_driver_type: 'flat',
+        avg_requests_per_user_month: 0,
+        monetization: {
+          monetization_type: 'outcome',
+          outcome_basis: 'per_user',
+          outcomes_per_user_month: 10,
+          price_per_outcome: 3.0
+        }
+      };
+
+      const cohort: CohortConfig = {
+        id: 'c1',
+        name: 'Cohort 1',
+        current_users: 1000,
+        monthly_acquisition: 0,
+        acquisition_growth_rate: 0,
+        monthly_churn_rate: 0,
+        retention_floor: 0,
+        monthly_expansion_rate: 0,
+        ai_adoption_rate: 1.0,
+        base_arpu: 0
+      };
+
+      const result = calculateScenario({
+        id: 'test-outcome-per-user',
+        name: 'Outcome Per-User Test',
+        projection_months: 1,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        modeling_type: 'appraisal',
+        revenue_carrier: 'feature',
+        services: [{ ...srv, rollout_month: 0 } as any],
+        scope_cohorts: [cohort]
+      }, []);
+
+      // active AI users = 1000; outcomes = 1000 * 10 = 10000; revenue = 10000 * $3 = $30000.
+      // Must be booked EXACTLY once — regression guard against the per_user double-count
+      // that occurred when both calculateMonetizationRevenue and the service loop accrued it.
+      const breakdown = result.timeline[0];
+      expect(breakdown.outcomeRevenue).toBe(30000);
+      expect(breakdown.monetizationRevenue).toBe(30000);
+      expect(breakdown.revenue).toBe(30000);
     });
   });
 });

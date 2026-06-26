@@ -4,6 +4,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import { NumberField } from '$lib/components/forms';
   import Textarea from '$lib/components/ui/textarea/textarea.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
@@ -83,7 +84,7 @@
                 <span>TAM</span>
                 <span class="text-[10px] lowercase font-normal">(Total Addressable)</span>
               </Label>
-              <Input id="tamUsers" name="tamUsers" type="number" min="0" bind:value={tam} class="bg-(--glass-inset-bg) border-border font-mono" />
+              <NumberField id="tamUsers" name="tamUsers" min="0" bind:value={tam} raw={true} grouped={true} decimals={0} />
             </div>
 
             <div class="space-y-2">
@@ -91,7 +92,7 @@
                 <span>SAM</span>
                 <span class="text-[10px] lowercase font-normal">(Serviceable Available)</span>
               </Label>
-              <Input id="samUsers" name="samUsers" type="number" min="0" max={tam} bind:value={sam} class="bg-(--glass-inset-bg) border-border font-mono" />
+              <NumberField id="samUsers" name="samUsers" min="0" max={tam} bind:value={sam} raw={true} grouped={true} decimals={0} />
             </div>
 
             <div class="space-y-2">
@@ -99,7 +100,7 @@
                 <span>SOM</span>
                 <span class="text-[10px] lowercase font-normal">(Serviceable Obtainable)</span>
               </Label>
-              <Input id="somUsers" name="somUsers" type="number" min="0" max={sam} bind:value={som} class="bg-(--glass-inset-bg) border-border font-mono" />
+              <NumberField id="somUsers" name="somUsers" min="0" max={sam} bind:value={som} raw={true} grouped={true} decimals={0} />
             </div>
           </div>
         </div>

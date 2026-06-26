@@ -5,34 +5,36 @@ export function getCurrencySymbol(currency: Currency): string {
   return CURRENCIES.find(c => c.value === currency)?.symbol || '$';
 }
 
+const GROUP = '\u202F'; // narrow no-break space (display only)
+
+function formatGrouped(value: number, decimals: number): string {
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  })
+    .formatToParts(value)
+    .map((p) => (p.type === 'group' ? GROUP : p.value))
+    .join('');
+}
+
 export function formatCurrency(value: number, currency: Currency, decimals: number = 0): string {
   const currencyInfo = CURRENCIES.find(c => c.value === currency);
   const symbol = currencyInfo?.symbol || '$';
   const position = currencyInfo?.position || 'prefix';
   
-  // Format with commas and optional decimals
-  const formattedValue = new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
-  }).format(value);
+  const formattedValue = formatGrouped(value, decimals);
   
   return position === 'prefix' ? `${symbol}${formattedValue}` : `${formattedValue} ${symbol}`;
 }
 
 export function formatNumber(value: number, decimals: number = 0): string {
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
-  }).format(value);
+  return formatGrouped(value, decimals);
 }
 
 export function formatPercent(value: number, decimals: number = 1): string {
   // Assuming value is a decimal (e.g. 0.125 for 12.5%)
   const percentage = value * 100;
-  const formatted = new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
-  }).format(percentage);
+  const formatted = formatGrouped(percentage, decimals);
   
   return `${formatted}%`;
 }

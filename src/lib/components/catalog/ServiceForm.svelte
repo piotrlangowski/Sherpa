@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { formatCurrency } from '$lib/utils/format';
+  import { NumberField } from '$lib/components/forms';
   import type { Currency } from '$lib/shared/types';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
@@ -226,18 +227,18 @@
           <div class="p-4 rounded-lg bg-muted/30 border border-border grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div class="space-y-1.5">
               <Label for="avgInputTokens">Avg. Input Tokens</Label>
-              <Input id="avgInputTokens" name="avgInputTokens" type="number" min="0" bind:value={avgInputTokens} class="bg-(--glass-inset-bg) text-right font-mono" />
+              <NumberField id="avgInputTokens" name="avgInputTokens" min="0" bind:value={avgInputTokens} raw={true} grouped={true} decimals={0} class="text-right" />
             </div>
 
             <div class="space-y-1.5">
               <Label for="avgOutputTokens">Avg. Output Tokens</Label>
-              <Input id="avgOutputTokens" name="avgOutputTokens" type="number" min="0" bind:value={avgOutputTokens} class="bg-(--glass-inset-bg) text-right font-mono" />
+              <NumberField id="avgOutputTokens" name="avgOutputTokens" min="0" bind:value={avgOutputTokens} raw={true} grouped={true} decimals={0} class="text-right" />
             </div>
 
             {#if serviceType === 'copilot'}
               <div class="space-y-1.5">
                 <Label for="avgRequests">Requests / User / Month</Label>
-                <Input id="avgRequests" name="avgRequests" type="number" min="0" bind:value={avgRequests} class="bg-(--glass-inset-bg) text-right font-mono" />
+                <NumberField id="avgRequests" name="avgRequests" min="0" bind:value={avgRequests} raw={true} grouped={true} decimals={0} class="text-right" />
               </div>
             {/if}
           </div>
@@ -284,7 +285,7 @@
               <option value="PLN">PLN (zł)</option>
               <option value="GBP">GBP (£)</option>
             </select>
-            <Input id="fixedCost" name="fixedCost" type="number" step="0.01" min="0" placeholder="Flat cost" bind:value={fixedCost} class="col-span-2 bg-(--glass-inset-bg) text-right" />
+            <NumberField id="fixedCost" name="fixedCost" min="0" step="0.01" placeholder="Flat cost" bind:value={fixedCost} required={false} raw={true} grouped={true} decimals={2} class="col-span-2 text-right" />
           </div>
           <p class="text-xs text-muted-foreground">
             Optional. Use this if you pay a flat monthly fee for this service rather than per token.
@@ -319,7 +320,7 @@
               {#if interactionDriverType === 'flat'}
                 <div class="space-y-1.5">
                   <Label for="monthly_volume">Monthly Volume (interactions)</Label>
-                  <Input id="monthly_volume" name="monthly_volume" type="number" min="0" bind:value={monthlyVolume} class="bg-(--glass-inset-bg) text-right font-mono" />
+                  <NumberField id="monthly_volume" name="monthly_volume" min="0" bind:value={monthlyVolume} raw={true} grouped={true} decimals={0} class="text-right" />
                 </div>
                 <div class="space-y-1.5">
                   <Label for="volume_growth_rate">Monthly Volume Growth Rate (e.g. 0.02 for 2%)</Label>
@@ -337,7 +338,7 @@
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-border/40 pt-4">
               <div class="space-y-1.5">
                 <Label for="fully_loaded_cost_per_fte_month">Fully Loaded FTE Cost / Month</Label>
-                <Input id="fully_loaded_cost_per_fte_month" name="fully_loaded_cost_per_fte_month" type="number" min="0" step="0.01" bind:value={fullyLoadedCostPerFteMonth} class="bg-(--glass-inset-bg) text-right font-mono" />
+                <NumberField id="fully_loaded_cost_per_fte_month" name="fully_loaded_cost_per_fte_month" min="0" step="0.01" bind:value={fullyLoadedCostPerFteMonth} raw={true} grouped={true} decimals={2} class="text-right" />
               </div>
               <div class="space-y-1.5">
                 <Label for="productive_hours_per_fte_month">Productive Hours / FTE / Month</Label>
