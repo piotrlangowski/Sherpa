@@ -2,7 +2,7 @@
 
 - Status: Zaakceptowany
 - Data: 2026-06-20
-- Powiązane: ADR 0001 (typy modelowania), ADR 0002 (nośnik przychodu), ADR 0004 (walidacja)
+- Powiązane: ADR 0001 (typy modelowania), ADR 0002 (nośnik przychodu), ADR 0004 (walidacja), ADR 0005 (EVC jako podstawa wyceny)
 
 ## Kontekst
 

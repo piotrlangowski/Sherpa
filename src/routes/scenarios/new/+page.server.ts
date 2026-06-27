@@ -69,6 +69,8 @@ export const actions: Actions = {
     const evc_capture_ceiling_pct = getFloatOrNull('evc_capture_ceiling_pct');
     const evc_capture_target_pct = getFloatOrNull('evc_capture_target_pct');
     const evc_capture_floor_pct = getFloatOrNull('evc_capture_floor_pct');
+    const price_from_evc = formData.get('price_from_evc') === '1';
+    const adoption_elasticity = parseFloat(formData.get('adoption_elasticity') as string || '0');
 
     let verticalIds: string[] = [];
     if (scopeType === 'verticals') {
@@ -170,7 +172,9 @@ export const actions: Actions = {
         evc_negative_value,
         evc_capture_ceiling_pct,
         evc_capture_target_pct,
-        evc_capture_floor_pct
+        evc_capture_floor_pct,
+        price_from_evc,
+        adoption_elasticity
       });
 
       scenarioId = scenario.id;

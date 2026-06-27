@@ -55,13 +55,16 @@ export const load: PageServerLoad = async ({ params }) => {
     diagnostics = [];
   }
 
+  const captureCurve = results?.evc?.captureCurve ?? null;
+
   return {
     scenario,
     results,
     timeline,
     scopeSummary,
     resolvedConfigs,
-    diagnostics
+    diagnostics,
+    captureCurve
   };
 };
 

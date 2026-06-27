@@ -247,6 +247,8 @@ export function runMigrations(db: DatabaseConnection): void {
         evc_capture_ceiling_pct     REAL,
         evc_capture_target_pct      REAL,
         evc_capture_floor_pct       REAL,
+        price_from_evc              INTEGER DEFAULT 0,
+        adoption_elasticity         REAL DEFAULT 0,
         created_at                  TEXT NOT NULL,
         updated_at                  TEXT NOT NULL
       )
@@ -908,5 +910,21 @@ function runDataMigrations(db: DatabaseConnection): void {
   }
   if (!resultsCols16.includes('evc_price_ceiling')) {
     db.prepare("ALTER TABLE scenario_results ADD COLUMN evc_price_ceiling REAL").run();
+  }
+
+  // Migration 17: Add price_from_evc and adoption_elasticity to scenarios, and invalidate cached scenario results
+  const scenarioCols17 = (db.prepare("PRAGMA table_info(scenarios)").all() as any[]).map(c => c.name);
+  let resultsInvalidated17 = false;
+  if (!scenarioCols17.includes('price_from_evc')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN price_from_evc INTEGER DEFAULT 0").run();
+    resultsInvalidated17 = true;
+  }
+  if (!scenarioCols17.includes('adoption_elasticity')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN adoption_elasticity REAL DEFAULT 0").run();
+    resultsInvalidated17 = true;
+  }
+
+  if (resultsInvalidated17) {
+    db.prepare("DELETE FROM scenario_results").run();
   }
 }

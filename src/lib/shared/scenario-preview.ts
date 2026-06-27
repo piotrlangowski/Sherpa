@@ -42,6 +42,8 @@ interface DraftFormState {
   evc_capture_ceiling_pct?: number | null;
   evc_capture_target_pct?: number | null;
   evc_capture_floor_pct?: number | null;
+  price_from_evc?: boolean;
+  adoption_elasticity?: number;
 }
 
 
@@ -152,6 +154,8 @@ export function buildDraftScenario(
     evc_capture_ceiling_pct: formState.evc_capture_ceiling_pct ?? null,
     evc_capture_target_pct: formState.evc_capture_target_pct ?? null,
     evc_capture_floor_pct: formState.evc_capture_floor_pct ?? null,
+    price_from_evc: formState.price_from_evc ?? false,
+    adoption_elasticity: formState.adoption_elasticity ?? 0,
     expansion,
     scope_cohorts: resolvedCohorts,
     scope_overrides: overrides,

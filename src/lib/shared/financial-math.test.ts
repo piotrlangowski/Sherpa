@@ -20,7 +20,9 @@ import {
   deriveModelingType,
   validateScenarioConfig,
   buildPenetrationCurve,
-  calculateEVC
+  calculateEVC,
+  runCaptureCurve,
+  calculateAnalyticalLaborSavings
 } from './financial-math.js';
 import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings, Plan } from './types.js';
 
@@ -1382,7 +1384,8 @@ describe('S-Curve Market Expansion (Phase 3)', () => {
         capex: 0,
         tokenCosts: 200,
         netCashFlow: 5000,
-        customers: 100
+        customers: 100,
+        aiUsers: 20
       })) as any[];
 
       const inputs = {
@@ -1391,27 +1394,269 @@ describe('S-Curve Market Expansion (Phase 3)', () => {
         negativeValue: 5000,
         captureCeilingPct: 0.50,
         captureTargetPct: 0.30,
-        captureFloorPct: 0.15
+        captureFloorPct: 0.15,
+        unitLaborSavingsAnnual: 360
       };
 
       const result = calculateEVC(timeline, inputs);
 
       expect(result).not.toBeNull();
-      expect(result.referenceValue).toBe(50000);
-      // laborSavings (12 * 3000 = 36000) + incrementalMargin (12 * 5000 = 60000) + extraPositiveValue (10000) = 106000
-      expect(result.positiveValueTotal).toBe(106000);
-      expect(result.negativeValueTotal).toBe(5000);
-      // Net created = 106000 - 5000 = 101000
-      expect(result.netCreatedValue).toBe(101000);
-      // EVC = NBA + Net Created = 50000 + 101000 = 151000
-      expect(result.evc).toBe(151000);
+      // NBA/12 = 50000/12 = 4166.67
+      expect(result.referenceValue).toBeCloseTo(4166.67, 1);
+      // unitLaborSavingsAnnual = 36000/100 = 360.
+      // positiveValueTotal = (10000 + 360)/12 = 863.33
+      expect(result.positiveValueTotal).toBeCloseTo(863.33, 1);
+      // negativeValueTotal = 5000/12 = 416.67
+      expect(result.negativeValueTotal).toBeCloseTo(416.67, 1);
+      // Net created = 863.33 - 416.67 = 446.67
+      expect(result.netCreatedValue).toBeCloseTo(446.67, 1);
+      // EVC = 4166.67 + 446.67 = 4613.33
+      expect(result.evc).toBeCloseTo(4613.33, 1);
 
-      // Floor: 50000 + 0.15 * 101000 = 50000 + 15150 = 65150
-      expect(result.priceFloor).toBe(65150);
-      // Target: 50000 + 0.30 * 101000 = 50000 + 30300 = 80300
-      expect(result.priceTarget).toBe(80300);
-      // Ceiling: 50000 + 0.50 * 101000 = 50000 + 50500 = 100500
-      expect(result.priceCeiling).toBe(100500);
+      // Floor: 4166.67 + 0.15 * 446.67 = 4233.67
+      expect(result.priceFloor).toBeCloseTo(4233.67, 1);
+      // Target: 4166.67 + 0.30 * 446.67 = 4300.67
+      expect(result.priceTarget).toBeCloseTo(4300.67, 1);
+      // Ceiling: 4166.67 + 0.50 * 446.67 = 4390.00
+      expect(result.priceCeiling).toBeCloseTo(4390.00, 1);
+
+      // Verify the new breakdown fields are returned correctly
+      expect(result.laborSavings).toBe(360);
+      expect(result.extraPositiveValue).toBe(10000);
+      // cogsPerUserMonth = (200 + 500) / 100 = 7
+      expect(result.cogsPerUserMonth).toBe(7);
+      // vendorGrossProfitPerUserMonth = targetCapturePerUserMonth (134.00) - cogs (7) = 127.00
+      expect(result.vendorGrossProfitPerUserMonth).toBeCloseTo(127.00, 1);
+    });
+
+    it('should keep EVC and pricing bands invariant when only gross or baseline revenues are changed', () => {
+      const baseTimeline = Array.from({ length: 12 }, (_, i) => ({
+        month: i,
+        grossRevenue: 15000,
+        baselineRevenue: 10000,
+        laborSavingsCash: 2000,
+        laborSavingsCapacity: 1000,
+        opex: 500,
+        capex: 0,
+        tokenCosts: 200,
+        netCashFlow: 5000,
+        customers: 100,
+        aiUsers: 20
+      })) as any[];
+
+      const modifiedTimeline = baseTimeline.map(m => ({
+        ...m,
+        grossRevenue: m.grossRevenue * 2,
+        baselineRevenue: m.baselineRevenue + 1000
+      }));
+
+      const inputs = {
+        nbaAnnualValue: 50000,
+        extraPositiveValue: 10000,
+        negativeValue: 5000,
+        captureCeilingPct: 0.50,
+        captureTargetPct: 0.30,
+        captureFloorPct: 0.15,
+        unitLaborSavingsAnnual: 360
+      };
+
+      const baseResult = calculateEVC(baseTimeline, inputs);
+      const modifiedResult = calculateEVC(modifiedTimeline, inputs);
+
+      expect(modifiedResult.evc).toBeCloseTo(baseResult.evc, 1);
+      expect(modifiedResult.netCreatedValue).toBeCloseTo(baseResult.netCreatedValue, 1);
+      expect(modifiedResult.priceFloor).toBeCloseTo(baseResult.priceFloor, 1);
+      expect(modifiedResult.priceTarget).toBeCloseTo(baseResult.priceTarget, 1);
+      expect(modifiedResult.priceCeiling).toBeCloseTo(baseResult.priceCeiling, 1);
+    });
+
+    it('should apply price_from_evc overlay and compute derived price in calculateScenario', () => {
+      const scenario: Scenario = {
+        id: 's-evc',
+        name: 'Test EVC Scenario',
+        projection_months: 12,
+        discount_rate: 0.10,
+        scope_type: 'cohorts',
+        modeling_type: 'appraisal',
+        revenue_carrier: 'cohort',
+        price_from_evc: true,
+        evc_nba_annual_value: 12000, // 1000/mo NBA
+        evc_extra_positive_value: 2400, // 200/mo extra
+        evc_negative_value: 1200, // 100/mo switching
+        evc_capture_target_pct: 0.30, // 30% capture target
+        scope_cohorts: [
+          {
+            id: 'c1',
+            name: 'Cohort 1',
+            current_users: 100,
+            monthly_acquisition: 0,
+            acquisition_growth_rate: 0,
+            monthly_churn_rate: 0,
+            base_arpu: 0, // Should be overridden
+            arpu_uplift: 0, // Should be overridden
+            arpu_uplift_percent: 0,
+            ai_adoption_rate: 1.0,
+            adoption_ramp_months: 0,
+            retention_floor: 0.60,
+            monthly_expansion_rate: 0.02
+          }
+        ]
+      };
+
+      const providers: Provider[] = [];
+      const result = calculateScenario(scenario, providers);
+
+      expect(result.evc).not.toBeNull();
+      // unitLaborSavings = 0 (no agent services)
+      // unitNetValue = (2400 + 0 - 1200) / 12 = 100
+      // targetCapturePerUserMonth = 0.30 * 100 = 30
+      expect(result.evc?.targetCapturePerUserMonth).toBe(30);
+
+      // Verify that the timeline revenue is based on the overridden price (30/mo * 100 customers = 3000 MRR)
+      expect(result.timeline[0].revenue).toBe(3000);
+    });
+
+    it('should apply adoption elasticity to adoption rate and ramp tempo', () => {
+      const baseCohort = {
+        id: 'c1',
+        name: 'Cohort 1',
+        current_users: 100,
+        monthly_acquisition: 0,
+        acquisition_growth_rate: 0,
+        monthly_churn_rate: 0,
+        base_arpu: 100,
+        arpu_uplift: 10,
+        arpu_uplift_percent: 0,
+        ai_adoption_rate: 0.50,
+        adoption_ramp_months: 6,
+        retention_floor: 0.60,
+        monthly_expansion_rate: 0.02
+      };
+
+      const scenario: Scenario = {
+        id: 's-elastic',
+        name: 'Elastic Scenario',
+        projection_months: 12,
+        discount_rate: 0.10,
+        scope_type: 'cohorts' as const,
+        evc_capture_target_pct: 0.30,
+        adoption_elasticity: 1.5,
+        scope_cohorts: [baseCohort]
+      };
+
+      // 1. Lower capture (20%) -> more surplus, adoption ceiling should increase, ramp months should decrease
+      const resLower = calculateScenario(scenario, [], undefined, {
+        runtime_capture_pct: 0.20
+      });
+
+      // 2. Higher capture (40%) -> less surplus, adoption ceiling should decrease, ramp months should increase
+      const resHigher = calculateScenario(scenario, [], undefined, {
+        runtime_capture_pct: 0.40
+      });
+
+      // For Lower (capture = 0.20 < target = 0.30):
+      // target = 0.5 * (1 + 1.5 * (0.30 - 0.20)) = 0.5 * 1.15 = 0.575
+      // ramp = 6 * (1 + 1.5 * 0.5 * (0.20 - 0.30)) = 6 * (1 - 0.075) = 5.55 -> round to 6 or 5?
+      // 1.5 * 0.5 * -0.10 = -0.075, ramp = 6 * 0.925 = 5.55 -> round to 6 (wait, round(5.55) is 6? No, round(5.55) = 6).
+      // Let's check the adoption rates in Month 12 (when ramp is fully complete):
+      // Month 12 activeAiUsers should be 100 * target
+      expect(resLower.timeline[11].aiUsers).toBeGreaterThan(resHigher.timeline[11].aiUsers);
+    });
+
+    it('should sweep capture rate and return correct CaptureCurveResult', () => {
+      const scenario: Scenario = {
+        id: 's-curve',
+        name: 'Curve Scenario',
+        projection_months: 12,
+        discount_rate: 0.10,
+        scope_type: 'cohorts',
+        evc_nba_annual_value: 12000,
+        evc_extra_positive_value: 2400,
+        evc_negative_value: 1200,
+        evc_capture_target_pct: 0.30,
+        adoption_elasticity: 1.0,
+        scope_cohorts: [
+          {
+            id: 'c1',
+            name: 'Cohort 1',
+            current_users: 100,
+            monthly_acquisition: 0,
+            acquisition_growth_rate: 0,
+            monthly_churn_rate: 0,
+            base_arpu: 0,
+            arpu_uplift: 0,
+            arpu_uplift_percent: 0,
+            ai_adoption_rate: 0.50,
+            adoption_ramp_months: 0,
+            retention_floor: 0.60,
+            monthly_expansion_rate: 0.02
+          }
+        ]
+      };
+
+      const result = runCaptureCurve(scenario, []);
+      expect(result.points).toHaveLength(21);
+      expect(result.optimalCapture).toBeGreaterThanOrEqual(0.0);
+      expect(result.optimalCapture).toBeLessThanOrEqual(1.0);
+      expect(result.optimalOverlayPrice).toBeDefined();
+      expect(result.epsilonBand.low).toBeDefined();
+      expect(result.epsilonBand.high).toBeDefined();
+    });
+
+    it('should calculate analytical labor savings correctly', () => {
+      const scenario: Scenario = {
+        id: 's-analytical-savings',
+        name: 'Analytical Savings Scenario',
+        projection_months: 12,
+        discount_rate: 0.10,
+        scope_type: 'cohorts',
+        scope_cohorts: [
+          {
+            id: 'c1',
+            name: 'Cohort 1',
+            current_users: 100,
+            monthly_acquisition: 0,
+            acquisition_growth_rate: 0,
+            monthly_churn_rate: 0,
+            base_arpu: 100,
+            arpu_uplift: 0,
+            arpu_uplift_percent: 0,
+            ai_adoption_rate: 0.50,
+            adoption_ramp_months: 0,
+            retention_floor: 0.60,
+            monthly_expansion_rate: 0.02
+          }
+        ],
+        services: [
+          {
+            id: 'srv1',
+            name: 'Customer Agent',
+            status: 'planned',
+            service_type: 'agent',
+            interaction_driver_type: 'per_customer',
+            interactions_per_customer_month: 50,
+            containment_rate: 0.60,
+            average_handle_time_seconds: 60,
+            productive_hours_per_fte_month: 120,
+            fully_loaded_cost_per_fte_month: 6000,
+            avg_input_tokens: 0,
+            avg_output_tokens: 0,
+            avg_requests_per_user_month: 0,
+            rollout_month: 0
+          }
+        ]
+      };
+
+      // Representative Customers: 100
+      // Representative Adoption: 0.50
+      // interactionsPerCustomerMonth = 0.50 * 100 = 50
+      // deflected = 50 * 0.60 = 30
+      // hoursSaved = 30 * 60 / 3600 = 0.5 hours
+      // fteSaved = 0.5 / 120 = 0.004167 FTE
+      // monthly_savings_per_customer = 0.004167 * 6000 = 25
+      // annual_savings_per_customer = 25 * 12 = 300
+      const savings = calculateAnalyticalLaborSavings(scenario);
+      expect(savings).toBeCloseTo(300, 1);
     });
 
     it('should compute deflected interaction outcome revenue', () => {

@@ -397,6 +397,8 @@ export interface Scenario {
   evc_capture_ceiling_pct?: number | null;
   evc_capture_target_pct?: number | null;
   evc_capture_floor_pct?: number | null;
+  price_from_evc?: boolean;
+  adoption_elasticity?: number;
 
   created_at?: string;
   updated_at?: string;
@@ -430,6 +432,9 @@ export interface EvcInputs {
   captureCeilingPct: number;
   captureTargetPct: number;
   captureFloorPct: number;
+  unitLaborSavingsAnnual: number;
+  /** Weighted-average gross margin across cohorts (default 1.0). Used for vendor profit in Value Split. */
+  grossMargin?: number;
 }
 
 export interface EvcResult {
@@ -441,6 +446,33 @@ export interface EvcResult {
   priceFloor: number;
   priceTarget: number;
   priceCeiling: number;
+  laborSavings: number;
+  extraPositiveValue: number;
+  unitNetValue: number;
+  targetCapturePerUserMonth: number;
+  customerSurplusPerUserMonth: number;
+  vendorGrossProfitPerUserMonth: number;
+  cogsPerUserMonth: number;
+  captureCurve?: CaptureCurveResult;
+}
+
+export interface CaptureCurvePoint {
+  capture: number;
+  npvUpper: number;
+  npvLower: number;
+  customerSurplus: number;
+  vendorProfit: number;
+}
+
+export interface CaptureCurveResult {
+  points: CaptureCurvePoint[];
+  optimalCapture: number;
+  optimalOverlayPrice: number;
+  epsilonBand: {
+    low: number;
+    base: number;
+    high: number;
+  };
 }
 
 export interface ScenarioResult {
