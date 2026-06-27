@@ -330,7 +330,8 @@ function attachMonetization(scenario: Scenario): void {
 function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
     SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
-           evc_nba_annual_value, evc_extra_positive_value, evc_negative_value, evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct
+           evc_nba_annual_value, evc_extra_positive_value, evc_negative_value, evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
+           price_from_evc, adoption_elasticity
     FROM scenarios
     WHERE id = ?
   `).get(scenarioId) as any;
@@ -451,6 +452,9 @@ function getFullScenario(scenarioId: string): Scenario | null {
 
   // Attach effective monetization configs
   attachMonetization(s as Scenario);
+
+  // Cast SQLite INTEGER 0/1 → boolean for price_from_evc (matches app repo pattern)
+  s.price_from_evc = !!s.price_from_evc;
 
   return s as Scenario;
 }
@@ -1749,6 +1753,8 @@ server.tool(
     evc_capture_ceiling_pct: z.number().nullable().optional().describe("Capture ceiling percentage share (e.g. 0.50)."),
     evc_capture_target_pct: z.number().nullable().optional().describe("Capture target percentage share (e.g. 0.30)."),
     evc_capture_floor_pct: z.number().nullable().optional().describe("Capture floor percentage share (e.g. 0.15)."),
+    price_from_evc: z.boolean().optional().describe("If true, drive pricing from EVC target capture rate."),
+    adoption_elasticity: z.number().optional().describe("Adoption price elasticity (ε). 0 = inelastic. Higher values reduce adoption when capture exceeds target."),
     variation_percent: z.number().optional().describe("Sensitivity analysis variation percent (default: 0.10 for 10% variation)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
@@ -1759,6 +1765,7 @@ server.tool(
           SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct,
                  s.modeling_type, s.revenue_carrier, s.revenue_bridge, s.expansion_vertical_id, s.penetration_baseline_months, s.ai_acceleration_factor, s.ai_som_lift_pct,
                  s.evc_nba_annual_value, s.evc_extra_positive_value, s.evc_negative_value, s.evc_capture_ceiling_pct, s.evc_capture_target_pct, s.evc_capture_floor_pct,
+                 s.price_from_evc, s.adoption_elasticity,
                  r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index,
                  r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status,
                  r.revenue_integrity_status, r.revenue_integrity_message,
@@ -1832,9 +1839,10 @@ server.tool(
               ai_acceleration_factor, ai_som_lift_pct,
               evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
               evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
+              price_from_evc, adoption_elasticity,
               created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             scenarioId, args.name, args.description || null, args.projection_months ?? 36,
             args.discount_rate ?? 0.10, scopeType, revSource, args.capex_contingency_pct ?? 0,
@@ -1844,6 +1852,7 @@ server.tool(
             args.evc_nba_annual_value ?? null, args.evc_extra_positive_value ?? null,
             args.evc_negative_value ?? null, args.evc_capture_ceiling_pct ?? null,
             args.evc_capture_target_pct ?? null, args.evc_capture_floor_pct ?? null,
+            args.price_from_evc ? 1 : 0, args.adoption_elasticity ?? 0,
             now, now
           );
 
@@ -1977,6 +1986,8 @@ server.tool(
           const evc_capture_ceiling_pct = args.evc_capture_ceiling_pct !== undefined ? args.evc_capture_ceiling_pct : current.evc_capture_ceiling_pct;
           const evc_capture_target_pct = args.evc_capture_target_pct !== undefined ? args.evc_capture_target_pct : current.evc_capture_target_pct;
           const evc_capture_floor_pct = args.evc_capture_floor_pct !== undefined ? args.evc_capture_floor_pct : current.evc_capture_floor_pct;
+          const price_from_evc = args.price_from_evc !== undefined ? args.price_from_evc : !!current.price_from_evc;
+          const adoption_elasticity = args.adoption_elasticity !== undefined ? args.adoption_elasticity : current.adoption_elasticity;
 
           db.prepare(`
             UPDATE scenarios
@@ -1987,6 +1998,7 @@ server.tool(
                 ai_acceleration_factor = ?, ai_som_lift_pct = ?,
                 evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?,
                 evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?,
+                price_from_evc = ?, adoption_elasticity = ?,
                 updated_at = ?
             WHERE id = ?
           `).run(
@@ -1997,6 +2009,7 @@ server.tool(
             ai_acceleration_factor, ai_som_lift_pct,
             evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
             evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
+            price_from_evc ? 1 : 0, adoption_elasticity ?? 0,
             now, args.id
           );
 

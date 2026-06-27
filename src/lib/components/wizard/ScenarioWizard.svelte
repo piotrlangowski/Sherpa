@@ -30,6 +30,7 @@
   import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
 
   import { resolveScenarioCohortsClient, buildDraftScenario } from '$lib/shared/scenario-preview';
+  import Switch from '$lib/components/ui/switch/switch.svelte';
   import {
     calculateScenario,
     resolveCarrier,
@@ -40,7 +41,7 @@
   } from '$lib/shared/financial-math';
   import type { ModelingType, RevenueCarrier, RevenueBridge, ScopeOverride, CohortConfig } from '$lib/shared/types';
   import { normalizeScenarioCurrency } from '$lib/shared/currency';
-  import { formatCurrency, formatPercent, formatMonths, formatIrr, formatPI } from '$lib/utils/format';
+  import { formatCurrency, formatPercent, formatMonths, formatIrr, formatPI, getCurrencySymbol } from '$lib/utils/format';
   import { mode } from 'mode-watcher';
 
   let { data, mode: wizardMode, action } = $props();
@@ -84,6 +85,9 @@
   const evc_capture_target_pct = $derived(evc_capture_target_pct_arr[0] / 100);
   let evc_capture_floor_pct_arr = $state([15]);
   const evc_capture_floor_pct = $derived(evc_capture_floor_pct_arr[0] / 100);
+  let price_from_evc = $state(false);
+  let adoption_elasticity_arr = $state([0.0]);
+  const adoption_elasticity = $derived(adoption_elasticity_arr[0]);
 
   // Derived resolved carrier
   const resolvedCarrier = $derived(resolveCarrier(modelingType, revenueCarrier));
@@ -239,6 +243,8 @@
       evc_capture_ceiling_pct_arr = [Math.round((s.evc_capture_ceiling_pct ?? 0.50) * 100)];
       evc_capture_target_pct_arr = [Math.round((s.evc_capture_target_pct ?? 0.30) * 100)];
       evc_capture_floor_pct_arr = [Math.round((s.evc_capture_floor_pct ?? 0.15) * 100)];
+      price_from_evc = !!s.price_from_evc;
+      adoption_elasticity_arr = [s.adoption_elasticity ?? 0.0];
 
       selectedCohorts = {};
       if (s.scope_cohorts) {
@@ -366,7 +372,9 @@
         evc_negative_value,
         evc_capture_ceiling_pct,
         evc_capture_target_pct,
-        evc_capture_floor_pct
+        evc_capture_floor_pct,
+        price_from_evc,
+        adoption_elasticity
       },
       resolvedCohortsClient,
       formattedOverrides as any[],
@@ -1634,21 +1642,53 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="space-y-4">
               <div class="space-y-1.5">
-                <Label for="evc_nba_annual_value" class="font-semibold text-xs">Next Best Alternative (Annual Reference Value, $)</Label>
+                <Label for="evc_nba_annual_value" class="font-semibold text-xs">Next Best Alternative (Annual Reference Value, {getCurrencySymbol(data.settings.currency)})</Label>
                 <NumberField id="evc_nba_annual_value" name="evc_nba_annual_value" min="0" step="0.01" bind:value={evc_nba_annual_value} placeholder="e.g. 50000.00" raw={true} grouped={true} decimals={2} class="text-right" />
                 <p class="text-[10px] text-muted-foreground">The annual cost/value of the customer's current non-AI alternative solution (e.g. human labor, legacy vendor).</p>
               </div>
 
               <div class="space-y-1.5">
-                <Label for="evc_extra_positive_value" class="font-semibold text-xs">Extra Positive Value (Annual, $)</Label>
+                <Label for="evc_extra_positive_value" class="font-semibold text-xs">Extra Positive Value (Annual, {getCurrencySymbol(data.settings.currency)})</Label>
                 <NumberField id="evc_extra_positive_value" name="evc_extra_positive_value" min="0" step="0.01" bind:value={evc_extra_positive_value} placeholder="e.g. 10000.00" raw={true} grouped={true} decimals={2} class="text-right" />
                 <p class="text-[10px] text-muted-foreground">Other soft/hard annual benefits (e.g., higher quality, CSAT lift, risk reduction) not captured in labor/margin savings.</p>
               </div>
 
               <div class="space-y-1.5">
-                <Label for="evc_negative_value" class="font-semibold text-xs">Negative Value / Switching Costs ($)</Label>
+                <Label for="evc_negative_value" class="font-semibold text-xs">Negative Value / Switching Costs ({getCurrencySymbol(data.settings.currency)})</Label>
                 <NumberField id="evc_negative_value" name="evc_negative_value" min="0" step="0.01" bind:value={evc_negative_value} placeholder="e.g. 5000.00" raw={true} grouped={true} decimals={2} class="text-right" />
                 <p class="text-[10px] text-muted-foreground">Implementation fees, training costs, or any disadvantage compared to the Next Best Alternative.</p>
+              </div>
+
+              <div class="space-y-4 pt-4 border-t border-border/40">
+                <div class="flex items-center justify-between space-x-2">
+                  <div class="space-y-0.5">
+                    <Label for="price_from_evc" class="font-semibold text-xs">Drive Price from EVC</Label>
+                    <p class="text-[10px] text-muted-foreground">
+                      {#if resolvedCarrier === 'cohort'}
+                        Override cohort ARPU uplift with the target EVC capture rate (target capture/customer/month).
+                      {:else if resolvedCarrier === 'plan'}
+                        Override plan base price with the target EVC capture rate (target capture/customer/month).
+                      {:else}
+                        Override addon monthly fee with the target EVC capture rate (target capture/customer/month).
+                      {/if}
+                    </p>
+                  </div>
+                  <Switch id="price_from_evc" bind:checked={price_from_evc} />
+                  <input type="hidden" name="price_from_evc" value={price_from_evc ? '1' : '0'} />
+                </div>
+
+                {#if price_from_evc}
+                  <div class="space-y-2 pt-2">
+                    <div class="flex justify-between text-xs font-semibold">
+                      <span class="text-muted-foreground">Adoption Price Elasticity (&epsilon;)</span>
+                      <span class="text-primary font-mono">{adoption_elasticity.toFixed(1)}</span>
+                    </div>
+                    <Slider bind:value={adoption_elasticity_arr} min={0.0} max={3.0} step={0.1} type="multiple" />
+                    <p class="text-[10px] text-muted-foreground">Determines how customer adoption drops if capture rate exceeds base. At &epsilon; = 0, adoption is inelastic.</p>
+                  </div>
+                {/if}
+                <!-- Always submit adoption_elasticity so a saved value isn't silently reset to 0 -->
+                <input type="hidden" name="adoption_elasticity" value={adoption_elasticity} />
               </div>
             </div>
 
@@ -1659,6 +1699,12 @@
                 
                 {#if previewResult && previewResult.evc}
                   {@const evcObj = previewResult.evc}
+                  {#if price_from_evc}
+                    <div class="p-3 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center justify-between">
+                      <span>EVC Pricing Overlay Active:</span>
+                      <span class="font-mono font-bold text-sm">{formatCurrency(evcObj.targetCapturePerUserMonth, data.settings.currency, 0)}/user/mo</span>
+                    </div>
+                  {/if}
                   <div class="space-y-2 text-xs">
                     <div class="flex justify-between border-b border-border/40 pb-1.5">
                       <span class="text-muted-foreground">Reference Value (NBA)</span>
@@ -1666,15 +1712,11 @@
                     </div>
                     <div class="flex justify-between border-b border-border/40 pb-1.5">
                       <span class="text-muted-foreground">Labor Savings (Cash + Capacity)</span>
-                      <span class="font-mono text-emerald-600 dark:text-emerald-400">+{formatCurrency(evcObj.positiveValueTotal - evcObj.referenceValue - (evc_extra_positive_value ?? 0) - (previewResult.timeline.slice(0, 12).reduce((sum, m) => sum + (m.grossRevenue - m.baselineRevenue), 0)), data.settings.currency, 0)}</span>
-                    </div>
-                    <div class="flex justify-between border-b border-border/40 pb-1.5">
-                      <span class="text-muted-foreground">Incremental Vendor Margin</span>
-                      <span class="font-mono text-emerald-600 dark:text-emerald-400">+{formatCurrency(previewResult.timeline.slice(0, 12).reduce((sum, m) => sum + (m.grossRevenue - m.baselineRevenue), 0), data.settings.currency, 0)}</span>
+                      <span class="font-mono text-emerald-600 dark:text-emerald-400">+{formatCurrency(evcObj.laborSavings, data.settings.currency, 0)}</span>
                     </div>
                     <div class="flex justify-between border-b border-border/40 pb-1.5">
                       <span class="text-muted-foreground">Extra Positive Value</span>
-                      <span class="font-mono text-emerald-600 dark:text-emerald-400">+{formatCurrency(evc_extra_positive_value ?? 0, data.settings.currency, 0)}</span>
+                      <span class="font-mono text-emerald-600 dark:text-emerald-400">+{formatCurrency(evcObj.extraPositiveValue, data.settings.currency, 0)}</span>
                     </div>
                     <div class="flex justify-between border-b border-border/40 pb-1.5 font-semibold text-foreground">
                       <span class="text-muted-foreground">Positive Value Total</span>

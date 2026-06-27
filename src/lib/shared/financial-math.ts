@@ -32,7 +32,9 @@ import type {
   ScenarioDiagnostic,
   EvcInputs,
   EvcResult,
-  Currency
+  Currency,
+  CaptureCurveResult,
+  CaptureCurvePoint
 } from './types.js';
 
 /**
@@ -1073,6 +1075,47 @@ export function calculateMonetizationRevenue(
 // ============================================================
 
 /**
+ * Analytically calculates annualized labor savings per customer.
+ */
+export function calculateAnalyticalLaborSavings(
+  scenario: Scenario
+): number {
+  const cohorts = scenario.scope_cohorts || [];
+  if (cohorts.length === 0) return 0;
+
+  const totalStartingCustomers = cohorts.reduce((sum, cc) => sum + (cc.current_users || 0), 0);
+  const representativeCustomers = totalStartingCustomers > 0 ? totalStartingCustomers : 1;
+
+  let totalMonthlySavings = 0;
+
+  for (const service of scenario.services || []) {
+    if (service.service_type !== 'agent') continue;
+
+    const containmentRate = service.containment_rate || 0;
+    const fullyLoadedCost = service.fully_loaded_cost_per_fte_month || 0;
+    const averageHandleTime = service.average_handle_time_seconds || 0;
+    const productiveHours = service.productive_hours_per_fte_month || 120;
+    const baselineFte = service.baseline_fte || 0;
+
+    let interactionsPerCustomerMonth = 0;
+    if (service.interaction_driver_type === 'per_customer') {
+      interactionsPerCustomerMonth = service.interactions_per_customer_month || 0;
+    } else { // 'flat' or default
+      interactionsPerCustomerMonth = (service.monthly_volume || 0) / representativeCustomers;
+    }
+
+    const deflected = interactionsPerCustomerMonth * containmentRate;
+    const hoursSaved = (deflected * averageHandleTime) / 3600;
+    const fteSaved = hoursSaved / productiveHours;
+    const realizable = baselineFte > 0 ? Math.min(fteSaved, baselineFte / representativeCustomers) : fteSaved;
+
+    totalMonthlySavings += realizable * fullyLoadedCost;
+  }
+
+  return totalMonthlySavings * 12; // Annualized
+}
+
+/**
  * Runs the full financial engine calculations for a Scenario.
  * This is a pure function – it requires providers to be passed in
  * rather than querying the database directly.
@@ -1080,8 +1123,100 @@ export function calculateMonetizationRevenue(
 export function calculateScenario(
   scenario: Scenario,
   allProviders: Provider[],
-  creditSettings: CreditSettings = DEFAULT_CREDIT_SETTINGS
+  creditSettings: CreditSettings = DEFAULT_CREDIT_SETTINGS,
+  sweepParams?: { runtime_capture_pct?: number }
 ): CalculationResult {
+  // Derive price overlay logic (Faza 2)
+  if (
+    scenario.price_from_evc &&
+    scenario.evc_nba_annual_value !== undefined &&
+    scenario.evc_nba_annual_value !== null
+  ) {
+    // 1. Calculate analytical labor savings
+    const unitLaborSavingsAnnual = calculateAnalyticalLaborSavings(scenario);
+    
+    // 2. Compute EVC metrics analytically (no pre-pass scenario calculations!)
+    // Compute weighted-average gross margin across cohorts for accurate vendor profit
+    let weightedGrossMargin = 1.0;
+    if (scenario.scope_cohorts && scenario.scope_cohorts.length > 0) {
+      const totalUsers = scenario.scope_cohorts.reduce((s, cc) => s + (cc.current_users || 0), 0);
+      if (totalUsers > 0) {
+        weightedGrossMargin = scenario.scope_cohorts.reduce(
+          (s, cc) => s + (cc.gross_margin !== undefined ? cc.gross_margin : 1.0) * (cc.current_users || 0), 0
+        ) / totalUsers;
+      } else {
+        // Fallback: simple average when no users set
+        weightedGrossMargin = scenario.scope_cohorts.reduce(
+          (s, cc) => s + (cc.gross_margin !== undefined ? cc.gross_margin : 1.0), 0
+        ) / scenario.scope_cohorts.length;
+      }
+    }
+
+    const evcInputs: EvcInputs = {
+      nbaAnnualValue: scenario.evc_nba_annual_value,
+      extraPositiveValue: scenario.evc_extra_positive_value ?? 0,
+      negativeValue: scenario.evc_negative_value ?? 0,
+      captureCeilingPct: scenario.evc_capture_ceiling_pct ?? 0.50,
+      captureTargetPct: sweepParams?.runtime_capture_pct !== undefined ? sweepParams.runtime_capture_pct : (scenario.evc_capture_target_pct ?? 0.30),
+      captureFloorPct: scenario.evc_capture_floor_pct ?? 0.15,
+      unitLaborSavingsAnnual,
+      grossMargin: weightedGrossMargin
+    };
+    const evcResult = calculateEVC([], evcInputs);
+    const targetPrice = evcResult.targetCapturePerUserMonth;
+
+    // 3. Clone scenario and apply pricing overlay to the correct carrier
+    const overlaidScenario = cloneScenario(scenario);
+    overlaidScenario.price_from_evc = false; // Prevent recursion in final call
+
+    const carrier = resolveCarrier(overlaidScenario.modeling_type, overlaidScenario.revenue_carrier);
+
+    if (carrier === 'cohort') {
+      if (overlaidScenario.scope_cohorts) {
+        for (const cc of overlaidScenario.scope_cohorts) {
+          cc.arpu_uplift = targetPrice;
+          cc.arpu_uplift_percent = 0; // reset percentage to avoid double calculation
+        }
+      }
+    } else if (carrier === 'plan') {
+      if (overlaidScenario.plans && overlaidScenario.plans.length > 0) {
+        // Preserve tier differentiation: scale each plan's base_price proportionally
+        // so the weighted-average price equals targetPrice.
+        const totalSeats = overlaidScenario.plans.reduce((s, p) => s + (p.seats || 1), 0);
+        const currentWeightedAvg = overlaidScenario.plans.reduce(
+          (s, p) => s + (p.base_price || 0) * (p.seats || 1), 0
+        ) / totalSeats;
+
+        if (currentWeightedAvg > 0) {
+          const scaleFactor = targetPrice / currentWeightedAvg;
+          for (const plan of overlaidScenario.plans) {
+            plan.base_price = (plan.base_price || 0) * scaleFactor;
+          }
+        } else {
+          // No existing prices — fall back to uniform assignment
+          for (const plan of overlaidScenario.plans) {
+            plan.base_price = targetPrice;
+          }
+        }
+      }
+    } else {
+      // Check for addon service monetization fee
+      if (overlaidScenario.services) {
+        for (const s of overlaidScenario.services) {
+          if (s.monetization?.monetization_type === 'addon') {
+            s.monetization.addon_monthly_fee = targetPrice;
+          }
+        }
+      }
+    }
+
+    // 4. Calculate scenario using the overlaid parameters
+    const finalResult = calculateScenario(overlaidScenario, allProviders, creditSettings, sweepParams);
+    // Recalculate EVC using the actual final timeline to get correct COGS/profit
+    finalResult.evc = calculateEVC(finalResult.timeline, evcInputs);
+    return finalResult;
+  }
+
   const projectionMonths = scenario.projection_months ?? 36;
   const annualDiscountRate = scenario.discount_rate ?? 0.10;
 
@@ -1119,13 +1254,26 @@ export function calculateScenario(
       base_arpu: cc.base_arpu * (1 + (cc.arpu_uplift_percent || 0)) + (cc.arpu_uplift || 0)
     }, projectionMonths);
 
+    // Apply adoption elasticity (Faza 3)
+    const capture = sweepParams?.runtime_capture_pct !== undefined ? sweepParams.runtime_capture_pct : (scenario.evc_capture_target_pct ?? 0.30);
+    const originalCaptureTarget = scenario.evc_capture_target_pct ?? 0.30;
+    const epsilon = scenario.adoption_elasticity ?? 0;
+
+    let target = cc.ai_adoption_rate || 0;
+    let rampMonths = cc.adoption_ramp_months || 0;
+
+    if (epsilon !== 0 && scenario.evc_capture_target_pct !== undefined && scenario.evc_capture_target_pct !== null) {
+      target = Math.max(0, Math.min(1.0, target * (1 + epsilon * (originalCaptureTarget - capture))));
+      rampMonths = Math.max(0, Math.round(rampMonths * (1 + epsilon * 0.5 * (capture - originalCaptureTarget))));
+    }
+
     return {
       baselineModel,
       fullAdoptModel,
       upliftOnlyModel,
       grossMargin: cc.gross_margin !== undefined ? cc.gross_margin : 1.0,
-      adoptionRate: cc.ai_adoption_rate || 0,
-      rampMonths: cc.adoption_ramp_months || 0
+      adoptionRate: target,
+      rampMonths: rampMonths
     };
   });
 
@@ -1527,13 +1675,30 @@ export function calculateScenario(
 
   let evc: EvcResult | null = null;
   if (scenario.evc_nba_annual_value !== undefined && scenario.evc_nba_annual_value !== null) {
+    // Weighted-average gross margin for Value Split vendor profit
+    let avgGrossMargin = 1.0;
+    if (scenario.scope_cohorts && scenario.scope_cohorts.length > 0) {
+      const totUsers = scenario.scope_cohorts.reduce((s, cc) => s + (cc.current_users || 0), 0);
+      if (totUsers > 0) {
+        avgGrossMargin = scenario.scope_cohorts.reduce(
+          (s, cc) => s + (cc.gross_margin !== undefined ? cc.gross_margin : 1.0) * (cc.current_users || 0), 0
+        ) / totUsers;
+      } else {
+        avgGrossMargin = scenario.scope_cohorts.reduce(
+          (s, cc) => s + (cc.gross_margin !== undefined ? cc.gross_margin : 1.0), 0
+        ) / scenario.scope_cohorts.length;
+      }
+    }
+
     const evcInputs: EvcInputs = {
       nbaAnnualValue: scenario.evc_nba_annual_value,
       extraPositiveValue: scenario.evc_extra_positive_value ?? 0,
       negativeValue: scenario.evc_negative_value ?? 0,
       captureCeilingPct: scenario.evc_capture_ceiling_pct ?? 0.50,
       captureTargetPct: scenario.evc_capture_target_pct ?? 0.30,
-      captureFloorPct: scenario.evc_capture_floor_pct ?? 0.15
+      captureFloorPct: scenario.evc_capture_floor_pct ?? 0.15,
+      unitLaborSavingsAnnual: calculateAnalyticalLaborSavings(scenario),
+      grossMargin: avgGrossMargin
     };
     evc = calculateEVC(timeline, evcInputs);
   }
@@ -1553,29 +1718,67 @@ export function calculateScenario(
 }
 
 export function calculateEVC(timeline: MonthlyBreakdown[], inputs: EvcInputs): EvcResult {
-  const first12Months = timeline.slice(0, 12);
-  const laborSavings = first12Months.reduce(
-    (sum, m) => sum + (m.laborSavingsCash ?? 0) + (m.laborSavingsCapacity ?? 0),
-    0
-  );
-  const incrementalMargin = first12Months.reduce(
-    (sum, m) => sum + (m.grossRevenue - m.baselineRevenue),
-    0
-  );
-  const positiveValueTotal = laborSavings + incrementalMargin + inputs.extraPositiveValue;
-  const negativeValueTotal = inputs.negativeValue;
-  const netCreatedValue = positiveValueTotal - negativeValueTotal;
-  const evc = inputs.nbaAnnualValue + netCreatedValue;
+  // EVC inputs are per-customer/year
+  const extraPositiveValue = inputs.extraPositiveValue;
+  const negativeValue = inputs.negativeValue;
+  const nbaAnnualValue = inputs.nbaAnnualValue;
+  const unitLaborSavingsAnnual = inputs.unitLaborSavingsAnnual;
+  
+  // unitNetValue (monthly)
+  const unitNetValue = (extraPositiveValue + unitLaborSavingsAnnual - negativeValue) / 12;
+  
+  // referenceValue (monthly)
+  const referenceValue = nbaAnnualValue / 12;
+  
+  // positiveValueTotal (monthly)
+  const positiveValueTotal = (extraPositiveValue + unitLaborSavingsAnnual) / 12;
+  
+  // negativeValueTotal (monthly)
+  const negativeValueTotal = negativeValue / 12;
+  
+  // netCreatedValue (monthly)
+  const netCreatedValue = unitNetValue;
+  
+  // evc (monthly)
+  const evc = referenceValue + netCreatedValue;
+  
+  // prices (monthly)
+  const priceFloor = referenceValue + (inputs.captureFloorPct * netCreatedValue);
+  const priceTarget = referenceValue + (inputs.captureTargetPct * netCreatedValue);
+  const priceCeiling = referenceValue + (inputs.captureCeilingPct * netCreatedValue);
+  
+  // cogsPerUserMonth
+  // COGS in the last month of the timeline (steady state, tokenCosts + opex) per customer
+  const lastMonth = timeline[timeline.length - 1];
+  const steadyStateCustomers = lastMonth ? lastMonth.customers : 0;
+  const cogsPerUserMonth = (lastMonth && steadyStateCustomers > 0) ? ((lastMonth.tokenCosts + lastMonth.opex) / steadyStateCustomers) : 0;
+  
+  // targetCapturePerUserMonth (= capture_target * NetValue/klient/mc)
+  const targetCapturePerUserMonth = inputs.captureTargetPct * unitNetValue;
+  
+  // customerSurplusPerUserMonth (= (1 - capture_target) * NetValue)
+  const customerSurplusPerUserMonth = (1 - inputs.captureTargetPct) * unitNetValue;
+  
+  // vendorGrossProfitPerUserMonth = targetCapturePerUserMonth * grossMargin - cogsPerUserMonth
+  const gm = inputs.grossMargin !== undefined ? inputs.grossMargin : 1.0;
+  const vendorGrossProfitPerUserMonth = targetCapturePerUserMonth * gm - cogsPerUserMonth;
 
   return {
     evc,
-    referenceValue: inputs.nbaAnnualValue,
+    referenceValue,
     positiveValueTotal,
     negativeValueTotal,
     netCreatedValue,
-    priceFloor: inputs.nbaAnnualValue + (inputs.captureFloorPct * netCreatedValue),
-    priceTarget: inputs.nbaAnnualValue + (inputs.captureTargetPct * netCreatedValue),
-    priceCeiling: inputs.nbaAnnualValue + (inputs.captureCeilingPct * netCreatedValue)
+    priceFloor,
+    priceTarget,
+    priceCeiling,
+    laborSavings: unitLaborSavingsAnnual,
+    extraPositiveValue,
+    unitNetValue,
+    targetCapturePerUserMonth,
+    customerSurplusPerUserMonth,
+    vendorGrossProfitPerUserMonth,
+    cogsPerUserMonth
   };
 }
 
@@ -2115,5 +2318,94 @@ export function runSensitivityAnalysis(
     baseIrr: baseResult.irr.annualNominal,
     basePayback: baseResult.paybackUpper,
     results
+  };
+}
+
+export function runCaptureCurve(
+  scenario: Scenario,
+  allProviders: Provider[],
+  creditSettings: CreditSettings = DEFAULT_CREDIT_SETTINGS
+): CaptureCurveResult {
+  const points: CaptureCurvePoint[] = [];
+  const epsilon = scenario.adoption_elasticity ?? 0;
+  const epsilon_low = Math.max(0, epsilon - 0.5);
+  const epsilon_high = epsilon + 0.5;
+  
+  let maxNpv = -Infinity;
+  let optimalCapture = 0.30;
+  
+  let maxNpvLow = -Infinity;
+  let band_low = 0.30;
+  
+  let maxNpvHigh = -Infinity;
+  let band_high = 0.30;
+  
+  // Sweep capture from 0.0 to 1.0 in 20 steps (0.05 step)
+  for (let i = 0; i <= 20; i++) {
+    const capture = i / 20;
+    
+    // 1. Base Epsilon
+    const cloned = cloneScenario(scenario);
+    cloned.price_from_evc = true;
+    cloned.adoption_elasticity = epsilon;
+    const res = calculateScenario(cloned, allProviders, creditSettings, { runtime_capture_pct: capture });
+    
+    let customerSurplusPV = 0;
+    let vendorProfitPV = 0;
+    if (res.evc) {
+      const surplusFlows = res.timeline.map(m => m.customers * (res.evc?.customerSurplusPerUserMonth ?? 0));
+      const profitFlows = res.timeline.map(m => m.customers * (res.evc?.vendorGrossProfitPerUserMonth ?? 0));
+      const rate = scenario.discount_rate ?? 0.10;
+      customerSurplusPV = calculateNPV(surplusFlows, rate);
+      vendorProfitPV = calculateNPV(profitFlows, rate);
+    }
+    
+    points.push({
+      capture,
+      npvUpper: res.npvUpper,
+      npvLower: res.npvLower,
+      customerSurplus: customerSurplusPV,
+      vendorProfit: vendorProfitPV
+    });
+    
+    if (res.npvUpper > maxNpv) {
+      maxNpv = res.npvUpper;
+      optimalCapture = capture;
+    }
+    
+    // 2. Epsilon Low
+    const clonedLow = cloneScenario(scenario);
+    clonedLow.price_from_evc = true;
+    clonedLow.adoption_elasticity = epsilon_low;
+    const resLow = calculateScenario(clonedLow, allProviders, creditSettings, { runtime_capture_pct: capture });
+    if (resLow.npvUpper > maxNpvLow) {
+      maxNpvLow = resLow.npvUpper;
+      band_low = capture;
+    }
+    
+    // 3. Epsilon High
+    const clonedHigh = cloneScenario(scenario);
+    clonedHigh.price_from_evc = true;
+    clonedHigh.adoption_elasticity = epsilon_high;
+    const resHigh = calculateScenario(clonedHigh, allProviders, creditSettings, { runtime_capture_pct: capture });
+    if (resHigh.npvUpper > maxNpvHigh) {
+      maxNpvHigh = resHigh.npvUpper;
+      band_high = capture;
+    }
+  }
+  
+  const unitLaborSavingsAnnual = calculateAnalyticalLaborSavings(scenario);
+  const unitNetValue = ((scenario.evc_extra_positive_value ?? 0) + unitLaborSavingsAnnual - (scenario.evc_negative_value ?? 0)) / 12;
+  const optimalOverlayPrice = unitNetValue * optimalCapture;
+  
+  return {
+    points,
+    optimalCapture,
+    optimalOverlayPrice,
+    epsilonBand: {
+      low: band_low,
+      base: optimalCapture,
+      high: band_high
+    }
   };
 }

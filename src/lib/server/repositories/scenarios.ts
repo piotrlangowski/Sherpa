@@ -7,6 +7,7 @@ export const scenariosRepository = {
     const rows = db.prepare(`
       SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.created_at, s.updated_at,
              s.capex_contingency_pct, s.modeling_type, s.revenue_carrier, s.revenue_bridge,
+             s.price_from_evc, s.adoption_elasticity,
              r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index, r.calculated_at,
              r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status
       FROM scenarios s
@@ -84,6 +85,8 @@ export const scenariosRepository = {
         modeling_type: (r.modeling_type as ModelingType) || 'appraisal',
         revenue_carrier: (r.revenue_carrier as RevenueCarrier) || null,
         revenue_bridge: (r.revenue_bridge as RevenueBridge) || null,
+        price_from_evc: !!r.price_from_evc,
+        adoption_elasticity: r.adoption_elasticity ?? 0,
         created_at: r.created_at,
         updated_at: r.updated_at,
         scope_verticals: vrtMap[r.id] || [],
@@ -125,6 +128,7 @@ export const scenariosRepository = {
              s.expansion_vertical_id, s.penetration_baseline_months, s.ai_acceleration_factor, s.ai_som_lift_pct,
              s.evc_nba_annual_value, s.evc_extra_positive_value, s.evc_negative_value,
              s.evc_capture_ceiling_pct, s.evc_capture_target_pct, s.evc_capture_floor_pct,
+             s.price_from_evc, s.adoption_elasticity,
              s.created_at, s.updated_at
       FROM scenarios s
       WHERE s.id = ?
@@ -323,6 +327,8 @@ export const scenariosRepository = {
       evc_capture_ceiling_pct: r.evc_capture_ceiling_pct,
       evc_capture_target_pct: r.evc_capture_target_pct,
       evc_capture_floor_pct: r.evc_capture_floor_pct,
+      price_from_evc: !!r.price_from_evc,
+      adoption_elasticity: r.adoption_elasticity ?? 0,
       created_at: r.created_at,
       updated_at: r.updated_at,
       scope_verticals: verticalRows,
@@ -361,15 +367,17 @@ export const scenariosRepository = {
           expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
           evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
           evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
+          price_from_evc, adoption_elasticity,
           created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, legacyRevenueSource, data.capex_contingency_pct ?? 0,
         data.modeling_type || 'appraisal', data.revenue_carrier || null, data.revenue_bridge || null,
         data.expansion_vertical_id || null, data.penetration_baseline_months ?? null, data.ai_acceleration_factor ?? null, data.ai_som_lift_pct ?? null,
         data.evc_nba_annual_value ?? null, data.evc_extra_positive_value ?? null, data.evc_negative_value ?? null,
         data.evc_capture_ceiling_pct ?? null, data.evc_capture_target_pct ?? null, data.evc_capture_floor_pct ?? null,
+        data.price_from_evc ? 1 : 0, data.adoption_elasticity ?? 0,
         now, now
       );
 
@@ -464,19 +472,22 @@ export const scenariosRepository = {
     const evc_capture_ceiling_pct = data.evc_capture_ceiling_pct !== undefined ? data.evc_capture_ceiling_pct : current.evc_capture_ceiling_pct;
     const evc_capture_target_pct = data.evc_capture_target_pct !== undefined ? data.evc_capture_target_pct : current.evc_capture_target_pct;
     const evc_capture_floor_pct = data.evc_capture_floor_pct !== undefined ? data.evc_capture_floor_pct : current.evc_capture_floor_pct;
+    const price_from_evc = data.price_from_evc !== undefined ? data.price_from_evc : current.price_from_evc;
+    const adoption_elasticity = data.adoption_elasticity !== undefined ? data.adoption_elasticity : current.adoption_elasticity;
     const now = new Date().toISOString();
 
     db.transaction(() => {
       const capex_contingency_pct = data.capex_contingency_pct !== undefined ? data.capex_contingency_pct : current.capex_contingency_pct;
       db.prepare(`
         UPDATE scenarios
-        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?, evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?, updated_at = ?
+        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?, evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?, price_from_evc = ?, adoption_elasticity = ?, updated_at = ?
         WHERE id = ?
       `).run(
         name, description || null, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier || null, revenue_bridge || null,
         expansion_vertical_id || null, penetration_baseline_months ?? null, ai_acceleration_factor ?? null, ai_som_lift_pct ?? null,
         evc_nba_annual_value ?? null, evc_extra_positive_value ?? null, evc_negative_value ?? null,
         evc_capture_ceiling_pct ?? null, evc_capture_target_pct ?? null, evc_capture_floor_pct ?? null,
+        price_from_evc ? 1 : 0, adoption_elasticity ?? 0,
         now, id
       );
 

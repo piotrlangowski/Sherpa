@@ -2,7 +2,7 @@
 
 - Status: Zaakceptowany
 - Data: 2026-06-20
-- Powiązane: ADR 0002 (nośnik przychodu), ADR 0003 (override monetyzacji), ADR 0004 (walidacja "zastąp, nie dodawaj")
+- Powiązane: ADR 0002 (nośnik przychodu), ADR 0003 (override monetyzacji), ADR 0004 (walidacja "zastąp, nie dodawaj"), ADR 0005 (EVC jako podstawa wyceny)
 
 ## Kontekst
 

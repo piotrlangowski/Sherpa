@@ -23,6 +23,7 @@
   import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
   import TrendingUp from '@lucide/svelte/icons/trending-up';
   import Edit2 from '@lucide/svelte/icons/edit-2';
+  import DollarSign from '@lucide/svelte/icons/dollar-sign';
   import ExportButton from '$lib/components/dashboard/ExportButton.svelte';
   import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
 
@@ -58,10 +59,15 @@
   });
 
   // Chart state
-  let activeTab = $state<'cashflow' | 'cumulative' | 'users'>('cashflow');
+  let activeTab = $state<'cashflow' | 'cumulative' | 'users' | 'value_split'>('cashflow');
   let chartElement: HTMLDivElement | undefined = $state();
+  let valuePieElement: HTMLDivElement | undefined = $state();
+  let captureCurveElement: HTMLDivElement | undefined = $state();
   let chartInstance: any = null;
+  let valuePieInstance: any = null;
+  let captureCurveInstance: any = null;
   let resizeListener: (() => void) | null = null;
+  let splitResizeListener: (() => void) | null = null;
   let isMounted = false;
   let isExplainerOpen = $state(false);
 
@@ -70,9 +76,21 @@
       chartInstance.dispose();
       chartInstance = null;
     }
+    if (valuePieInstance) {
+      valuePieInstance.dispose();
+      valuePieInstance = null;
+    }
+    if (captureCurveInstance) {
+      captureCurveInstance.dispose();
+      captureCurveInstance = null;
+    }
     if (resizeListener) {
       window.removeEventListener('resize', resizeListener);
       resizeListener = null;
+    }
+    if (splitResizeListener) {
+      window.removeEventListener('resize', splitResizeListener);
+      splitResizeListener = null;
     }
   }
 
@@ -464,6 +482,197 @@
 
   let activeEffectId = 0;
 
+  function renderSplitCharts(currentRunId: number) {
+    if (!valuePieElement || !captureCurveElement) return;
+
+    tick().then(() => {
+      if (currentRunId !== activeEffectId) return;
+      import('echarts').then((echarts) => {
+        if (currentRunId !== activeEffectId) return;
+        if (!isMounted || activeTab !== 'value_split' || !valuePieElement || !captureCurveElement) return;
+
+        const isDark = mode.current === 'dark';
+        const textColor = isDark ? '#cbd5e1' : '#475569';
+        const axisColor = isDark ? '#94a3b8' : '#64748b';
+        const lineColor = isDark ? '#475569' : '#e2e8f0';
+        const splitLineColor = isDark ? 'rgba(71, 85, 105, 0.2)' : 'rgba(226, 232, 240, 0.6)';
+        const tooltipBg = isDark ? '#1e293b' : '#ffffff';
+        const tooltipBorder = isDark ? '#475569' : '#e2e8f0';
+        const tooltipText = isDark ? '#f8fafc' : '#0f172a';
+
+        // 1. Value Pie Option
+        const evcObj = results?.evc;
+        const surplusVal = evcObj?.customerSurplusPerUserMonth ?? 0;
+        const vendorProfit = evcObj?.vendorGrossProfitPerUserMonth ?? 0;
+        const cogsVal = evcObj?.cogsPerUserMonth ?? 0;
+
+        const pieOption = {
+          title: {
+            text: 'Value Creation Split',
+            left: 'center',
+            textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' }
+          },
+          tooltip: {
+            trigger: 'item',
+            backgroundColor: tooltipBg,
+            borderColor: tooltipBorder,
+            borderWidth: 1,
+            textStyle: { color: tooltipText },
+            formatter: (params: any) => {
+              return `${params.name}: <b>${formatCurrency(params.value, appState.currency, 0)}/mo</b> (${params.percent}%)`;
+            }
+          },
+          legend: {
+            orient: 'horizontal',
+            bottom: '0%',
+            left: 'center',
+            textStyle: { color: textColor, fontSize: 9 }
+          },
+          series: [
+            {
+              name: 'Value Split',
+              type: 'pie',
+              radius: ['45%', '70%'],
+              center: ['50%', '45%'],
+              avoidLabelOverlap: false,
+              itemStyle: {
+                borderRadius: 4,
+                borderColor: isDark ? '#1e293b' : '#fff',
+                borderWidth: 2
+              },
+              label: {
+                show: false,
+                position: 'center'
+              },
+              emphasis: {
+                label: {
+                  show: true,
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  formatter: '{b}\n{d}%'
+                }
+              },
+              labelLine: {
+                show: false
+              },
+              data: [
+                { value: surplusVal, name: 'Customer Surplus', itemStyle: { color: '#3b82f6' } },
+                { value: vendorProfit, name: 'Vendor Profit', itemStyle: { color: '#10b981' } },
+                { value: cogsVal, name: 'COGS', itemStyle: { color: '#f43f5e' } }
+              ]
+            }
+          ]
+        };
+
+        // 2. Capture Curve Option
+        const curveData = data.captureCurve;
+        const points = curveData?.points ?? [];
+        const optimalCapture = curveData?.optimalCapture ?? 0.3;
+
+        const lineOption = {
+          title: {
+            text: 'NPV Capture Curve',
+            left: 'center',
+            textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' }
+          },
+          tooltip: {
+            trigger: 'axis',
+            backgroundColor: tooltipBg,
+            borderColor: tooltipBorder,
+            borderWidth: 1,
+            textStyle: { color: tooltipText },
+            formatter: (params: any) => {
+              let res = `Capture Rate: <b>${params[0].name}</b><br/>`;
+              params.forEach((item: any) => {
+                res += `${item.marker} ${item.seriesName}: <b>${formatCurrency(item.value, appState.currency, 0)}</b><br/>`;
+              });
+              return res;
+            }
+          },
+          legend: {
+            bottom: '0%',
+            left: 'center',
+            textStyle: { color: textColor, fontSize: 9 }
+          },
+          grid: { left: '3%', right: '4%', top: '20%', bottom: '15%', containLabel: true },
+          xAxis: {
+            type: 'category',
+            boundaryGap: false,
+            data: points.map((p: any) => `${Math.round(p.capture * 100)}%`),
+            axisLabel: { color: axisColor, fontSize: 9 },
+            axisLine: { lineStyle: { color: lineColor } }
+          },
+          yAxis: {
+            type: 'value',
+            axisLabel: {
+              color: axisColor,
+              fontSize: 9,
+              formatter: (value: number) => formatCurrency(value, appState.currency, 0)
+            },
+            axisLine: { lineStyle: { color: lineColor } },
+            splitLine: { lineStyle: { color: splitLineColor } }
+          },
+          series: [
+            {
+              name: 'Vendor NPV',
+              type: 'line',
+              smooth: true,
+              data: points.map((p: any) => p.npvUpper),
+              itemStyle: { color: '#10b981' },
+              lineStyle: { width: 3 },
+              markLine: {
+                silent: true,
+                symbol: ['none', 'none'],
+                lineStyle: { color: '#8b5cf6', type: 'dashed', width: 1.5 },
+                label: {
+                  show: true,
+                  position: 'middle',
+                  color: '#8b5cf6',
+                  fontSize: 9,
+                  fontWeight: 'bold',
+                  formatter: `Optimum (${Math.round(optimalCapture * 100)}%)`
+                },
+                data: [
+                  { xAxis: `${Math.round(optimalCapture * 100)}%` }
+                ]
+              }
+            },
+            {
+              name: 'Customer Surplus PV',
+              type: 'line',
+              smooth: true,
+              data: points.map((p: any) => p.customerSurplus),
+              itemStyle: { color: '#3b82f6' },
+              lineStyle: { width: 2 }
+            }
+          ]
+        };
+
+        if (valuePieInstance) {
+          valuePieInstance.setOption(pieOption, true);
+        } else {
+          valuePieInstance = echarts.init(valuePieElement);
+          valuePieInstance.setOption(pieOption, true);
+        }
+
+        if (captureCurveInstance) {
+          captureCurveInstance.setOption(lineOption, true);
+        } else {
+          captureCurveInstance = echarts.init(captureCurveElement);
+          captureCurveInstance.setOption(lineOption, true);
+        }
+
+        if (!splitResizeListener) {
+          splitResizeListener = () => {
+            valuePieInstance?.resize();
+            captureCurveInstance?.resize();
+          };
+          window.addEventListener('resize', splitResizeListener);
+        }
+      });
+    });
+  }
+
   function renderChart(currentRunId: number) {
     if (!chartElement) return;
 
@@ -498,7 +707,11 @@
   $effect(() => {
     const _options = chartOptions; // Synchronous read registers dependency
     const currentRunId = ++activeEffectId;
-    if (activeTab || timeline || mode.current) {
+    if (activeTab === 'value_split') {
+      cleanupChart();
+      renderSplitCharts(currentRunId);
+    } else if (activeTab || timeline || mode.current) {
+      cleanupChart();
       renderChart(currentRunId);
     }
     return () => {
@@ -750,6 +963,12 @@
             >
               Adoption
             </button>
+            <button
+              class="px-2 py-1 rounded transition {activeTab === 'value_split' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => activeTab = 'value_split'}
+            >
+              Value Split
+            </button>
           </div>
         </CardHeader>
 
@@ -759,7 +978,83 @@
               No cashflow data available.
             </div>
           {:else}
-            <div bind:this={chartElement} class="h-[360px] w-full"></div>
+            {#if activeTab === 'value_split'}
+              <div class="space-y-6">
+                {#if !scenario.evc_nba_annual_value}
+                  <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
+                    <DollarSign class="h-10 w-10 text-muted-foreground/50" />
+                    <span>EVC parameters are not configured for this scenario.</span>
+                    <a href="/scenarios/{scenario.id}/edit" class="text-xs text-primary underline hover:text-primary/80">Edit scenario to configure Next Best Alternative & EVC</a>
+                  </div>
+                {:else}
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div bind:this={valuePieElement} class="h-[280px] w-full"></div>
+                    <div bind:this={captureCurveElement} class="h-[280px] w-full"></div>
+                  </div>
+
+                  <!-- Dual-Lens View -->
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-border/40 pt-4 text-xs select-none">
+                    <!-- Customer Lens -->
+                    <div class="p-4 rounded-xl bg-blue-500/5 border border-blue-500/10 space-y-2.5">
+                      <h4 class="font-bold text-blue-600 dark:text-blue-400 flex items-center uppercase tracking-wider text-[10px]">
+                        <Info class="h-3.5 w-3.5 mr-1" /> Customer Lens (Buying Driver)
+                      </h4>
+                      <p class="text-muted-foreground text-[11px]">
+                        How the customer evaluates the purchase compared to doing nothing (Next Best Alternative).
+                      </p>
+                      <div class="grid grid-cols-2 gap-2 font-mono text-[11px] pt-1">
+                        <div class="flex justify-between border-b border-border/40 pb-1">
+                          <span class="text-muted-foreground">EVC (Annualized):</span>
+                          <span class="font-semibold text-foreground">{formatCurrency((results?.evc?.evc ?? 0) * 12, appState.currency, 0)}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-border/40 pb-1">
+                          <span class="text-muted-foreground">EVC (Monthly/User):</span>
+                          <span class="font-semibold text-foreground">{formatCurrency(results?.evc?.evc ?? 0, appState.currency, 0)}</span>
+                        </div>
+                        <div class="flex justify-between border-b border-border/40 pb-1 col-span-2 font-semibold">
+                          <span class="text-muted-foreground">Customer Surplus (Target):</span>
+                          <span class="text-emerald-600 dark:text-emerald-400">
+                            {formatCurrency(results?.evc?.customerSurplusPerUserMonth ?? 0, appState.currency, 0)}/mo ({results?.evc?.netCreatedValue ? Math.round(((results?.evc?.customerSurplusPerUserMonth ?? 0) / results?.evc?.netCreatedValue) * 100) : 0}% share)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Vendor Lens -->
+                    <div class="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10 space-y-2.5">
+                      <h4 class="font-bold text-emerald-600 dark:text-emerald-400 flex items-center uppercase tracking-wider text-[10px]">
+                        <TrendingUp class="h-3.5 w-3.5 mr-1" /> Vendor Lens (Pricing Driver)
+                      </h4>
+                      <p class="text-muted-foreground text-[11px]">
+                        How pricing captures value and impacts overall cohort NPV considering adoption elasticity.
+                      </p>
+                      <div class="grid grid-cols-2 gap-2 font-mono text-[11px] pt-1">
+                        <div class="flex justify-between border-b border-border/40 pb-1">
+                          <span class="text-muted-foreground">Optimal Capture Share:</span>
+                          <span class="font-semibold text-foreground">
+                            {data.captureCurve ? Math.round(data.captureCurve.optimalCapture * 100) : 0}%
+                          </span>
+                        </div>
+                        <div class="flex justify-between border-b border-border/40 pb-1">
+                          <span class="text-muted-foreground">Optimal Overlay Price:</span>
+                          <span class="font-semibold text-primary">
+                            {formatCurrency(data.captureCurve?.optimalOverlayPrice ?? 0, appState.currency, 0)}/mo
+                          </span>
+                        </div>
+                        <div class="flex justify-between border-b border-border/40 pb-1 col-span-2 font-semibold">
+                          <span class="text-muted-foreground">Elasticity Sensitivity Band:</span>
+                          <span class="text-foreground">
+                            {data.captureCurve?.epsilonBand ? Math.round(data.captureCurve.epsilonBand.low * 100) : 0}% &ndash; {data.captureCurve?.epsilonBand ? Math.round(data.captureCurve.epsilonBand.high * 100) : 0}% capture
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {:else}
+              <div bind:this={chartElement} class="h-[360px] w-full"></div>
+            {/if}
           {/if}
         </CardContent>
       </Card>

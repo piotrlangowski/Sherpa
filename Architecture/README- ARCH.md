@@ -10,6 +10,10 @@ Format: Michael Nygard (kontekst / decyzja / status / konsekwencje).
 | [0002](0002-jeden-nosnik-przychodu.md) | Jeden nośnik przychodu na typ; pozostałe poziomy w roli kosztu/kontekstu | Zaakceptowany |
 | [0003](0003-override-monetyzacji-na-nosniku.md) | Override monetyzacji tylko na nośniku; typ a celowo płaski (Wariant 2) | Zaakceptowany |
 | [0004](0004-walidacja-zastap-nie-dodawaj.md) | Walidacja "zastąp, nie dodawaj"; zakaz `both` bez mostka (Poziom 3) | Zaakceptowany |
+| [0005](0005-evc-jako-podstawa-wyceny.md) | EVC jako podstawa wyceny: cena wyprowadzana z wartości; jeden silnik, dwie soczewki (klient/vendor) + Value Pie | Proponowany |
+| [0006](0006-sprzezenie-surplus-adopcja.md) | Sprzężenie surplus → adopcja: jawna elastyczność, adopcja-only v1, krzywa NPV(capture) zamiast magicznej liczby | Proponowany |
+| [0007](0007-cena-z-evc-per-nosnik.md) | Wyprowadzenie ceny z EVC per nośnik: subscription-like back-solve; usage=benchmark; outcome/hybrid odłożone | Proponowany |
+| [0008](0008-jedna-waluta-bazowa.md) | Inwariant jednej waluty: czysty silnik=baza, konwersja na granicy, koniec z hardcoded `$` | Proponowany |
 
 ## Skrót koncepcji
 

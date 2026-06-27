@@ -1,10 +1,11 @@
-import type { Scenario, ScenarioResult, CohortConfig, ScopeOverride, CreditSettings, MonetizationConfig, Settings, Provider, EntityOverride } from '../../types';
+import type { Scenario, ScenarioResult, CohortConfig, ScopeOverride, CreditSettings, MonetizationConfig, Settings, Provider, EntityOverride, CaptureCurveResult } from '../../types';
 import {
   calculateNPV,
   calculatePaybackPeriod,
   calculateIRR,
   calculateTCO,
   calculateScenario as pureCalculateScenario,
+  runCaptureCurve as pureRunCaptureCurve,
   applyScopeOverrides,
   validateRevenueIntegrity
 } from '../../shared/financial-math.js';
@@ -261,6 +262,15 @@ export function runAndSaveScenario(scenarioId: string): CalculationResult {
   const integrity = validateRevenueIntegrity(scenario);
   const result = calculateScenario(scenario);
 
+  let captureCurve = null;
+  if (result.evc) {
+    try {
+      captureCurve = runCaptureCurve(scenario);
+    } catch (err) {
+      captureCurve = null;
+    }
+  }
+
   scenariosRepository.saveResults({
     id: '', 
     scenario_id: scenarioId,
@@ -281,11 +291,51 @@ export function runAndSaveScenario(scenarioId: string): CalculationResult {
     irr_status: result.irr.status,
     revenue_integrity_status: integrity.status,
     revenue_integrity_message: integrity.message,
-    evc: result.evc ?? null,
+    evc: result.evc ? { ...result.evc, captureCurve: captureCurve ?? undefined } : null,
     evc_price_floor: result.evc?.priceFloor ?? null,
     evc_price_target: result.evc?.priceTarget ?? null,
     evc_price_ceiling: result.evc?.priceCeiling ?? null
   });
 
   return result;
+}
+
+export function runCaptureCurve(scenario: Scenario): CaptureCurveResult {
+  const integrity = validateRevenueIntegrity(scenario);
+  if (integrity.status === 'block') {
+    return {
+      points: [],
+      optimalCapture: 0.0,
+      optimalOverlayPrice: 0.0,
+      epsilonBand: {
+        low: 0.0,
+        base: 0.0,
+        high: 0.0
+      }
+    };
+  }
+
+  const allProviders = providersRepository.getAll();
+  const resolvedConfigs = resolveScenarioCohorts(scenario);
+
+  const monetized = attachMonetization(scenario);
+  const { services, costs, plans, providers } = applyEntityOverrides(monetized, allProviders);
+
+  const runtimeScenario = {
+    ...monetized,
+    scope_cohorts: resolvedConfigs,
+    services,
+    costs,
+    plans
+  };
+
+  const settings = settingsRepository.get();
+  const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+    runtimeScenario,
+    providers,
+    settings.currency,
+    settings.exchange_rates
+  );
+
+  return pureRunCaptureCurve(normalizedScenario, normalizedProviders, buildCreditSettings(settings));
 }
