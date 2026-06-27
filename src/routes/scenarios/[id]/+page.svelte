@@ -1231,135 +1231,137 @@
     </div>
 
     <!-- Explainer Card -->
-    <div class="mt-6">
-      <div class="glass border border-border rounded-lg overflow-hidden">
-        <button
-          type="button"
-          class="w-full flex items-center justify-between p-4 font-bold text-sm bg-muted/20 hover:bg-muted/40 transition select-none text-left"
-          onclick={() => isExplainerOpen = !isExplainerOpen}
-        >
-          <div class="flex items-center space-x-2">
-            <Info class="h-4 w-4 text-primary" />
-            <span>How this is calculated (Cohort PI Methodology)</span>
-          </div>
-          <span class="text-xs text-muted-foreground font-semibold">{isExplainerOpen ? 'Hide' : 'Show Details'}</span>
-        </button>
+    {#if scenario.modeling_type !== 'gtm'}
+      <div class="mt-6">
+        <div class="glass border border-border rounded-lg overflow-hidden">
+          <button
+            type="button"
+            class="w-full flex items-center justify-between p-4 font-bold text-sm bg-muted/20 hover:bg-muted/40 transition select-none text-left"
+            onclick={() => isExplainerOpen = !isExplainerOpen}
+          >
+            <div class="flex items-center space-x-2">
+              <Info class="h-4 w-4 text-primary" />
+              <span>How this is calculated (Cohort PI Methodology)</span>
+            </div>
+            <span class="text-xs text-muted-foreground font-semibold">{isExplainerOpen ? 'Hide' : 'Show Details'}</span>
+          </button>
 
-        {#if isExplainerOpen}
-          <div class="p-4 border-t border-border space-y-4 text-xs leading-relaxed text-muted-foreground bg-background/5">
-            <p>
-              Sherpa uses a counterfactual <strong>cohort-based adopter/non-adopter split</strong> model.
-              Instead of applying a blended average to the entire group, the target population is partitioned into two distinct sub-cohorts.
-            </p>
-            <p>
-              To provide CFO-grade realism, Sherpa displays NPV, Payback, and Profitability Index (PI) as a range:
-            </p>
-            <ul class="list-disc list-inside pl-2 space-y-1">
-              <li><strong>Lower Bound:</strong> Price/ARPU uplift effect only. Customer counts (churn, acquisition) follow the baseline projection.</li>
-              <li><strong>Upper Bound:</strong> Full retention + acquisition + price effect (the standard model).</li>
-            </ul>
+          {#if isExplainerOpen}
+            <div class="p-4 border-t border-border space-y-4 text-xs leading-relaxed text-muted-foreground bg-background/5">
+              <p>
+                Sherpa uses a counterfactual <strong>cohort-based adopter/non-adopter split</strong> model.
+                Instead of applying a blended average to the entire group, the target population is partitioned into two distinct sub-cohorts.
+              </p>
+              <p>
+                To provide CFO-grade realism, Sherpa displays NPV, Payback, and Profitability Index (PI) as a range:
+              </p>
+              <ul class="list-disc list-inside pl-2 space-y-1">
+                <li><strong>Lower Bound:</strong> Price/ARPU uplift effect only. Customer counts (churn, acquisition) follow the baseline projection.</li>
+                <li><strong>Upper Bound:</strong> Full retention + acquisition + price effect (the standard model).</li>
+              </ul>
 
-            {#each resolvedConfigs || [] as cc}
-              {@const targetA = cc.ai_adoption_rate || 0}
-              {@const rampMonths = cc.adoption_ramp_months || 0}
-              {@const a0 = rampMonths === 0 ? targetA : Math.min(1, 1 / rampMonths) * targetA}
-              {@const grossMargin = cc.gross_margin !== undefined ? cc.gross_margin : 1.0}
-              
-              {@const startAdopters = Math.round(cc.current_users * a0)}
-              {@const startNonAdopters = Math.round(cc.current_users * (1 - a0))}
-              
-              {@const acqUplift = cc.acquisition_uplift || 0}
-              {@const churnRed = cc.churn_reduction || 0}
-              {@const arpuUp = cc.arpu_uplift || 0}
-              {@const arpuUpPct = cc.arpu_uplift_percent || 0}
+              {#each resolvedConfigs || [] as cc}
+                {@const targetA = cc.ai_adoption_rate || 0}
+                {@const rampMonths = cc.adoption_ramp_months || 0}
+                {@const a0 = rampMonths === 0 ? targetA : Math.min(1, 1 / rampMonths) * targetA}
+                {@const grossMargin = cc.gross_margin !== undefined ? cc.gross_margin : 1.0}
+                
+                {@const startAdopters = Math.round(cc.current_users * a0)}
+                {@const startNonAdopters = Math.round(cc.current_users * (1 - a0))}
+                
+                {@const acqUplift = cc.acquisition_uplift || 0}
+                {@const churnRed = cc.churn_reduction || 0}
+                {@const arpuUp = cc.arpu_uplift || 0}
+                {@const arpuUpPct = cc.arpu_uplift_percent || 0}
 
-              {@const baseAcq = cc.monthly_acquisition || 0}
-              {@const withAiAcq = baseAcq * (1 + acqUplift)}
-              {@const adopterAcq = withAiAcq * targetA}
-              {@const nonAdopterAcq = withAiAcq * (1 - targetA)}
-              
-              {@const baseChurn = cc.monthly_churn_rate || 0}
-              {@const adopterChurn = baseChurn * (1 - churnRed)}
-              
-              {@const baseArpu = cc.base_arpu || 0}
-              {@const adopterArpu = baseArpu * (1 + arpuUpPct) + arpuUp}
-              
-              {@const m0AdopterRev = startAdopters * adopterArpu}
-              {@const m0NonAdopterRev = startNonAdopters * baseArpu}
-              {@const m0WithAi = m0AdopterRev + m0NonAdopterRev}
-              {@const m0BaseRev = cc.current_users * baseArpu}
-              {@const m0Net = m0WithAi - m0BaseRev}
-              {@const m0NetMargin = m0Net * grossMargin}
+                {@const baseAcq = cc.monthly_acquisition || 0}
+                {@const withAiAcq = baseAcq * (1 + acqUplift)}
+                {@const adopterAcq = withAiAcq * targetA}
+                {@const nonAdopterAcq = withAiAcq * (1 - targetA)}
+                
+                {@const baseChurn = cc.monthly_churn_rate || 0}
+                {@const adopterChurn = baseChurn * (1 - churnRed)}
+                
+                {@const baseArpu = cc.base_arpu || 0}
+                {@const adopterArpu = baseArpu * (1 + arpuUpPct) + arpuUp}
+                
+                {@const m0AdopterRev = startAdopters * adopterArpu}
+                {@const m0NonAdopterRev = startNonAdopters * baseArpu}
+                {@const m0WithAi = m0AdopterRev + m0NonAdopterRev}
+                {@const m0BaseRev = cc.current_users * baseArpu}
+                {@const m0Net = m0WithAi - m0BaseRev}
+                {@const m0NetMargin = m0Net * grossMargin}
 
-              <div class="bg-muted/30 border border-border/50 rounded-lg p-3 space-y-3">
-                <h4 class="font-bold text-foreground text-sm flex items-center justify-between">
-                  <span>Cohort: {cc.name}</span>
-                  <div class="flex items-center space-x-1.5">
-                    {#if rampMonths > 0}
-                      <Badge variant="secondary" class="text-[10px] bg-amber-500/10 text-amber-500 border-amber-500/20">Ramp: {rampMonths} mos</Badge>
-                    {/if}
-                    <Badge variant="secondary" class="text-[10px]">Gross Margin: {formatPercent(grossMargin)}</Badge>
-                    <Badge variant="secondary" class="text-[10px]">Target Adoption: {formatPercent(targetA)}</Badge>
-                  </div>
-                </h4>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div class="space-y-1.5">
-                    <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">Sub-Cohort Partitioning (Month 0)</span>
-                    <ul class="list-disc list-inside space-y-1">
-                      <li><strong>AI Adopters ({formatPercent(a0)}):</strong> Starts with <span class="text-foreground font-bold">{formatNumber(startAdopters)}</span> customers.</li>
-                      <li><strong>Non-Adopters ({formatPercent(1 - a0)}):</strong> Starts with <span class="text-foreground font-bold">{formatNumber(startNonAdopters)}</span> customers.</li>
+                <div class="bg-muted/30 border border-border/50 rounded-lg p-3 space-y-3">
+                  <h4 class="font-bold text-foreground text-sm flex items-center justify-between">
+                    <span>Cohort: {cc.name}</span>
+                    <div class="flex items-center space-x-1.5">
                       {#if rampMonths > 0}
-                        <li class="list-none pl-4 text-[10px] text-amber-500">
-                          (Target {formatPercent(targetA)} scaled by Month 0 adoption ramp: 1/{rampMonths} = {formatPercent(1/rampMonths, 0)})
-                        </li>
+                        <Badge variant="secondary" class="text-[10px] bg-amber-500/10 text-amber-500 border-amber-500/20">Ramp: {rampMonths} mos</Badge>
                       {/if}
-                    </ul>
+                      <Badge variant="secondary" class="text-[10px]">Gross Margin: {formatPercent(grossMargin)}</Badge>
+                      <Badge variant="secondary" class="text-[10px]">Target Adoption: {formatPercent(targetA)}</Badge>
+                    </div>
+                  </h4>
+
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="space-y-1.5">
+                      <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">Sub-Cohort Partitioning (Month 0)</span>
+                      <ul class="list-disc list-inside space-y-1">
+                        <li><strong>AI Adopters ({formatPercent(a0)}):</strong> Starts with <span class="text-foreground font-bold">{formatNumber(startAdopters)}</span> customers.</li>
+                        <li><strong>Non-Adopters ({formatPercent(1 - a0)}):</strong> Starts with <span class="text-foreground font-bold">{formatNumber(startNonAdopters)}</span> customers.</li>
+                        {#if rampMonths > 0}
+                          <li class="list-none pl-4 text-[10px] text-amber-500">
+                            (Target {formatPercent(targetA)} scaled by Month 0 adoption ramp: 1/{rampMonths} = {formatPercent(1/rampMonths, 0)})
+                          </li>
+                        {/if}
+                      </ul>
+                    </div>
+
+                    <div class="space-y-1.5">
+                      <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">Acquisition (Monthly Signups)</span>
+                      <ul class="list-disc list-inside space-y-1">
+                        <li><strong>Baseline:</strong> <span class="text-foreground font-semibold">{formatNumber(baseAcq)}</span> signups/mo.</li>
+                        <li><strong>With-AI:</strong> <span class="text-foreground font-semibold">{formatNumber(withAiAcq)}</span> signups/mo (+{formatPercent(acqUplift)} uplift).</li>
+                        <li class="pl-4 text-[11px] list-none">➔ <span class="text-foreground font-medium">{formatNumber(adopterAcq)}</span>/mo Adopters, <span class="text-foreground font-medium">{formatNumber(nonAdopterAcq)}</span>/mo Non-Adopters.</li>
+                      </ul>
+                    </div>
+
+                    <div class="space-y-1.5">
+                      <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">Retention & Churn</span>
+                      <ul class="list-disc list-inside space-y-1">
+                        <li><strong>Non-Adopters & Baseline:</strong> <span class="text-foreground font-semibold">{formatPercent(baseChurn)}</span> monthly churn rate.</li>
+                        <li><strong>AI Adopters:</strong> <span class="text-foreground font-semibold">{formatPercent(adopterChurn)}</span> monthly churn rate ({formatPercent(churnRed)} reduction).</li>
+                      </ul>
+                    </div>
+
+                    <div class="space-y-1.5">
+                      <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">ARPU (Average Revenue Per User)</span>
+                      <ul class="list-disc list-inside space-y-1">
+                        <li><strong>Non-Adopters & Baseline:</strong> <span class="text-foreground font-semibold">{formatCurrency(baseArpu, appState.currency, 2)}</span>/mo.</li>
+                        <li><strong>AI Adopters:</strong> <span class="text-foreground font-semibold">{formatCurrency(adopterArpu, appState.currency, 2)}</span>/mo (Includes {arpuUpPct > 0 ? `+${formatPercent(arpuUpPct)}` : ''}{arpuUp > 0 ? ` +${formatCurrency(arpuUp, appState.currency, 2)}` : ''} uplift).</li>
+                      </ul>
+                    </div>
                   </div>
 
-                  <div class="space-y-1.5">
-                    <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">Acquisition (Monthly Signups)</span>
-                    <ul class="list-disc list-inside space-y-1">
-                      <li><strong>Baseline:</strong> <span class="text-foreground font-semibold">{formatNumber(baseAcq)}</span> signups/mo.</li>
-                      <li><strong>With-AI:</strong> <span class="text-foreground font-semibold">{formatNumber(withAiAcq)}</span> signups/mo (+{formatPercent(acqUplift)} uplift).</li>
-                      <li class="pl-4 text-[11px] list-none">➔ <span class="text-foreground font-medium">{formatNumber(adopterAcq)}</span>/mo Adopters, <span class="text-foreground font-medium">{formatNumber(nonAdopterAcq)}</span>/mo Non-Adopters.</li>
-                    </ul>
-                  </div>
-
-                  <div class="space-y-1.5">
-                    <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">Retention & Churn</span>
-                    <ul class="list-disc list-inside space-y-1">
-                      <li><strong>Non-Adopters & Baseline:</strong> <span class="text-foreground font-semibold">{formatPercent(baseChurn)}</span> monthly churn rate.</li>
-                      <li><strong>AI Adopters:</strong> <span class="text-foreground font-semibold">{formatPercent(adopterChurn)}</span> monthly churn rate ({formatPercent(churnRed)} reduction).</li>
-                    </ul>
-                  </div>
-
-                  <div class="space-y-1.5">
-                    <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider">ARPU (Average Revenue Per User)</span>
-                    <ul class="list-disc list-inside space-y-1">
-                      <li><strong>Non-Adopters & Baseline:</strong> <span class="text-foreground font-semibold">{formatCurrency(baseArpu, appState.currency, 2)}</span>/mo.</li>
-                      <li><strong>AI Adopters:</strong> <span class="text-foreground font-semibold">{formatCurrency(adopterArpu, appState.currency, 2)}</span>/mo (Includes {arpuUpPct > 0 ? `+${formatPercent(arpuUpPct)}` : ''}{arpuUp > 0 ? ` +${formatCurrency(arpuUp, appState.currency, 2)}` : ''} uplift).</li>
-                    </ul>
+                  <div class="border-t border-border/40 pt-2.5 mt-2 bg-muted/20 p-2 rounded">
+                    <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider mb-1">Month 0 Revenue & Margin Hand-Check</span>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2 text-[11px]">
+                      <div>Adopters: <span class="font-mono font-bold text-foreground">{formatCurrency(m0AdopterRev, appState.currency, 0)}</span></div>
+                      <div>Non-Adopters: <span class="font-mono font-bold text-foreground">{formatCurrency(m0NonAdopterRev, appState.currency, 0)}</span></div>
+                      <div>With-AI: <span class="font-mono font-bold text-foreground">{formatCurrency(m0WithAi, appState.currency, 0)}</span></div>
+                      <div>Baseline: <span class="font-mono font-bold text-foreground">{formatCurrency(m0BaseRev, appState.currency, 0)}</span></div>
+                      <div class="text-foreground font-semibold">Gross Incremental: <span class="font-mono font-bold">{formatCurrency(m0Net, appState.currency, 0)}</span></div>
+                      <div class="text-emerald-600 dark:text-emerald-400 font-bold">Net Margin (x{formatPercent(grossMargin, 0)}): <span class="font-mono">{formatCurrency(m0NetMargin, appState.currency, 0)}</span></div>
+                    </div>
                   </div>
                 </div>
-
-                <div class="border-t border-border/40 pt-2.5 mt-2 bg-muted/20 p-2 rounded">
-                  <span class="font-semibold text-foreground block text-[10px] uppercase tracking-wider mb-1">Month 0 Revenue & Margin Hand-Check</span>
-                  <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2 text-[11px]">
-                    <div>Adopters: <span class="font-mono font-bold text-foreground">{formatCurrency(m0AdopterRev, appState.currency, 0)}</span></div>
-                    <div>Non-Adopters: <span class="font-mono font-bold text-foreground">{formatCurrency(m0NonAdopterRev, appState.currency, 0)}</span></div>
-                    <div>With-AI: <span class="font-mono font-bold text-foreground">{formatCurrency(m0WithAi, appState.currency, 0)}</span></div>
-                    <div>Baseline: <span class="font-mono font-bold text-foreground">{formatCurrency(m0BaseRev, appState.currency, 0)}</span></div>
-                    <div class="text-foreground font-semibold">Gross Incremental: <span class="font-mono font-bold">{formatCurrency(m0Net, appState.currency, 0)}</span></div>
-                    <div class="text-emerald-600 dark:text-emerald-400 font-bold">Net Margin (x{formatPercent(grossMargin, 0)}): <span class="font-mono">{formatCurrency(m0NetMargin, appState.currency, 0)}</span></div>
-                  </div>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {/if}
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
-    </div>
+    {/if}
     {/if}
   {/if}
 </div>

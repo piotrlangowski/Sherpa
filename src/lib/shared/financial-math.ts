@@ -1250,7 +1250,7 @@ export function calculateScenario(
     const upliftOnlyModel = buildCohortModel({
       ...cc,
       ai_adoption_rate: 1.0,
-      monthly_churn_rate: Math.max(0, cc.monthly_churn_rate * (1 - (cc.churn_reduction || 0)) + sumAgentChurnUplift),
+      monthly_churn_rate: Math.max(0, cc.monthly_churn_rate + sumAgentChurnUplift),
       base_arpu: cc.base_arpu * (1 + (cc.arpu_uplift_percent || 0)) + (cc.arpu_uplift || 0)
     }, projectionMonths);
 

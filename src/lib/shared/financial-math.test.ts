@@ -947,6 +947,31 @@ describe('Financial Math Module Tests', () => {
         expect(res50.piUpper).toBe(0);
       });
 
+      it('should calculate npvLower without applying churn_reduction', () => {
+        const cohortNoChurnRed = {
+          ...cohort,
+          churn_reduction: 0.0,
+          arpu_uplift: 20
+        };
+        const cohortWithChurnRed = {
+          ...cohort,
+          churn_reduction: 0.50, // 50% churn reduction
+          arpu_uplift: 20
+        };
+
+        const scenarioNoChurnRed = { ...scenario, scope_cohorts: [cohortNoChurnRed] };
+        const scenarioWithChurnRed = { ...scenario, scope_cohorts: [cohortWithChurnRed] };
+
+        const resNo = calculateScenario(scenarioNoChurnRed, [provider]);
+        const resWith = calculateScenario(scenarioWithChurnRed, [provider]);
+
+        // npvUpper should be higher when churn is reduced (more users retained)
+        expect(resWith.npvUpper).toBeGreaterThan(resNo.npvUpper);
+
+        // npvLower must be EXACTLY identical because churn_reduction is ignored in Lower Bound
+        expect(resWith.npvLower).toBeCloseTo(resNo.npvLower, 2);
+      });
+
       it('should apply time-varying linear adoption ramps', () => {
         const rampCohort = {
           ...cohort,
