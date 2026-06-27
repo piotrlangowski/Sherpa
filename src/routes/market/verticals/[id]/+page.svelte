@@ -104,7 +104,7 @@
                 <span>TAM</span>
                 <span class="text-[10px] lowercase font-normal">(Total Addressable)</span>
               </Label>
-              <NumberField id="tamUsers" name="tamUsers" min="0" bind:value={tam} raw={true} grouped={true} decimals={0} />
+              <NumberField id="tamUsers" name="tamUsers" min="0" bind:value={tam} required raw={true} grouped={true} decimals={0} />
             </div>
 
             <div class="space-y-2">
@@ -112,7 +112,7 @@
                 <span>SAM</span>
                 <span class="text-[10px] lowercase font-normal">(Serviceable Available)</span>
               </Label>
-              <NumberField id="samUsers" name="samUsers" min="0" max={tam} bind:value={sam} raw={true} grouped={true} decimals={0} />
+              <NumberField id="samUsers" name="samUsers" min="0" max={tam} bind:value={sam} required raw={true} grouped={true} decimals={0} />
             </div>
 
             <div class="space-y-2">
@@ -120,7 +120,7 @@
                 <span>SOM</span>
                 <span class="text-[10px] lowercase font-normal">(Serviceable Obtainable)</span>
               </Label>
-              <NumberField id="somUsers" name="somUsers" min="0" max={sam} bind:value={som} raw={true} grouped={true} decimals={0} />
+              <NumberField id="somUsers" name="somUsers" min="0" max={sam} bind:value={som} required raw={true} grouped={true} decimals={0} />
             </div>
           </div>
         </div>

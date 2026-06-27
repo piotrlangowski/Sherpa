@@ -317,6 +317,7 @@
       size="lg"
       step={0.01}
       min={0.01}
+      required
       span={2}
     />
     <FormField label="Currency" forId="currency">

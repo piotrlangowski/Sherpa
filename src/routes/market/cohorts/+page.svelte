@@ -473,6 +473,7 @@
       min={0}
       max={100}
       step={0.1}
+      required
       badge={{ text: `${aiAdoptionRate}%`, tone: 'neutral' }}
       help="Share of customers using AI features — drives revenue attribution"
     />
@@ -485,6 +486,7 @@
       bind:value={currentUsers}
       label="Starting Active Customers"
       min={0}
+      required
     />
     <NumberField
       id="baseArpu"
@@ -495,6 +497,7 @@
       suffix="/mo"
       min={0}
       step={0.01}
+      required
     />
   </FormSection>
 
@@ -505,6 +508,7 @@
       bind:value={monthlyAcquisition}
       label="Monthly Acquisition"
       min={0}
+      required
       help="New customers per month"
     />
     <NumberField
@@ -516,6 +520,7 @@
       min={-50}
       max={200}
       step={0.1}
+      required
       badge={{ text: `+${acquisitionGrowthRate}% /mo`, tone: 'positive' }}
     />
   </FormSection>
@@ -530,6 +535,7 @@
       min={0}
       max={100}
       step={0.1}
+      required
       badge={{ text: `${monthlyChurnRate}% /mo`, tone: 'negative' }}
     />
     <NumberField
@@ -541,6 +547,7 @@
       min={0}
       max={100}
       step={0.1}
+      required
       badge={{ text: `${retentionFloor}%`, tone: 'muted' }}
       help="Retention never decays below this share"
     />
@@ -554,6 +561,7 @@
       min={-50}
       max={200}
       step={0.1}
+      required
       badge={{ text: `+${monthlyExpansionRate}% /mo`, tone: 'positive' }}
       help="Upsell / cross-sell"
     />
@@ -569,6 +577,7 @@
       suffix="/mo"
       min={0}
       step={0.01}
+      required
       help="Flat ARPU increase for users adopting AI"
     />
     <NumberField
@@ -580,6 +589,7 @@
       min={0}
       max={200}
       step={0.1}
+      required
       badge={{ text: `+${arpuUpliftPercent}%`, tone: 'positive' }}
       help="Percentage ARPU increase for users adopting AI"
     />
@@ -592,6 +602,7 @@
       min={0}
       max={100}
       step={0.1}
+      required
       badge={{ text: `${churnReduction}% Churn Red.`, tone: 'positive' }}
       help="Percentage reduction of monthly churn for users adopting AI"
     />
@@ -604,6 +615,7 @@
       min={0}
       max={200}
       step={0.1}
+      required
       badge={{ text: `+${acquisitionUplift}%`, tone: 'positive' }}
       help="Percentage increase in new-customer acquisition"
     />
@@ -619,6 +631,7 @@
       min={0}
       max={100}
       step={0.1}
+      required
       badge={{ text: `${grossMargin}%`, tone: 'neutral' }}
       help="Cohort gross margin percentage, used to compute incremental contribution margin"
     />
@@ -631,6 +644,7 @@
       min={0}
       max={60}
       step={1}
+      required
       help="Number of months over which AI adoption ramps up linearly to target rate"
     />
   </FormSection>

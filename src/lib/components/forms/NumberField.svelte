@@ -15,7 +15,7 @@
     step = undefined,
     min = undefined,
     max = undefined,
-    required = true,
+    required = false,
     size = 'md',
     badge = undefined,
     help = '',

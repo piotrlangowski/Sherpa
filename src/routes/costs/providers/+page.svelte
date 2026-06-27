@@ -419,6 +419,7 @@
       suffix="/1M"
       step={0.0001}
       min={0}
+      required
     />
     <NumberField
       id="outputPrice"
@@ -429,6 +430,7 @@
       suffix="/1M"
       step={0.0001}
       min={0}
+      required
     />
   </FormSection>
 
@@ -440,6 +442,7 @@
       label="Input tokens / credit"
       step={1}
       min={1}
+      required
     />
     <NumberField
       id="outputTokensPerCredit"
@@ -448,6 +451,7 @@
       label="Output tokens / credit"
       step={1}
       min={1}
+      required
     />
   </FormSection>
 </FormDialog>

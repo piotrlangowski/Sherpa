@@ -227,18 +227,18 @@
           <div class="p-4 rounded-lg bg-muted/30 border border-border grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div class="space-y-1.5">
               <Label for="avgInputTokens">Avg. Input Tokens</Label>
-              <NumberField id="avgInputTokens" name="avgInputTokens" min="0" bind:value={avgInputTokens} raw={true} grouped={true} decimals={0} class="text-right" />
+              <NumberField id="avgInputTokens" name="avgInputTokens" min="0" bind:value={avgInputTokens} required raw={true} grouped={true} decimals={0} class="text-right" />
             </div>
 
             <div class="space-y-1.5">
               <Label for="avgOutputTokens">Avg. Output Tokens</Label>
-              <NumberField id="avgOutputTokens" name="avgOutputTokens" min="0" bind:value={avgOutputTokens} raw={true} grouped={true} decimals={0} class="text-right" />
+              <NumberField id="avgOutputTokens" name="avgOutputTokens" min="0" bind:value={avgOutputTokens} required raw={true} grouped={true} decimals={0} class="text-right" />
             </div>
 
             {#if serviceType === 'copilot'}
               <div class="space-y-1.5">
                 <Label for="avgRequests">Requests / User / Month</Label>
-                <NumberField id="avgRequests" name="avgRequests" min="0" bind:value={avgRequests} raw={true} grouped={true} decimals={0} class="text-right" />
+                <NumberField id="avgRequests" name="avgRequests" min="0" bind:value={avgRequests} required raw={true} grouped={true} decimals={0} class="text-right" />
               </div>
             {/if}
           </div>
@@ -320,7 +320,7 @@
               {#if interactionDriverType === 'flat'}
                 <div class="space-y-1.5">
                   <Label for="monthly_volume">Monthly Volume (interactions)</Label>
-                  <NumberField id="monthly_volume" name="monthly_volume" min="0" bind:value={monthlyVolume} raw={true} grouped={true} decimals={0} class="text-right" />
+                  <NumberField id="monthly_volume" name="monthly_volume" min="0" bind:value={monthlyVolume} required raw={true} grouped={true} decimals={0} class="text-right" />
                 </div>
                 <div class="space-y-1.5">
                   <Label for="volume_growth_rate">Monthly Volume Growth Rate (e.g. 0.02 for 2%)</Label>
@@ -338,7 +338,7 @@
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-border/40 pt-4">
               <div class="space-y-1.5">
                 <Label for="fully_loaded_cost_per_fte_month">Fully Loaded FTE Cost / Month</Label>
-                <NumberField id="fully_loaded_cost_per_fte_month" name="fully_loaded_cost_per_fte_month" min="0" step="0.01" bind:value={fullyLoadedCostPerFteMonth} raw={true} grouped={true} decimals={2} class="text-right" />
+                <NumberField id="fully_loaded_cost_per_fte_month" name="fully_loaded_cost_per_fte_month" min="0" step="0.01" bind:value={fullyLoadedCostPerFteMonth} required raw={true} grouped={true} decimals={2} class="text-right" />
               </div>
               <div class="space-y-1.5">
                 <Label for="productive_hours_per_fte_month">Productive Hours / FTE / Month</Label>
