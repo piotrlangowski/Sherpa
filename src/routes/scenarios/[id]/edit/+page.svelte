@@ -1,6 +1,6 @@
 <script lang="ts">
   import ScenarioWizard from '$lib/components/wizard/ScenarioWizard.svelte';
-  let { data } = $props();
+  let { data, form } = $props();
 </script>
 
-<ScenarioWizard {data} mode="edit" action="?/updateScenario" />
+<ScenarioWizard {data} {form} mode="edit" action="?/updateScenario" />

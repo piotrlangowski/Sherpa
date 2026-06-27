@@ -44,7 +44,7 @@
   import { formatCurrency, formatPercent, formatMonths, formatIrr, formatPI, getCurrencySymbol } from '$lib/utils/format';
   import { mode } from 'mode-watcher';
 
-  let { data, mode: wizardMode, action } = $props();
+  let { data, mode: wizardMode, action, form } = $props();
 
   // Wizard Navigation
   let currentStep = $state(1);
@@ -1203,11 +1203,11 @@
                           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">ARPU Override ($)</Label>
-                              <NumberField id="arpu_override" bind:value={ov.arpu_override} min="0" step="0.01" placeholder="Inherit" raw={true} grouped={true} decimals={2} class="bg-background text-xs font-mono" />
+                              <NumberField id="arpu_override" required={false} bind:value={ov.arpu_override} min="0" step="0.01" placeholder="Inherit" raw={true} grouped={true} decimals={2} class="bg-background text-xs font-mono" />
                             </div>
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">Monthly Acquisition (/mo)</Label>
-                              <NumberField id="monthly_acquisition" bind:value={ov.monthly_acquisition} min="0" placeholder="Inherit" raw={true} grouped={true} decimals={0} class="bg-background text-xs font-mono" />
+                              <NumberField id="monthly_acquisition" required={false} bind:value={ov.monthly_acquisition} min="0" placeholder="Inherit" raw={true} grouped={true} decimals={0} class="bg-background text-xs font-mono" />
                             </div>
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">Monthly Churn (%)</Label>
@@ -1226,7 +1226,7 @@
                           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">AI ARPU Uplift ($ Flat)</Label>
-                              <NumberField id="arpu_uplift" bind:value={ov.arpu_uplift} min="0" step="0.01" placeholder="Inherit" raw={true} grouped={true} decimals={2} class="bg-background text-xs font-mono" />
+                              <NumberField id="arpu_uplift" required={false} bind:value={ov.arpu_uplift} min="0" step="0.01" placeholder="Inherit" raw={true} grouped={true} decimals={2} class="bg-background text-xs font-mono" />
                             </div>
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">AI ARPU Uplift (%)</Label>
@@ -1442,7 +1442,7 @@
                             <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
                           {:else}
                             <Label class="text-xs text-muted-foreground shrink-0 ml-1">Seats:</Label>
-                            <NumberField id="seats_plan_{plan.id}" name="seats_plan_{plan.id}" bind:value={seatsPlans[plan.id]} min="0" raw={true} grouped={true} decimals={0} class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
+                            <NumberField id="seats_plan_{plan.id}" name="seats_plan_{plan.id}" required={false} bind:value={seatsPlans[plan.id]} min="0" raw={true} grouped={true} decimals={0} class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
                           {/if}
                         {:else}
                           <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
@@ -1643,19 +1643,19 @@
             <div class="space-y-4">
               <div class="space-y-1.5">
                 <Label for="evc_nba_annual_value" class="font-semibold text-xs">Next Best Alternative (Annual Reference Value, {getCurrencySymbol(data.settings.currency)})</Label>
-                <NumberField id="evc_nba_annual_value" name="evc_nba_annual_value" min="0" step="0.01" bind:value={evc_nba_annual_value} placeholder="e.g. 50000.00" raw={true} grouped={true} decimals={2} class="text-right" />
+                <NumberField id="evc_nba_annual_value" name="evc_nba_annual_value" required={false} min="0" step="0.01" bind:value={evc_nba_annual_value} placeholder="e.g. 50000.00" raw={true} grouped={true} decimals={2} class="text-right" />
                 <p class="text-[10px] text-muted-foreground">The annual cost/value of the customer's current non-AI alternative solution (e.g. human labor, legacy vendor).</p>
               </div>
 
               <div class="space-y-1.5">
                 <Label for="evc_extra_positive_value" class="font-semibold text-xs">Extra Positive Value (Annual, {getCurrencySymbol(data.settings.currency)})</Label>
-                <NumberField id="evc_extra_positive_value" name="evc_extra_positive_value" min="0" step="0.01" bind:value={evc_extra_positive_value} placeholder="e.g. 10000.00" raw={true} grouped={true} decimals={2} class="text-right" />
+                <NumberField id="evc_extra_positive_value" name="evc_extra_positive_value" required={false} min="0" step="0.01" bind:value={evc_extra_positive_value} placeholder="e.g. 10000.00" raw={true} grouped={true} decimals={2} class="text-right" />
                 <p class="text-[10px] text-muted-foreground">Other soft/hard annual benefits (e.g., higher quality, CSAT lift, risk reduction) not captured in labor/margin savings.</p>
               </div>
 
               <div class="space-y-1.5">
                 <Label for="evc_negative_value" class="font-semibold text-xs">Negative Value / Switching Costs ({getCurrencySymbol(data.settings.currency)})</Label>
-                <NumberField id="evc_negative_value" name="evc_negative_value" min="0" step="0.01" bind:value={evc_negative_value} placeholder="e.g. 5000.00" raw={true} grouped={true} decimals={2} class="text-right" />
+                <NumberField id="evc_negative_value" name="evc_negative_value" required={false} min="0" step="0.01" bind:value={evc_negative_value} placeholder="e.g. 5000.00" raw={true} grouped={true} decimals={2} class="text-right" />
                 <p class="text-[10px] text-muted-foreground">Implementation fees, training costs, or any disadvantage compared to the Next Best Alternative.</p>
               </div>
 
@@ -1793,19 +1793,27 @@
           </div>
         </CardContent>
 
-        <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">
-          <Button type="button" variant="outline" onclick={prevStep}>
-            <ArrowLeft class="h-4 w-4 mr-2" /> Back
-          </Button>
-          {#if wizardMode === 'create'}
-            <Button type="button" onclick={nextStep}>
-              Next: Review & Save <ArrowRight class="h-4 w-4 ml-2" />
-            </Button>
-          {:else}
-            <Button type="submit" disabled={integrityResult.status === 'block'}>
-              <Save class="h-4 w-4 mr-2" /> Save Changes
-            </Button>
+        <CardFooter class="border-t border-border glass-inset py-4 flex flex-col items-stretch gap-3">
+          {#if wizardMode === 'edit' && form?.error}
+            <div class="flex items-start space-x-2.5 rounded-lg border border-rose-500/30 bg-rose-500/5 p-3">
+              <Info class="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+              <p class="text-rose-600 dark:text-rose-400 text-xs font-semibold">{form.error}</p>
+            </div>
           {/if}
+          <div class="flex justify-between items-center">
+            <Button type="button" variant="outline" onclick={prevStep}>
+              <ArrowLeft class="h-4 w-4 mr-2" /> Back
+            </Button>
+            {#if wizardMode === 'create'}
+              <Button type="button" onclick={nextStep}>
+                Next: Review & Save <ArrowRight class="h-4 w-4 ml-2" />
+              </Button>
+            {:else}
+              <Button type="submit" disabled={integrityResult.status === 'block'}>
+                <Save class="h-4 w-4 mr-2" /> Save Changes
+              </Button>
+            {/if}
+          </div>
         </CardFooter>
       </div>
 
@@ -1899,13 +1907,21 @@
             {/if}
           </CardContent>
 
-          <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">
-            <Button type="button" variant="outline" onclick={prevStep}>
-              <ArrowLeft class="h-4 w-4 mr-2" /> Back
-            </Button>
-            <Button type="submit" disabled={integrityResult.status === 'block'}>
-              <Save class="h-4 w-4 mr-2" /> Calculate & Save Scenario
-            </Button>
+          <CardFooter class="border-t border-border glass-inset py-4 flex flex-col items-stretch gap-3">
+            {#if form?.error}
+              <div class="flex items-start space-x-2.5 rounded-lg border border-rose-500/30 bg-rose-500/5 p-3">
+                <Info class="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+                <p class="text-rose-600 dark:text-rose-400 text-xs font-semibold">{form.error}</p>
+              </div>
+            {/if}
+            <div class="flex justify-between items-center">
+              <Button type="button" variant="outline" onclick={prevStep}>
+                <ArrowLeft class="h-4 w-4 mr-2" /> Back
+              </Button>
+              <Button type="submit" disabled={integrityResult.status === 'block'}>
+                <Save class="h-4 w-4 mr-2" /> Calculate & Save Scenario
+              </Button>
+            </div>
           </CardFooter>
         </div>
       {/if}
