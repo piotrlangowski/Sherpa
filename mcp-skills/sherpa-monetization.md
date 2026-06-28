@@ -1,6 +1,6 @@
 ---
 name: sherpa-monetization
-description: Assists with configuring and understanding SaaS monetization models for AI features, including addons, usage-based, and hybrid pricing.
+description: Assists with configuring and understanding SaaS monetization models for AI features, including addons, usage-based, hybrid pricing, and unified credit pools.
 surface: prompt
 ---
 
@@ -36,3 +36,21 @@ LLM token usage is mapped to "credits" based on the provider/model configuration
   - **Delete config**: `{ action: "delete", entity_type, entity_id, scenario_id? }`
   - **List Catalog configurations**: `{ action: "list_catalog" }`
   - **List Scenario Overrides**: `{ action: "list_overrides" }`
+
+## 4. Unified Credit Pools (ADR 0010)
+Rather than charging separately for individual services, a scenario can employ a unified credit pool by setting `revenue_carrier` to `'pool'` and associating it with a pool tier via `pool_tier_id`.
+
+- **Billing Model**: A pool tier charges a flat monthly fee (`monthly_fee`) for a shared allocation of credits (`credit_pool_size`). Overage charges are computed per service according to its monetization configuration (with unspent credits acting as breakage/extra margin, without rollover).
+- **Service Burn Rates**: Each service drawing from the pool specifies a `burn_rate` (credits consumed per unit of activity: e.g. per interaction for agents, or per request for copilots).
+- **Integrity Rules**:
+  - All pool-participating services in a scenario must share the exact same `monetization_type` (e.g. all `addon`, all `usage`, or all `hybrid`).
+  - No service can use `'outcome'` based monetization within a pool scenario.
+  - Violation of these rules hard-blocks scenario calculation.
+- **Credit Valuation**: The value of a credit is computed as `max(token_cost_floor, capture * value_per_outcome)`.
+- **Fee & Overage Attribution**: The tier fee and overage revenues are split and attributed to the Copilot vs. Agent streams proportional to their lifetime Expected Value Capture (EVC) weights (`value_per_outcome * activity`), falling back to an even (50/50) split if weights are unset.
+- **Managing Pool Tiers**: Use the `pool_tier_action` tool:
+  - **List all tiers**: `{ action: "list" }`
+  - **Get specific tier**: `{ action: "get", id: "uuid" }`
+  - **Create a tier**: `{ action: "create", name: "Tier Name", monthly_fee: 100, credit_pool_size: 10000, capture: 0.1, burn_rates: [{ service_id: "uuid", burn_rate: 1.5 }] }`
+  - **Update a tier**: `{ action: "update", id: "uuid", ... }` (with replace semantics for `burn_rates`)
+  - **Delete a tier**: `{ action: "delete", id: "uuid", confirm: true }`

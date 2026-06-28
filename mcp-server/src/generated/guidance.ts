@@ -20,10 +20,11 @@ Sherpa is a local-first AI-feature ROI calculator for SaaS. It calculates Net Pr
 
 ## 3. Scenarios, Scopes, and Overrides
 - **Cascading Overrides**: Cohort configurations serve as the base. When calculating scenario projections, scenario-specific overrides from the \`scenario_scope_overrides\` table are applied on top of the cohort base using a three-level hierarchy: \`all_clients\` (global scenario overrides) → \`vertical\` (vertical scenario overrides) → \`cohort\` (specific cohort scenario overrides). The most specific override wins.
-- **Revenue Sources**: Scenarios support \`revenue_source\` (\`cohort\` | \`monetization\` | \`both\`):
-  - \`cohort\`: Standard SaaS subscription plans.
-  - \`monetization\`: Direct monetization models configured for services/packs/plans.
-  - \`both\`: Accumulates both SaaS subscription and direct monetization revenues.
+- **Revenue Carriers & Modeling (ADR 0001–0004)**: Exactly one entity type carries revenue in a scenario to prevent double-counting. Configured via:
+  - \`modeling_type\`: \`incremental\` (incremental benefits), \`gtm\` (Go-To-Market pricing), or \`appraisal\` (valuation).
+  - \`revenue_carrier\`: \`cohort\` (standard cohort ARPU uplift), \`plan\` (pricing plan subscriptions), \`pack\` (feature pack monetization), \`feature\` (individual service monetization), or \`pool\` (unified credit pool).
+  - \`revenue_bridge\`: Resolves plan seats coexisting with cohort modeling (e.g. \`upsell_on_cohort\` or \`separate_market\`).
+- **Credit Pools (ADR 0010)**: When \`revenue_carrier\` is set to \`'pool'\`, the scenario bills a flat monthly subscription tier fee (which covers a shared pool of usage credits) plus overage fees for both Copilot and Agent streams. All participating services must share the same monetization type (addon, usage, or hybrid) and outcome types are blocked.
 
 ## 4. Navigation & User Interface
 - **Dashboard Deep-Linking**: Use the \`dashboard_action\` tool to control the local web server and open the web browser to specific routes (e.g. \`/scenarios/{id}\`).
@@ -261,7 +262,7 @@ The \`revenue_source\` parameter changes what constitutes \`MRR_with_AI\`:
   },
   {
     name: "sherpa-monetization",
-    description: "Assists with configuring and understanding SaaS monetization models for AI features, including addons, usage-based, and hybrid pricing.",
+    description: "Assists with configuring and understanding SaaS monetization models for AI features, including addons, usage-based, hybrid pricing, and unified credit pools.",
     body: `# AI Feature Monetization Models
 
 Sherpa supports three primary monetization models to capture additional revenue from AI features, along with robust configuration inheritance and override rules.
@@ -293,7 +294,25 @@ LLM token usage is mapped to "credits" based on the provider/model configuration
   - **Set/Upsert config**: \`{ action: "set", entity_type, entity_id, scenario_id?, monetization_type, ... }\`
   - **Delete config**: \`{ action: "delete", entity_type, entity_id, scenario_id? }\`
   - **List Catalog configurations**: \`{ action: "list_catalog" }\`
-  - **List Scenario Overrides**: \`{ action: "list_overrides" }\``
+  - **List Scenario Overrides**: \`{ action: "list_overrides" }\`
+
+## 4. Unified Credit Pools (ADR 0010)
+Rather than charging separately for individual services, a scenario can employ a unified credit pool by setting \`revenue_carrier\` to \`'pool'\` and associating it with a pool tier via \`pool_tier_id\`.
+
+- **Billing Model**: A pool tier charges a flat monthly fee (\`monthly_fee\`) for a shared allocation of credits (\`credit_pool_size\`). Overage charges are computed per service according to its monetization configuration (with unspent credits acting as breakage/extra margin, without rollover).
+- **Service Burn Rates**: Each service drawing from the pool specifies a \`burn_rate\` (credits consumed per unit of activity: e.g. per interaction for agents, or per request for copilots).
+- **Integrity Rules**:
+  - All pool-participating services in a scenario must share the exact same \`monetization_type\` (e.g. all \`addon\`, all \`usage\`, or all \`hybrid\`).
+  - No service can use \`'outcome'\` based monetization within a pool scenario.
+  - Violation of these rules hard-blocks scenario calculation.
+- **Credit Valuation**: The value of a credit is computed as \`max(token_cost_floor, capture * value_per_outcome)\`.
+- **Fee & Overage Attribution**: The tier fee and overage revenues are split and attributed to the Copilot vs. Agent streams proportional to their lifetime Expected Value Capture (EVC) weights (\`value_per_outcome * activity\`), falling back to an even (50/50) split if weights are unset.
+- **Managing Pool Tiers**: Use the \`pool_tier_action\` tool:
+  - **List all tiers**: \`{ action: "list" }\`
+  - **Get specific tier**: \`{ action: "get", id: "uuid" }\`
+  - **Create a tier**: \`{ action: "create", name: "Tier Name", monthly_fee: 100, credit_pool_size: 10000, capture: 0.1, burn_rates: [{ service_id: "uuid", burn_rate: 1.5 }] }\`
+  - **Update a tier**: \`{ action: "update", id: "uuid", ... }\` (with replace semantics for \`burn_rates\`)
+  - **Delete a tier**: \`{ action: "delete", id: "uuid", confirm: true }\``
   },
   {
     name: "sherpa-scenario-comparator",
@@ -329,7 +348,7 @@ The web dashboard displays interactive charts, monthly cash flow tables, and com
   },
   {
     name: "sherpa-scenario-manager",
-    description: "Provides context for creating, configuring, and updating SaaS ROI scenarios, including scopes, override cascades, and revenue source models.",
+    description: "Provides context for creating, configuring, and updating SaaS ROI scenarios, including scopes, override cascades, modeling types, revenue carriers, and credit pools.",
     body: `# Sherpa Scenario Manager
 
 Configure and manage ROI scenarios by tying together customer cohorts, fixed costs, pricing plans, and AI services.
@@ -351,11 +370,27 @@ Note: Global defaults (\`client_base\` table) and vertical market defaults only 
 
 ---
 
-## 2. Revenue Sources
-The \`revenue_source\` parameter determines which revenue streams are accumulated in the cashflow projections:
-- **\`cohort\`**: Only standard subscription revenue from pricing plans.
-- **\`monetization\`**: Only monetization revenue (addons, prepaid credits, pay-as-you-go credit overcharges) defined for services, packs, and plans.
-- **\`both\`**: Sum of plan subscriptions and monetization overcharges.
+## 2. Modeling Type, Revenue Carriers & Credit Pools (ADR 0001–0004, ADR 0009–0010)
+
+To prevent double-counting of benefits, exactly one entity level or billing model carries revenue in any given scenario:
+- **\`modeling_type\`**:
+  - \`incremental\`: Default. Calculates counterfactual differences between With-AI and Without-AI baselines.
+  - \`gtm\`: Calculates absolute Go-To-Market subscription/monetization flows.
+  - \`appraisal\`: Valuates specific AI capabilities in isolation.
+- **\`revenue_carrier\`**:
+  - \`cohort\`: Revenue is modeled via cohort ARPU uplifts and subscription expansion.
+  - \`plan\`: Revenue is modeled via seats multiplied by pricing plan base prices.
+  - \`pack\`: Revenue is modeled via attached feature pack monetization configs.
+  - \`feature\`: Revenue is modeled via attached service-level monetization configs.
+  - \`pool\`: Revenue is modeled via a unified credit pool tier fee (ADR 0010).
+- **\`revenue_bridge\`**:
+  - \`upsell_on_cohort\`: Seats are informational only; revenue comes from the cohort.
+  - \`separate_market\`: Plan seats add subscription revenue on top of cohort modeling.
+
+### Credit Pools & Integrity Rules (ADR 0010)
+- Setting \`revenue_carrier\` to \`'pool'\` requires linking a pool tier via \`pool_tier_id\`.
+- The pool tier bills a flat monthly subscription fee covering a shared bundle of usage credits.
+- All services drawing from the pool must share the same \`monetization_type\` (e.g., all \`addon\`, all \`usage\`, or all \`hybrid\`) and cannot use \`'outcome'\` based monetization. Violation of this rule blocks scenario calculation.
 
 ---
 
@@ -372,7 +407,11 @@ The \`revenue_source\` parameter determines which revenue streams are accumulate
   - \`description\` (string)
   - \`projection_months\` (number, default: 36, max 120)
   - \`discount_rate\` (number, annual discount rate, default: 0.10)
-  - \`revenue_source\` (enum: \`"cohort"\`, \`"monetization"\`, \`"both"\`, default: \`"cohort"\`)
+  - \`capex_contingency_pct\` (number, contingency multiplier, default: 0.0)
+  - \`modeling_type\` (enum: \`"incremental"\`, \`"gtm"\`, \`"appraisal"\`, default: \`"incremental"\`)
+  - \`revenue_carrier\` (enum: \`"cohort"\`, \`"plan"\`, \`"pack"\`, \`"feature"\`, \`"pool"\`, default: \`"cohort"\`)
+  - \`revenue_bridge\` (enum: \`"upsell_on_cohort"\`, \`"separate_market"\`, default: \`"upsell_on_cohort"\`)
+  - \`pool_tier_id\` (string, UUID of credit-pool tier, required when \`revenue_carrier\` is \`"pool"\`)
   - \`cohort_config\` (object, optional if \`cohort_ids\` is specified):
     - \`name\`, \`current_users\`, \`monthly_acquisition\` (required)
     - \`acquisition_growth_rate\`, \`monthly_churn_rate\`, \`retention_floor\`, \`monthly_expansion_rate\`, \`ai_adoption_rate\`, \`base_arpu\`, \`arpu_uplift\`, \`arpu_uplift_percent\`, \`churn_reduction\`, \`acquisition_uplift\`
@@ -380,18 +419,18 @@ The \`revenue_source\` parameter determines which revenue streams are accumulate
   - \`cohort_ids\` (array of strings, existing cohort configuration UUIDs)
   - \`services\` (array of objects: \`[{ id: string, rollout_month?: number }]\`)
   - \`packs\` (array of objects: \`[{ id: string, rollout_month?: number }]\`)
-  - \`plans\` (array of objects: \`[{ id: string, rollout_month?: number }]\`)
+  - \`plans\` (array of objects: \`[{ id: string, rollout_month?: number, seats?: number }]\`)
   - \`cost_ids\` (array of strings, Capex/Opex cost UUIDs)
 
 ### 3. Scenario Update (\`action: "update"\`)
 - Use this to change \`scope_type\` to \`'verticals'\` or \`'all_clients'\`, link different cohorts/plans, or modify scenario metrics.
 - **Arguments**:
   - \`id\` (string, required)
-  - \`name\`, \`description\`, \`projection_months\`, \`discount_rate\`, \`scope_type\`, \`revenue_source\`
+  - \`name\`, \`description\`, \`projection_months\`, \`discount_rate\`, \`capex_contingency_pct\`, \`scope_type\`, \`modeling_type\`, \`revenue_carrier\`, \`revenue_bridge\`, \`pool_tier_id\`
   - \`cohort_ids\` (array of existing cohort configuration UUIDs)
   - \`services\` (array of \`[{ id, rollout_month }]\`)
   - \`packs\` (array of \`[{ id, rollout_month }]\`)
-  - \`plans\` (array of \`[{ id, rollout_month }]\`)
+  - \`plans\` (array of \`[{ id, rollout_month, seats }]\`)
   - \`cost_ids\` (array of cost UUIDs)
 - **Replace semantics (important)**: On \`update\`, each of \`cohort_ids\`, \`services\`, \`packs\`, \`plans\`, and \`cost_ids\` **replaces the scenario's entire existing set** for that key — it does not append. Omit a key to leave that set unchanged; pass \`[]\` to clear it. To add one item to a scenario that already has some, first fetch the current list via \`action: "get"\` and pass the full set you want to keep, otherwise the others are silently dropped. The \`update\` response echoes the resulting linked cohorts and costs so you can confirm the final set.
 
@@ -405,7 +444,10 @@ The \`revenue_source\` parameter determines which revenue streams are accumulate
   - Setting or deleting overrides automatically invalidates the scenario's results cache.
 - **Varying Shared Catalog Entities Per Scenario**: To vary a **service's** token usage / fixed cost, a **cost item's** amount or frequency, a **provider's** token prices, or a **plan's** base price for ONE scenario only, use the **\`entity_override_action\`** tool — do NOT clone the catalog entity.
   - \`entity_override_action\` supports \`list\`, \`get\`, \`set\` (upsert), \`delete\`; required params \`scenario_id\`, \`entity_type\` (\`service\`|\`cost\`|\`provider\`|\`plan\`), \`entity_id\`, plus the type-specific override fields (service: \`avg_input_tokens\`/\`avg_output_tokens\`/\`avg_requests_per_user_month\`/\`fixed_cost_per_month\`; cost: \`amount\`/\`frequency\`; provider: \`input_price\`/\`output_price\`; plan: \`base_price\`).
-  - Setting or deleting an override invalidates the scenario's results cache. A plan's \`base_price\` only affects revenue when \`revenue_source\` is \`monetization\` or \`both\` and the plan was attached with \`seats\` > 0.
+  - Setting or deleting an override invalidates the scenario's results cache. A plan's \`base_price\` only affects revenue when \`revenue_carrier\` is \`plan\` and the plan was attached with \`seats\` > 0.
+- **Managing Credit Pools (\`pool_tier_action\`)**: If the scenario uses a credit pool (\`revenue_carrier: "pool"\`), you must manage the pool tiers via the **\`pool_tier_action\`** tool.
+  - \`pool_tier_action\` supports \`list\`, \`get\`, \`create\`, \`update\`, and \`delete\`.
+  - Arguments include \`name\`, \`monthly_fee\`, \`credit_pool_size\`, \`capture\` (percentage value capture), and \`burn_rates\` (an array of \`{ service_id, burn_rate }\`).
 - **General Costs**: If a cost is general and shared across scenarios, ensure its \`service_id\` is set to \`null\` (or omitted). \`service_id\` is merely a grouping tag and does not restrict linking.`
   }
 ];

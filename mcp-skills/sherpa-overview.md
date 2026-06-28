@@ -24,10 +24,11 @@ Sherpa is a local-first AI-feature ROI calculator for SaaS. It calculates Net Pr
 
 ## 3. Scenarios, Scopes, and Overrides
 - **Cascading Overrides**: Cohort configurations serve as the base. When calculating scenario projections, scenario-specific overrides from the `scenario_scope_overrides` table are applied on top of the cohort base using a three-level hierarchy: `all_clients` (global scenario overrides) → `vertical` (vertical scenario overrides) → `cohort` (specific cohort scenario overrides). The most specific override wins.
-- **Revenue Sources**: Scenarios support `revenue_source` (`cohort` | `monetization` | `both`):
-  - `cohort`: Standard SaaS subscription plans.
-  - `monetization`: Direct monetization models configured for services/packs/plans.
-  - `both`: Accumulates both SaaS subscription and direct monetization revenues.
+- **Revenue Carriers & Modeling (ADR 0001–0004)**: Exactly one entity type carries revenue in a scenario to prevent double-counting. Configured via:
+  - `modeling_type`: `incremental` (incremental benefits), `gtm` (Go-To-Market pricing), or `appraisal` (valuation).
+  - `revenue_carrier`: `cohort` (standard cohort ARPU uplift), `plan` (pricing plan subscriptions), `pack` (feature pack monetization), `feature` (individual service monetization), or `pool` (unified credit pool).
+  - `revenue_bridge`: Resolves plan seats coexisting with cohort modeling (e.g. `upsell_on_cohort` or `separate_market`).
+- **Credit Pools (ADR 0010)**: When `revenue_carrier` is set to `'pool'`, the scenario bills a flat monthly subscription tier fee (which covers a shared pool of usage credits) plus overage fees for both Copilot and Agent streams. All participating services must share the same monetization type (addon, usage, or hybrid) and outcome types are blocked.
 
 ## 4. Navigation & User Interface
 - **Dashboard Deep-Linking**: Use the `dashboard_action` tool to control the local web server and open the web browser to specific routes (e.g. `/scenarios/{id}`).
