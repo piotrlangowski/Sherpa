@@ -11,6 +11,7 @@ import { settingsRepository } from '$lib/server/repositories/settings';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
 import { monetizationRepository } from '$lib/server/repositories/monetization';
 import { entityOverridesRepository } from '$lib/server/repositories/entity-overrides';
+import { poolTiersRepository } from '$lib/server/repositories/pool-tiers';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
 import { validateRevenueIntegrity } from '$lib/shared/financial-math';
 import { error, fail, redirect } from '@sveltejs/kit';
@@ -30,6 +31,7 @@ export const load: PageServerLoad = async ({ params }) => {
   const costs = costsRepository.getAll();
   const providers = providersRepository.getAll();
   const settings = settingsRepository.get();
+  const poolTiers = poolTiersRepository.getAll();
 
   // Monetization: catalog configs (all) + this scenario's overrides, keyed `${type}:${id}`.
   const monetizationCatalog = Object.fromEntries(monetizationRepository.getCatalogMap());
@@ -51,6 +53,7 @@ export const load: PageServerLoad = async ({ params }) => {
     costs,
     providers,
     settings,
+    poolTiers,
     monetizationCatalog,
     monetizationOverrides,
     entityOverrides
@@ -70,6 +73,7 @@ export const actions: Actions = {
     const modelingType = (formData.get('modelingType') as string) || 'appraisal';
     const revenueCarrier = (formData.get('revenueCarrier') as string) || null;
     const revenueBridge = (formData.get('revenueBridge') as string) || null;
+    const pool_tier_id = (formData.get('pool_tier_id') as string) || null;
 
     // S-curve Expansion (Phase 3)
     const expansion_vertical_id = (formData.get('expansion_vertical_id') as string) || null;
@@ -154,6 +158,7 @@ export const actions: Actions = {
       modeling_type: modelingType as any,
       revenue_carrier: revenueCarrier as any,
       revenue_bridge: revenueBridge as any,
+      pool_tier_id,
       plans,
       services,
       scope_cohorts
@@ -175,6 +180,7 @@ export const actions: Actions = {
         modeling_type: modelingType as any,
         revenue_carrier: revenueCarrier as any,
         revenue_bridge: revenueBridge as any,
+        pool_tier_id,
         vertical_ids: verticalIds,
         cohort_config_ids: cohortConfigIds,
         scope_overrides: scopeOverrides,

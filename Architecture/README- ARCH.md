@@ -14,6 +14,8 @@ Format: Michael Nygard (kontekst / decyzja / status / konsekwencje).
 | [0006](0006-sprzezenie-surplus-adopcja.md) | Sprzężenie surplus → adopcja: jawna elastyczność, adopcja-only v1, krzywa NPV(capture) zamiast magicznej liczby | Proponowany |
 | [0007](0007-cena-z-evc-per-nosnik.md) | Wyprowadzenie ceny z EVC per nośnik: subscription-like back-solve; usage=benchmark; outcome/hybrid odłożone | Proponowany |
 | [0008](0008-jedna-waluta-bazowa.md) | Inwariant jednej waluty: czysty silnik=baza, konwersja na granicy, koniec z hardcoded `$` | Proponowany |
+| [0009](0009-strumienie-przychodu-per-archetyp.md) | Strumienie przychodu per archetyp: copilot (seat) + agent (interakcja) jako rozłączne strumienie; cena ≠ labor‑savings; blended margin per strumień | Proponowany |
+| [0010](0010-portfel-kredytow.md) | Wspólny portfel kredytów (Podejście B): tier→pula→konwersja; kredyt hybrydowy (floor kosztowy + narzut wartości); przychód jak subskrypcja (breakage); atrybucja per strumień wg EVC; zakaz mieszania billing modeli | Proponowany |
 
 ## Skrót koncepcji
 

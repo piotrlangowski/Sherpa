@@ -24,6 +24,7 @@
   import TrendingUp from '@lucide/svelte/icons/trending-up';
   import Edit2 from '@lucide/svelte/icons/edit-2';
   import DollarSign from '@lucide/svelte/icons/dollar-sign';
+  import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
   import ExportButton from '$lib/components/dashboard/ExportButton.svelte';
   import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
 
@@ -38,6 +39,22 @@
   const resolvedConfigs = $derived(data.resolvedConfigs || []);
 
   const diagnostics = $derived(data.diagnostics ?? []);
+
+  // ADR 0009 — per-archetype stream economics (mix signal)
+  const driverProfile = $derived(data.driverProfile);
+  const streamMargins = $derived(data.streamMargins);
+  // ADR 0010 — credit pool (tier fee, breakage, EVC-based stream attribution)
+  const poolEconomics = $derived(data.poolEconomics);
+  const streamTotals = $derived.by(() => {
+    const tl = timeline ?? [];
+    return tl.reduce((acc: any, m: any) => {
+      acc.copilotRevenue += m.copilotRevenue ?? 0;
+      acc.copilotCogs += m.copilotCogs ?? 0;
+      acc.agentRevenue += m.agentRevenue ?? 0;
+      acc.agentCogs += m.agentCogs ?? 0;
+      return acc;
+    }, { copilotRevenue: 0, copilotCogs: 0, agentRevenue: 0, agentCogs: 0 });
+  });
 
   const hasUplifts = $derived(
     (resolvedConfigs ?? []).some((c: any) =>
@@ -59,15 +76,23 @@
   });
 
   // Chart state
-  let activeTab = $state<'cashflow' | 'cumulative' | 'users' | 'value_split'>('cashflow');
+  let activeTab = $state<'cashflow' | 'cumulative' | 'users' | 'value_split' | 'pricing_corridor' | 'margin_waterfall'>('cashflow');
   let chartElement: HTMLDivElement | undefined = $state();
   let valuePieElement: HTMLDivElement | undefined = $state();
   let captureCurveElement: HTMLDivElement | undefined = $state();
+  let pricingCorridorElement: HTMLDivElement | undefined = $state();
+  let marginWaterfallElement: HTMLDivElement | undefined = $state();
+  
   let chartInstance: any = null;
   let valuePieInstance: any = null;
   let captureCurveInstance: any = null;
+  let pricingCorridorInstance: any = null;
+  let marginWaterfallInstance: any = null;
+  
   let resizeListener: (() => void) | null = null;
   let splitResizeListener: (() => void) | null = null;
+  let corridorResizeListener: (() => void) | null = null;
+  let waterfallResizeListener: (() => void) | null = null;
   let isMounted = false;
   let isExplainerOpen = $state(false);
 
@@ -84,6 +109,14 @@
       captureCurveInstance.dispose();
       captureCurveInstance = null;
     }
+    if (pricingCorridorInstance) {
+      pricingCorridorInstance.dispose();
+      pricingCorridorInstance = null;
+    }
+    if (marginWaterfallInstance) {
+      marginWaterfallInstance.dispose();
+      marginWaterfallInstance = null;
+    }
     if (resizeListener) {
       window.removeEventListener('resize', resizeListener);
       resizeListener = null;
@@ -91,6 +124,14 @@
     if (splitResizeListener) {
       window.removeEventListener('resize', splitResizeListener);
       splitResizeListener = null;
+    }
+    if (corridorResizeListener) {
+      window.removeEventListener('resize', corridorResizeListener);
+      corridorResizeListener = null;
+    }
+    if (waterfallResizeListener) {
+      window.removeEventListener('resize', waterfallResizeListener);
+      waterfallResizeListener = null;
     }
   }
 
@@ -673,6 +714,333 @@
     });
   }
 
+  function renderCorridorChart(currentRunId: number) {
+    if (!pricingCorridorElement) return;
+
+    tick().then(() => {
+      if (currentRunId !== activeEffectId) return;
+      import('echarts').then((echarts) => {
+        if (currentRunId !== activeEffectId) return;
+        if (!isMounted || activeTab !== 'pricing_corridor' || !pricingCorridorElement) return;
+
+        const isDark = mode.current === 'dark';
+        const textColor = isDark ? '#cbd5e1' : '#475569';
+        const axisColor = isDark ? '#94a3b8' : '#64748b';
+        const lineColor = isDark ? '#475569' : '#e2e8f0';
+        const splitLineColor = isDark ? 'rgba(71, 85, 105, 0.2)' : 'rgba(226, 232, 240, 0.6)';
+        const tooltipBg = isDark ? '#1e293b' : '#ffffff';
+        const tooltipBorder = isDark ? '#475569' : '#e2e8f0';
+        const tooltipText = isDark ? '#f8fafc' : '#0f172a';
+
+        const corridor = data.pricingCorridor;
+        if (!corridor) return;
+        const points = corridor.points;
+
+        const xAxisData = points.map((p: any, index: number) => {
+          if (points.length === 1) {
+            return `${p.cohortName}\n(Single Profile)`;
+          }
+          if (index === 0) {
+            return `Light: ${p.cohortName}`;
+          }
+          if (index === points.length - 1) {
+            return `Heavy: ${p.cohortName}`;
+          }
+          return p.cohortName;
+        });
+
+        // Conceptual ladder (mirrors the reference diagrams): fixed semantic tiers top->bottom
+        // — Ceiling (EVC) / Realized Price / Target Floor / COGS Floor. The tier (y) encodes
+        // role; each rung's actual € value is its label, so values never collide. Not to scale:
+        // a break (COGS > Price) is annotated rather than drawn by inverting the order.
+        const tierNames: Record<number, string> = {
+          4: 'Ceiling (EVC)',
+          3: 'Realized Price',
+          2: 'Target Floor',
+          1: 'COGS Floor'
+        };
+        const realized = corridor.actualPrice;
+
+        const rungData = points.flatMap((p: any, i: number) => {
+          const realizedColor = p.status === 'loss' ? '#f43f5e' : (p.status === 'over_ceiling' ? '#f59e0b' : '#3b82f6');
+          const cogsColor = p.status === 'loss' ? '#f43f5e' : '#94a3b8';
+          return [
+            { value: [i, 4], _ci: i, itemStyle: { color: '#64748b' }, _lbl: formatCurrency(p.ceiling, appState.currency, 0) },
+            { value: [i, 3], _ci: i, itemStyle: { color: realizedColor }, _lbl: formatCurrency(realized, appState.currency, 0) },
+            { value: [i, 2], _ci: i, itemStyle: { color: '#f59e0b' }, _lbl: formatCurrency(p.floorTarget, appState.currency, 0) },
+            { value: [i, 1], _ci: i, itemStyle: { color: cogsColor }, _lbl: formatCurrency(p.cogs, appState.currency, 0) }
+          ];
+        });
+
+        const breakMarks = points.flatMap((p: any, i: number) =>
+          p.status === 'loss'
+            ? [{ coord: [i, 2.5], itemStyle: { color: '#f43f5e' }, label: { show: true, formatter: '⚠ COGS > PRICE', color: '#fff', fontSize: 9, fontWeight: 'bold' } }]
+            : []
+        );
+
+        const corridorOption = {
+          title: {
+            text: 'Pricing Corridor: COGS Floor → Price → EVC Ceiling',
+            subtext: 'Conceptual ladder — rungs ordered by role (not to scale); € values shown per rung',
+            left: 'center',
+            textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' },
+            subtextStyle: { color: axisColor, fontSize: 9 }
+          },
+          tooltip: {
+            trigger: 'item',
+            backgroundColor: tooltipBg,
+            borderColor: tooltipBorder,
+            borderWidth: 1,
+            textStyle: { color: tooltipText },
+            formatter: (params: any) => {
+              const pt = points[params.data?._ci ?? 0];
+              if (!pt) return '';
+              const gap = pt.ceiling - realized;
+              return `
+                <div style="font-weight: bold; margin-bottom: 4px;">${pt.cohortName}</div>
+                Adoption Rate: <b>${Math.round(pt.adoptionRate * 100)}%</b><br/>
+                Gross Margin Target: <b>${Math.round(pt.grossMargin * 100)}%</b><br/>
+                <span style="color:#64748b">Ceiling (EVC):</span> <b>${formatCurrency(pt.ceiling, appState.currency, 2)}/mo</b><br/>
+                <span style="color:#3b82f6">Realized Price:</span> <b>${formatCurrency(realized, appState.currency, 2)}/mo</b><br/>
+                <span style="color:#f59e0b">Target Floor:</span> <b>${formatCurrency(pt.floorTarget, appState.currency, 2)}/mo</b><br/>
+                <span style="color:#94a3b8">COGS Floor:</span> <b>${formatCurrency(pt.cogs, appState.currency, 2)}/mo</b><br/>
+                Value headroom: <b>${formatCurrency(gap, appState.currency, 0)}/mo</b><br/>
+                Status: <span style="font-weight: bold; color: ${pt.status === 'loss' ? '#f43f5e' : (pt.status === 'healthy' ? '#10b981' : '#f59e0b')};">${pt.status.toUpperCase().replace('_', ' ')}</span>
+              `;
+            }
+          },
+          grid: { left: '3%', right: '8%', top: '24%', bottom: '12%', containLabel: true },
+          xAxis: {
+            type: 'category',
+            data: xAxisData,
+            axisLabel: { color: axisColor, fontSize: 9 },
+            axisLine: { lineStyle: { color: lineColor } }
+          },
+          yAxis: {
+            type: 'value',
+            min: 0.5,
+            max: 4.5,
+            interval: 1,
+            axisLabel: { color: axisColor, fontSize: 10, formatter: (v: number) => tierNames[v] ?? '' },
+            axisTick: { show: false },
+            axisLine: { show: false },
+            splitLine: { lineStyle: { color: splitLineColor, type: 'dashed' } }
+          },
+          series: [
+            {
+              name: 'Rungs',
+              type: 'scatter',
+              symbol: 'rect',
+              symbolSize: [54, 8],
+              data: rungData,
+              label: {
+                show: true,
+                position: 'top',
+                formatter: (params: any) => params.data?._lbl ?? '',
+                color: textColor,
+                fontSize: 9,
+                fontWeight: 'bold'
+              },
+              markArea: {
+                silent: true,
+                itemStyle: { color: isDark ? 'rgba(16,185,129,0.08)' : 'rgba(16,185,129,0.10)' },
+                data: [[{ yAxis: 2 }, { yAxis: 4 }]]
+              },
+              markLine: {
+                silent: true,
+                symbol: ['none', 'none'],
+                lineStyle: { color: axisColor, width: 1, opacity: 0.25 },
+                label: { show: false },
+                data: points.map((_p: any, i: number) => [{ coord: [i, 1] }, { coord: [i, 4] }])
+              },
+              markPoint: {
+                symbol: 'pin',
+                symbolSize: 46,
+                data: breakMarks
+              }
+            }
+          ]
+        };
+
+        if (pricingCorridorInstance) {
+          pricingCorridorInstance.setOption(corridorOption, true);
+        } else {
+          pricingCorridorInstance = echarts.init(pricingCorridorElement);
+          pricingCorridorInstance.setOption(corridorOption, true);
+        }
+
+        if (!corridorResizeListener) {
+          corridorResizeListener = () => {
+            pricingCorridorInstance?.resize();
+          };
+          window.addEventListener('resize', corridorResizeListener);
+        }
+      });
+    });
+  }
+
+  function renderWaterfallChart(currentRunId: number) {
+    if (!marginWaterfallElement) return;
+
+    tick().then(() => {
+      if (currentRunId !== activeEffectId) return;
+      import('echarts').then((echarts) => {
+        if (currentRunId !== activeEffectId) return;
+        if (!isMounted || activeTab !== 'margin_waterfall' || !marginWaterfallElement) return;
+
+        const isDark = mode.current === 'dark';
+        const textColor = isDark ? '#cbd5e1' : '#475569';
+        const axisColor = isDark ? '#94a3b8' : '#64748b';
+        const lineColor = isDark ? '#475569' : '#e2e8f0';
+        const splitLineColor = isDark ? 'rgba(71, 85, 105, 0.2)' : 'rgba(226, 232, 240, 0.6)';
+        const tooltipBg = isDark ? '#1e293b' : '#ffffff';
+        const tooltipBorder = isDark ? '#475569' : '#e2e8f0';
+        const tooltipText = isDark ? '#f8fafc' : '#0f172a';
+
+        const waterfall = data.pocketMarginWaterfall;
+        if (!waterfall) return;
+        const steps = waterfall.steps;
+
+        const helperData: number[] = [];
+        const visibleData: number[] = [];
+        let accumulated = 0;
+
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+          if (step.type === 'base' || step.type === 'total') {
+            helperData.push(0);
+            visibleData.push(step.value);
+            accumulated = step.value;
+          } else if (step.type === 'delta') {
+            const nextAccumulated = accumulated + step.value;
+            helperData.push(Math.min(accumulated, nextAccumulated));
+            visibleData.push(Math.abs(step.value));
+            accumulated = nextAccumulated;
+          }
+        }
+
+        const colors = [
+          '#64748b', // EVC: Slate
+          '#3b82f6', // Customer Surplus: Blue
+          '#0284c7', // Target Price: Sky Blue
+          '#f43f5e', // AI COGS: Rose
+          '#f59e0b', // Cost-to-Serve: Amber
+          '#10b981'  // Pocket Margin: Emerald
+        ];
+
+        const visibleDataColored = (steps as any).map((step: any, idx: number) => ({
+          value: visibleData[idx],
+          itemStyle: { color: colors[idx] }
+        }));
+
+        const waterfallOption = {
+          title: {
+            text: 'Pocket-Margin Waterfall (per Customer/Month)',
+            left: 'center',
+            textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' }
+          },
+          tooltip: {
+            trigger: 'axis',
+            backgroundColor: tooltipBg,
+            borderColor: tooltipBorder,
+            borderWidth: 1,
+            textStyle: { color: tooltipText },
+            formatter: (params: any) => {
+              const barParam = params.find((p: any) => p.seriesName === 'Waterfall');
+              if (!barParam) return '';
+              const idx = barParam.dataIndex;
+              const step = steps[idx];
+              const absVal = Math.abs(step.value);
+              const sign = step.value < 0 ? '-' : '';
+              return `
+                <div style="font-weight: bold; margin-bottom: 4px;">${step.name}</div>
+                Value: <b>${sign}${formatCurrency(absVal, appState.currency, 2)}/mo</b>
+              `;
+            }
+          },
+          grid: { left: '3%', right: '4%', top: '20%', bottom: '15%', containLabel: true },
+          xAxis: {
+            type: 'category',
+            data: (steps as any).map((s: any) => s.name.replace('Economic Value to Customer (EVC)', 'EVC')),
+            axisLabel: { color: axisColor, fontSize: 9, rotate: 15 },
+            axisLine: { lineStyle: { color: lineColor } }
+          },
+          yAxis: {
+            type: 'value',
+            axisLabel: {
+              color: axisColor,
+              fontSize: 9,
+              formatter: (value: number) => formatCurrency(value, appState.currency, 0)
+            },
+            axisLine: { lineStyle: { color: lineColor } },
+            splitLine: { lineStyle: { color: splitLineColor } }
+          },
+          series: [
+            {
+              name: 'Placeholder',
+              type: 'bar',
+              stack: 'all',
+              itemStyle: { color: 'rgba(0,0,0,0)' },
+              emphasis: { itemStyle: { color: 'rgba(0,0,0,0)' } },
+              data: helperData
+            },
+            {
+              name: 'Waterfall',
+              type: 'bar',
+              stack: 'all',
+              data: visibleDataColored,
+              label: {
+                show: true,
+                position: 'inside',
+                formatter: (params: any) => {
+                  const val = steps[params.dataIndex].value;
+                  return formatCurrency(val, appState.currency, 0);
+                },
+                fontSize: 9,
+                fontWeight: 'bold',
+                color: '#ffffff'
+              }
+            },
+            {
+              name: 'Realized Price',
+              type: 'scatter',
+              symbol: 'diamond',
+              symbolSize: 12,
+              itemStyle: { color: '#2563eb', borderColor: '#ffffff', borderWidth: 2 },
+              data: [
+                {
+                  value: [2, waterfall.actualPrice],
+                  label: {
+                    show: Math.abs(waterfall.actualPrice - waterfall.steps[2].value) > 0.01,
+                    position: 'right',
+                    formatter: `Realized: ${formatCurrency(waterfall.actualPrice, appState.currency, 0)}`,
+                    color: textColor,
+                    fontSize: 9,
+                    fontWeight: 'bold'
+                  }
+                }
+              ]
+            }
+          ]
+        };
+
+        if (marginWaterfallInstance) {
+          marginWaterfallInstance.setOption(waterfallOption, true);
+        } else {
+          marginWaterfallInstance = echarts.init(marginWaterfallElement);
+          marginWaterfallInstance.setOption(waterfallOption, true);
+        }
+
+        if (!waterfallResizeListener) {
+          waterfallResizeListener = () => {
+            marginWaterfallInstance?.resize();
+          };
+          window.addEventListener('resize', waterfallResizeListener);
+        }
+      });
+    });
+  }
+
   function renderChart(currentRunId: number) {
     if (!chartElement) return;
 
@@ -710,6 +1078,12 @@
     if (activeTab === 'value_split') {
       cleanupChart();
       renderSplitCharts(currentRunId);
+    } else if (activeTab === 'pricing_corridor') {
+      cleanupChart();
+      renderCorridorChart(currentRunId);
+    } else if (activeTab === 'margin_waterfall') {
+      cleanupChart();
+      renderWaterfallChart(currentRunId);
     } else if (activeTab || timeline || mode.current) {
       cleanupChart();
       renderChart(currentRunId);
@@ -933,6 +1307,109 @@
         </Card>
       </div>
 
+      <!-- Two-stream economics (ADR 0009) — only shown when the scenario mixes copilot + agent services -->
+      {#if driverProfile === 'mixed' && streamMargins}
+        <Card class="glass border p-4 space-y-3">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div class="flex items-center space-x-2 text-primary font-semibold text-sm select-none">
+              <BrainCircuit class="h-4 w-4" />
+              <span>Two-Stream Economics</span>
+            </div>
+            <span class="text-[10px] text-muted-foreground uppercase tracking-wider">Blended margin: <span class="font-bold text-foreground">{formatPercent(streamMargins.blended)}</span></span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- Copilot stream -->
+            <div class="p-3 rounded-lg border border-border/50 bg-muted/20 space-y-1.5">
+              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Copilot Stream (seat)</span>
+              <div class="flex items-baseline justify-between">
+                <span class="text-xs text-muted-foreground">Outcome revenue</span>
+                <span class="text-sm font-bold font-mono">{formatCurrency(streamTotals.copilotRevenue, appState.currency, 0)}</span>
+              </div>
+              <div class="flex items-baseline justify-between">
+                <span class="text-xs text-muted-foreground">COGS</span>
+                <span class="text-sm font-mono">{formatCurrency(streamTotals.copilotCogs, appState.currency, 0)}</span>
+              </div>
+              <div class="flex items-baseline justify-between pt-1.5 border-t border-border/40">
+                <span class="text-xs text-muted-foreground">Margin vs. threshold</span>
+                {#if streamMargins.copilot === null}
+                  <span class="text-xs text-muted-foreground">n/a</span>
+                {:else}
+                  <span class="text-sm font-bold {streamMargins.copilot >= streamMargins.copilotThreshold ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-500'}">
+                    {formatPercent(streamMargins.copilot)} <span class="text-muted-foreground font-normal">/ {formatPercent(streamMargins.copilotThreshold)}</span>
+                  </span>
+                {/if}
+              </div>
+            </div>
+            <!-- Agent stream -->
+            <div class="p-3 rounded-lg border border-border/50 bg-muted/20 space-y-1.5">
+              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Agent Stream (interaction)</span>
+              <div class="flex items-baseline justify-between">
+                <span class="text-xs text-muted-foreground">Revenue + labor savings</span>
+                <span class="text-sm font-bold font-mono">{formatCurrency(streamTotals.agentRevenue, appState.currency, 0)}</span>
+              </div>
+              <div class="flex items-baseline justify-between">
+                <span class="text-xs text-muted-foreground">COGS</span>
+                <span class="text-sm font-mono">{formatCurrency(streamTotals.agentCogs, appState.currency, 0)}</span>
+              </div>
+              <div class="flex items-baseline justify-between pt-1.5 border-t border-border/40">
+                <span class="text-xs text-muted-foreground">Margin vs. threshold</span>
+                {#if streamMargins.agent === null}
+                  <span class="text-xs text-muted-foreground">n/a</span>
+                {:else}
+                  <span class="text-sm font-bold {streamMargins.agent >= streamMargins.agentThreshold ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-500'}">
+                    {formatPercent(streamMargins.agent)} <span class="text-muted-foreground font-normal">/ {formatPercent(streamMargins.agentThreshold)}</span>
+                  </span>
+                {/if}
+              </div>
+            </div>
+          </div>
+          {#if (streamMargins.copilot !== null && streamMargins.copilot < streamMargins.copilotThreshold) || (streamMargins.agent !== null && streamMargins.agent < streamMargins.agentThreshold)}
+            <div class="flex items-start space-x-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-500/5 border border-amber-500/20 rounded-md p-2">
+              <AlertTriangle class="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>One or more streams are below their soft margin threshold — informational only, this does not block saving.</span>
+            </div>
+          {/if}
+        </Card>
+      {/if}
+
+      <!-- Credit pool (ADR 0010) — tier MRR, breakage, EVC-based stream attribution -->
+      {#if poolEconomics}
+        <Card class="glass border p-4 space-y-3">
+          <div class="flex items-center space-x-2 text-primary font-semibold text-sm select-none">
+            <Wallet class="h-4 w-4" />
+            <span>Credit Pool</span>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div>
+              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Tier Fee (MRR)</span>
+              <span class="text-sm font-bold font-mono block mt-0.5">{formatCurrency(poolEconomics.tierMonthlyFee, appState.currency, 0)}</span>
+            </div>
+            <div>
+              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Pool Size (per mo.)</span>
+              <span class="text-sm font-bold font-mono block mt-0.5">{poolEconomics.poolSize.toLocaleString()} credits</span>
+            </div>
+            <div>
+              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Consumed (lifetime)</span>
+              <span class="text-sm font-bold font-mono block mt-0.5">{poolEconomics.totalConsumedCredits.toLocaleString()} credits</span>
+            </div>
+            <div>
+              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Overage Revenue (lifetime)</span>
+              <span class="text-sm font-bold font-mono block mt-0.5">{formatCurrency(poolEconomics.totalOverageRevenue, appState.currency, 0)}</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between pt-2 border-t border-border/40 text-xs">
+            <span class="text-muted-foreground">
+              Breakage, lifetime (memo): <span class="font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(poolEconomics.totalBreakage, appState.currency, 0)}</span>
+            </span>
+            <span class="text-muted-foreground">
+              Attribution ({poolEconomics.attribution.method === 'evc' ? 'by EVC' : 'even split — no value_per_outcome set'}):
+              <span class="font-bold text-foreground">copilot {(poolEconomics.attribution.copilotShare * 100).toFixed(0)}%</span> /
+              <span class="font-bold text-foreground">agent {(poolEconomics.attribution.agentShare * 100).toFixed(0)}%</span>
+            </span>
+          </div>
+        </Card>
+      {/if}
+
     <!-- Charts & Offering breakdown -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <!-- Main Visual Projections -->
@@ -968,6 +1445,18 @@
               onclick={() => activeTab = 'value_split'}
             >
               Value Split
+            </button>
+            <button
+              class="px-2 py-1 rounded transition {activeTab === 'pricing_corridor' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => activeTab = 'pricing_corridor'}
+            >
+              Pricing Corridor
+            </button>
+            <button
+              class="px-2 py-1 rounded transition {activeTab === 'margin_waterfall' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => activeTab = 'margin_waterfall'}
+            >
+              Margin Waterfall
             </button>
           </div>
         </CardHeader>
@@ -1050,6 +1539,53 @@
                       </div>
                     </div>
                   </div>
+                {/if}
+              </div>
+            {:else if activeTab === 'pricing_corridor'}
+              <div class="space-y-6">
+                {#if !scenario.evc_nba_annual_value}
+                  <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
+                    <DollarSign class="h-10 w-10 text-muted-foreground/50" />
+                    <span>EVC parameters are not configured for this scenario.</span>
+                    <a href="/scenarios/{scenario.id}/edit" class="text-xs text-primary underline hover:text-primary/80">Edit scenario to configure Next Best Alternative & EVC</a>
+                  </div>
+                {:else}
+                  {#if !data.pricingCorridor || data.pricingCorridor.points.length === 0}
+                    <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
+                      <Info class="h-10 w-10 text-muted-foreground/50" />
+                      <span>Pricing Corridor requires at least one cohort configuration to display.</span>
+                    </div>
+                  {:else}
+                    <div bind:this={pricingCorridorElement} class="h-[360px] w-full"></div>
+                    {#if data.pricingCorridor && data.pricingCorridor.hasBreak}
+                      <div class="p-3.5 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive flex items-start space-x-2">
+                        <AlertTriangle class="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <span class="font-bold block">Corridor Break Detected!</span>
+                          <span class="text-muted-foreground">For heavy adoption cohorts, AI cost-to-serve exceeds the realized price per user, leading to a negative margin contribution.</span>
+                        </div>
+                      </div>
+                    {/if}
+                  {/if}
+                {/if}
+              </div>
+            {:else if activeTab === 'margin_waterfall'}
+              <div class="space-y-6">
+                {#if !scenario.evc_nba_annual_value}
+                  <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
+                    <DollarSign class="h-10 w-10 text-muted-foreground/50" />
+                    <span>EVC parameters are not configured for this scenario.</span>
+                    <a href="/scenarios/{scenario.id}/edit" class="text-xs text-primary underline hover:text-primary/80">Edit scenario to configure Next Best Alternative & EVC</a>
+                  </div>
+                {:else}
+                  {#if !data.pocketMarginWaterfall || data.pocketMarginWaterfall.steps.length === 0}
+                    <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
+                      <Info class="h-10 w-10 text-muted-foreground/50" />
+                      <span>Failed to resolve Pocket-Margin Waterfall data.</span>
+                    </div>
+                  {:else}
+                    <div bind:this={marginWaterfallElement} class="h-[360px] w-full"></div>
+                  {/if}
                 {/if}
               </div>
             {:else}

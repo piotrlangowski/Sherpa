@@ -32,7 +32,7 @@ export type RevenueSource = 'cohort' | 'monetization' | 'both';
 /** Business-centric modeling type chosen in Step 0 of the wizard. */
 export type ModelingType = 'incremental' | 'gtm' | 'appraisal';
 /** Exactly one entity level carries revenue; the rest are cost/context. */
-export type RevenueCarrier = 'cohort' | 'plan' | 'pack' | 'feature';
+export type RevenueCarrier = 'cohort' | 'plan' | 'pack' | 'feature' | 'pool';
 /** When a plan-carrier scenario also references a cohort, how they relate. */
 export type RevenueBridge = 'upsell_on_cohort' | 'separate_market';
 
@@ -120,6 +120,8 @@ export interface ClientBase {
   default_acquisition_uplift: number;
   default_gross_margin?: number;
   default_adoption_ramp_months?: number;
+  default_copilot_margin_threshold?: number;
+  default_agent_margin_threshold?: number;
   updated_at: string;
 }
 
@@ -202,6 +204,10 @@ export interface Service {
 
   // Monetization (catalog config, or the resolved effective config when attached by the engine)
   monetization?: MonetizationConfig;
+
+  /** Economic value created per single outcome (e.g. per resolved ticket). Drives
+   *  price_per_outcome = captureTargetPct * value_per_outcome (ADR 0007 Decision 4 / ADR 0009). */
+  value_per_outcome?: number | null;
 }
 
 export interface Pack {
@@ -357,6 +363,49 @@ export interface EntityOverrideRecord extends EntityOverride {
   entity_id: string;
 }
 
+/**
+ * ADR 0010 (Approach B) — a credit-pool tier: monthly subscription fee + shared credit pool.
+ * `capture` is a nullable per-tier override of the EVC capture rate used in the credit-value
+ * hybrid and stream attribution; falls back to the scenario's evc_capture_target_pct when unset.
+ */
+export interface PoolTier {
+  id: string;
+  name: string;
+  monthly_fee: number;
+  credit_pool_size: number;
+  capture?: number | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** Credits consumed per activity unit (interaction/request) for one service drawing on a pool tier. */
+export interface PoolBurnRate {
+  id: string;
+  tier_id: string;
+  service_id: string;
+  burn_rate: number;
+  service_name?: string;
+}
+
+/** How a pool tier's fee is split between the copilot and agent streams (ADR 0010 Decision 3). */
+export interface PoolAttribution {
+  copilotShare: number;
+  agentShare: number;
+  /** 'evc' when value_per_outcome was set on at least one pool service; otherwise an even split. */
+  method: 'evc' | 'even_split_fallback';
+}
+
+/** Scenario-level summary of a pool-carrier scenario's lifetime credit economics. */
+export interface PoolEconomics {
+  tierMonthlyFee: number;
+  poolSize: number;
+  totalConsumedCredits: number;
+  /** Memo: value of unused credits, valued at the blended cost floor. No cash impact (Decision 2). */
+  totalBreakage: number;
+  totalOverageRevenue: number;
+  attribution: PoolAttribution;
+}
+
 export interface ExpansionConfig {
   expansion_vertical_id: string | null;
   penetration_baseline_months: number;
@@ -400,6 +449,17 @@ export interface Scenario {
   price_from_evc?: boolean;
   adoption_elasticity?: number;
 
+  // Per-stream margin thresholds (ADR 0009) — nullable scenario override; the DB-aware
+  // layer cascades the client_base global default in before reaching the pure engine.
+  copilot_margin_threshold?: number | null;
+  agent_margin_threshold?: number | null;
+
+  // Credit pool (ADR 0010, carrier 'pool') — a pool scenario selects one tier; the DB-aware
+  // layer resolves the tier + its burn-rate table onto the runtime scenario for the pure engine.
+  pool_tier_id?: string | null;
+  pool_tier?: PoolTier;
+  pool_burn_rates?: PoolBurnRate[];
+
   created_at?: string;
   updated_at?: string;
 
@@ -437,6 +497,38 @@ export interface EvcInputs {
   grossMargin?: number;
 }
 
+export interface PricingCorridorPoint {
+  cohortId: string;
+  cohortName: string;
+  adoptionRate: number;
+  grossMargin: number;
+  cogs: number;
+  floorTarget: number;
+  ceiling: number;
+  status: 'loss' | 'below_margin' | 'healthy' | 'over_ceiling';
+}
+
+export interface PricingCorridorResult {
+  points: PricingCorridorPoint[];
+  actualPrice: number;
+  blendedMediumCogs: number;
+  blendedMediumFloorTarget: number;
+  hasBreak: boolean;
+}
+
+export interface PocketMarginWaterfallStep {
+  name: string;
+  value: number;
+  type: 'base' | 'delta' | 'total';
+}
+
+export interface PocketMarginWaterfallResult {
+  steps: PocketMarginWaterfallStep[];
+  actualPrice: number;
+  pocketMargin: number;
+  reconciliationError: number;
+}
+
 export interface EvcResult {
   evc: number;
   referenceValue: number;
@@ -454,6 +546,8 @@ export interface EvcResult {
   vendorGrossProfitPerUserMonth: number;
   cogsPerUserMonth: number;
   captureCurve?: CaptureCurveResult;
+  pricingCorridor?: PricingCorridorResult;
+  pocketMarginWaterfall?: PocketMarginWaterfallResult;
 }
 
 export interface CaptureCurvePoint {
@@ -503,6 +597,13 @@ export interface ScenarioResult {
   evc_price_floor?: number | null;
   evc_price_target?: number | null;
   evc_price_ceiling?: number | null;
+
+  // Per-archetype stream results (ADR 0009)
+  driver_profile?: DriverProfile | null;
+  stream_margins?: StreamMargins | null;
+
+  // Credit pool results (ADR 0010)
+  pool_economics?: PoolEconomics | null;
 }
 
 export interface CohortTimelineResult {
@@ -553,6 +654,17 @@ export interface MonthlyBreakdown {
   laborSavingsCapacity?: number; // memo
   failedDeflectionCost?: number;
   agentTokenCosts?: number;
+
+  // Per-stream revenue/COGS (ADR 0009) — disjoint copilot (seat) vs agent (interaction) streams,
+  // on top of the cohort/plan seat economy already captured in `revenue`/`tokenCosts`.
+  copilotRevenue?: number;
+  copilotCogs?: number;
+  copilotTokenCosts?: number;
+  agentRevenue?: number;
+  agentCogs?: number;
+
+  // Credit pool (ADR 0010) — memo only, no cash impact (Decision 2).
+  poolBreakage?: number;
 }
 
 export type IrrStatus = 'ok' | 'unstable_short_payback' | 'ambiguous_multiple_roots' | 'undefined_no_sign_change' | 'non_converged' | 'blocked_by_integrity';
@@ -562,6 +674,20 @@ export interface IrrResult {
   annualNominal: number | null;
   status: IrrStatus;
   displayable: boolean;
+}
+
+/** Service-type mix for a scenario (ADR 0009): which archetype(s) actually carry value. */
+export type DriverProfile = 'seat_only' | 'interaction_only' | 'mixed';
+
+/** Blended + per-stream gross margin, compared against soft (warn-only) thresholds. */
+export interface StreamMargins {
+  /** Copilot-stream margin, or null when the scenario has no copilot revenue. */
+  copilot: number | null;
+  /** Agent-stream margin, or null when the scenario has no agent revenue. */
+  agent: number | null;
+  blended: number;
+  copilotThreshold: number;
+  agentThreshold: number;
 }
 
 export interface CalculationResult {
@@ -575,6 +701,9 @@ export interface CalculationResult {
   irr: IrrResult;
   tco: number;
   evc?: EvcResult | null;
+  driverProfile: DriverProfile;
+  streamMargins: StreamMargins;
+  poolEconomics?: PoolEconomics | null;
 }
 
 export interface SensitivityParamResult {

@@ -22,9 +22,16 @@ import {
   buildPenetrationCurve,
   calculateEVC,
   runCaptureCurve,
-  calculateAnalyticalLaborSavings
+  calculateAnalyticalLaborSavings,
+  buildPricingCorridor,
+  buildPocketMarginWaterfall,
+  streamsDisjoint,
+  detectDriverProfile,
+  DEFAULT_COPILOT_MARGIN_THRESHOLD,
+  DEFAULT_AGENT_MARGIN_THRESHOLD,
+  HYBRID_OVERAGE_MARKUP
 } from './financial-math.js';
-import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings, Plan } from './types.js';
+import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings, Plan, EvcResult } from './types.js';
 
 describe('Financial Math Module Tests', () => {
   describe('calculateNPV', () => {
@@ -416,7 +423,7 @@ describe('Financial Math Module Tests', () => {
         };
         const res = validateRevenueIntegrity(sc);
         expect(res.status).toBe('block');
-        expect(res.message).toContain('Incremental scenarios cannot have monetization overrides');
+        expect(res.message).toContain('Incremental scenarios cannot have copilot monetization overrides');
       });
 
       it('blocks incremental scenarios with plan seats', () => {
@@ -1196,6 +1203,440 @@ describe('Financial Math Module Tests', () => {
   });
 });
 
+describe('ADR 0009 — per-archetype revenue streams (Foundation)', () => {
+  const provider: Provider = {
+    id: 'p1', name: 'Prov', model_name: 'm', input_price: 0, output_price: 0,
+    is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000000, output_tokens_per_credit: 333333, updated_at: ''
+  };
+
+  // base_arpu = 0 isolates the agent/copilot stream contributions from the cohort/seat economy.
+  const cohort: CohortConfig = {
+    id: 'c1', name: 'Cohort', current_users: 1000, monthly_acquisition: 0,
+    acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0,
+    monthly_expansion_rate: 0, ai_adoption_rate: 1.0, base_arpu: 0
+  };
+
+  function makeAgentService(overrides: Partial<Service> = {}): Service & { rollout_month: number } {
+    return {
+      id: 's_agent', name: 'Support Agent', status: 'planned', service_type: 'agent',
+      interaction_driver_type: 'flat', monthly_volume: 10000, volume_growth_rate: 0,
+      interactions_per_customer_month: 0, fully_loaded_cost_per_fte_month: 5000,
+      productive_hours_per_fte_month: 100, average_handle_time_seconds: 360,
+      baseline_fte: 0, staffing_realization_lag_months: 0,
+      containment_rate: 1.0, containment_start_rate: 1.0, containment_ramp_months: 0,
+      escalation_rate: 0, failed_deflection_penalty: 0, churn_rate_uplift: 0,
+      rollout_month: 0, provider_id: 'p1',
+      avg_input_tokens: 0, avg_output_tokens: 0, avg_requests_per_user_month: 0,
+      ...overrides
+    };
+  }
+
+  const monetizedAgentService = makeAgentService({
+    id: 's_agent_m',
+    monetization: { monetization_type: 'outcome', outcome_basis: 'deflected', price_per_outcome: 8 }
+  });
+
+  function makeScenario(services: Array<Service & { rollout_month: number }>, overrides: Partial<Scenario> = {}): Scenario {
+    return {
+      id: 'scen1', name: 'S', projection_months: 3, discount_rate: 0.10, scope_type: 'cohorts',
+      modeling_type: 'incremental', revenue_carrier: 'cohort',
+      scope_cohorts: [cohort], services, costs: [],
+      ...overrides
+    };
+  }
+
+  describe('streamsDisjoint', () => {
+    it('is disjoint with no monetized services', () => {
+      expect(streamsDisjoint(makeScenario([makeAgentService()]))).toBe(true);
+    });
+
+    it('is disjoint when every monetized service is an agent', () => {
+      expect(streamsDisjoint(makeScenario([monetizedAgentService]))).toBe(true);
+    });
+
+    it('is NOT disjoint when a monetized service is a copilot (shares the seat economy)', () => {
+      const copilotService = { ...monetizedAgentService, id: 's_copilot', service_type: 'copilot' as const };
+      expect(streamsDisjoint(makeScenario([copilotService]))).toBe(false);
+    });
+
+    it('is NOT disjoint when monetized services mix agent and copilot', () => {
+      const copilotService = { ...monetizedAgentService, id: 's_copilot', service_type: 'copilot' as const };
+      expect(streamsDisjoint(makeScenario([monetizedAgentService, copilotService]))).toBe(false);
+    });
+  });
+
+  describe('validateRevenueIntegrity — disjointness doctrine (Decision 1)', () => {
+    it('warns (not blocks) an incremental scenario with a monetized agent service', () => {
+      const res = validateRevenueIntegrity(makeScenario([monetizedAgentService]));
+      expect(res.status).toBe('warn');
+      expect(res.message).toContain('disjoint second stream');
+    });
+
+    it('still blocks an incremental scenario with a monetized copilot service', () => {
+      const copilotService = { ...monetizedAgentService, id: 's_copilot', service_type: 'copilot' as const };
+      const res = validateRevenueIntegrity(makeScenario([copilotService]));
+      expect(res.status).toBe('block');
+      expect(res.message).toContain('copilot monetization');
+    });
+
+    it('blocks when monetized services mix agent and copilot (not fully disjoint)', () => {
+      const copilotService = { ...monetizedAgentService, id: 's_copilot', service_type: 'copilot' as const };
+      const res = validateRevenueIntegrity(makeScenario([monetizedAgentService, copilotService]));
+      expect(res.status).toBe('block');
+    });
+
+    it('stays ok for an incremental scenario with no monetization', () => {
+      expect(validateRevenueIntegrity(makeScenario([makeAgentService()])).status).toBe('ok');
+    });
+  });
+
+  describe('per-service value routing (Decision 4)', () => {
+    it("unmonetized agent books labor savings as cash revenue (today's behavior)", () => {
+      const results = calculateScenario(makeScenario([makeAgentService()]), [provider]);
+      const m0 = results.timeline[0];
+      expect(m0.laborSavingsCash).toBeCloseTo(50000, 1);
+      expect(m0.laborSavingsCapacity).toBeCloseTo(0, 1);
+      expect(m0.revenue).toBeCloseTo(50000, 1);
+      expect(m0.agentRevenue).toBeCloseTo(50000, 1);
+    });
+
+    it('monetized-outcome agent books outcome revenue and excludes its labor savings from cash, regardless of carrier', () => {
+      const results = calculateScenario(makeScenario([monetizedAgentService]), [provider]);
+      const m0 = results.timeline[0];
+      expect(m0.laborSavingsCash).toBeCloseTo(0, 1);
+      expect(m0.laborSavingsCapacity).toBeCloseTo(50000, 1);
+      expect(m0.outcomeRevenue).toBeCloseTo(80000, 1); // deflected(10000) * price(8)
+      expect(m0.revenue).toBeCloseTo(80000, 1); // flows despite the 'cohort' carrier (ADR 0009 Decision 1)
+      expect(m0.agentRevenue).toBeCloseTo(80000, 1);
+    });
+
+    it('copilot outcome revenue also flows regardless of carrier', () => {
+      const copilotService: Service & { rollout_month: number } = {
+        id: 's_copilot', name: 'Copilot', status: 'planned', service_type: 'copilot',
+        rollout_month: 0, provider_id: 'p1', avg_input_tokens: 0, avg_output_tokens: 0,
+        avg_requests_per_user_month: 5,
+        monetization: { monetization_type: 'outcome', outcome_basis: 'interactions', price_per_outcome: 2 }
+      };
+      const results = calculateScenario(makeScenario([copilotService]), [provider]);
+      const m0 = results.timeline[0];
+      // 1000 users * 1.0 adoption * 5 requests/user * $2 = $10,000
+      expect(m0.outcomeRevenue).toBeCloseTo(10000, 1);
+      expect(m0.revenue).toBeCloseTo(10000, 1);
+      expect(m0.copilotRevenue).toBeCloseTo(10000, 1);
+    });
+  });
+
+  describe('detectDriverProfile', () => {
+    const copilotOnly: Service & { rollout_month: number } = {
+      id: 's1', name: 'C', status: 'planned', service_type: 'copilot', rollout_month: 0,
+      avg_input_tokens: 0, avg_output_tokens: 0, avg_requests_per_user_month: 0
+    };
+
+    it('returns seat_only when there are no agent services', () => {
+      expect(detectDriverProfile(makeScenario([copilotOnly]))).toBe('seat_only');
+      expect(detectDriverProfile(makeScenario([]))).toBe('seat_only');
+      expect(detectDriverProfile(makeScenario([], { services: undefined }))).toBe('seat_only');
+    });
+
+    it('returns interaction_only when every service is an agent', () => {
+      expect(detectDriverProfile(makeScenario([makeAgentService()]))).toBe('interaction_only');
+    });
+
+    it('returns mixed when both archetypes are present', () => {
+      expect(detectDriverProfile(makeScenario([makeAgentService(), copilotOnly]))).toBe('mixed');
+    });
+
+    it('treats a revenue-booking seat-plan as the copilot signal even with no literal copilot service (Phase A)', () => {
+      const planScenario = makeScenario([makeAgentService()], {
+        modeling_type: 'gtm',
+        revenue_carrier: 'plan',
+        plans: [{ id: 'pl1', name: 'Pro', rollout_month: 0, base_price: 50, seats: 100 }]
+      });
+      expect(detectDriverProfile(planScenario)).toBe('mixed');
+    });
+
+    it('does not treat a seat-plan as the copilot signal when its carrier never books the seat revenue', () => {
+      // carrier stays 'cohort' with no separate_market bridge, so the plan's seats are dead weight.
+      const planScenario = makeScenario([makeAgentService()], {
+        plans: [{ id: 'pl1', name: 'Pro', rollout_month: 0, base_price: 50, seats: 100 }]
+      });
+      expect(detectDriverProfile(planScenario)).toBe('interaction_only');
+    });
+  });
+
+  describe('calculateScenario — driverProfile on CalculationResult', () => {
+    it('surfaces mixed when the scenario has both archetypes', () => {
+      const copilotService: Service & { rollout_month: number } = {
+        id: 's_copilot', name: 'Copilot', status: 'planned', service_type: 'copilot',
+        rollout_month: 0, avg_input_tokens: 0, avg_output_tokens: 0, avg_requests_per_user_month: 0
+      };
+      const results = calculateScenario(makeScenario([makeAgentService(), copilotService]), [provider]);
+      expect(results.driverProfile).toBe('mixed');
+    });
+
+    it('surfaces interaction_only / seat_only for single-archetype scenarios', () => {
+      expect(calculateScenario(makeScenario([makeAgentService()]), [provider]).driverProfile).toBe('interaction_only');
+      expect(calculateScenario(makeScenario([]), [provider]).driverProfile).toBe('seat_only');
+    });
+  });
+
+  describe('Phase A — two-track hybrid billing (copilot seat-plan + agent per-resolution)', () => {
+    // GTM/plan carrier: $50/seat * 100 seats = $5,000/mo copilot stream, alongside the
+    // monetized agent's $80,000/mo outcome stream (deflected 10000 * $8).
+    function makeTwoTrackScenario() {
+      return makeScenario([monetizedAgentService], {
+        modeling_type: 'gtm',
+        revenue_carrier: 'plan',
+        plans: [{ id: 'pl1', name: 'Pro', rollout_month: 0, base_price: 50, seats: 100 }]
+      });
+    }
+
+    it('is not blocked by revenue integrity', () => {
+      const res = validateRevenueIntegrity(makeTwoTrackScenario());
+      expect(res.status).not.toBe('block');
+    });
+
+    it('sums both streams into the total, attributing seat-plan revenue to copilot and outcome revenue to agent', () => {
+      const results = calculateScenario(makeTwoTrackScenario(), [provider]);
+      const m0 = results.timeline[0];
+      expect(m0.copilotRevenue).toBeCloseTo(5000, 1);
+      expect(m0.agentRevenue).toBeCloseTo(80000, 1);
+      expect(m0.revenue).toBeCloseTo(85000, 1);
+      expect(results.driverProfile).toBe('mixed');
+    });
+  });
+
+  describe('Phase B — unified credit pool (ADR 0010)', () => {
+    const poolProvider: Provider = {
+      id: 'p3', name: 'Prov3', model_name: 'm', input_price: 10, output_price: 0,
+      is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000000, output_tokens_per_credit: 333333, updated_at: ''
+    };
+    // agent: monthly_volume=10, fully contained -> deflected=10/mo, burn_rate=300 -> 3,000 credits.
+    // token cost: 10 interactions * 10000 input tokens * $10/M = $1.00.
+    const poolAgentSvc: Service & { rollout_month: number } = {
+      id: 's_pa', name: 'Agent', status: 'planned', service_type: 'agent',
+      interaction_driver_type: 'flat', monthly_volume: 10, volume_growth_rate: 0,
+      containment_rate: 1.0, containment_start_rate: 1.0, containment_ramp_months: 0,
+      escalation_rate: 0, failed_deflection_penalty: 0, fully_loaded_cost_per_fte_month: 0,
+      productive_hours_per_fte_month: 100, average_handle_time_seconds: 0, baseline_fte: 0,
+      staffing_realization_lag_months: 0, churn_rate_uplift: 0,
+      rollout_month: 0, provider_id: 'p3', avg_input_tokens: 10000, avg_output_tokens: 0, avg_requests_per_user_month: 0,
+      value_per_outcome: 50,
+      monetization: { monetization_type: 'usage' }
+    };
+    // copilot: 1000 users * 1 req/user/mo = 1,000 requests, burn_rate=10 -> 10,000 credits.
+    // token cost: 1000 requests * 1000 input tokens * $10/M = $10.00.
+    const poolCopilotSvc: Service & { rollout_month: number } = {
+      id: 's_pc', name: 'Copilot', status: 'planned', service_type: 'copilot',
+      rollout_month: 0, provider_id: 'p3', avg_input_tokens: 1000, avg_output_tokens: 0,
+      avg_requests_per_user_month: 1,
+      value_per_outcome: 2,
+      monetization: { monetization_type: 'usage' }
+    };
+
+    function makePoolScenario(services: Array<Service & { rollout_month: number }>, overrides: Partial<Scenario> = {}) {
+      return makeScenario(services, {
+        modeling_type: 'appraisal',
+        revenue_carrier: 'pool',
+        evc_capture_target_pct: 0.30,
+        pool_tier: { id: 'tier1', name: 'Gold', monthly_fee: 2000, credit_pool_size: 10000 },
+        pool_burn_rates: [
+          { id: 'br1', tier_id: 'tier1', service_id: 's_pa', burn_rate: 300 },
+          { id: 'br2', tier_id: 'tier1', service_id: 's_pc', burn_rate: 10 }
+        ],
+        ...overrides
+      });
+    }
+
+    it('books the full tier fee plus usage-priced overage, and attributes by EVC weight', () => {
+      const results = calculateScenario(makePoolScenario([poolAgentSvc, poolCopilotSvc]), [poolProvider]);
+      const m0 = results.timeline[0];
+
+      // consumed = 3,000 (agent) + 10,000 (copilot) = 13,000 > pool 10,000 -> overage 3,000.
+      // creditValue = max(floor, capture*v): floor = $11/13000 ≈ 0.000846; value = 0.30*2500/13000 ≈ 0.05769.
+      // overage revenue (usage, no markup) = 3000 * 0.05769 ≈ $173.08; total revenue ≈ $2173.08.
+      expect(m0.revenue).toBeCloseTo(2173.08, 1);
+      expect(m0.poolBreakage).toBeCloseTo(0, 2); // fully consumed, nothing left to break
+
+      // EVC weight: agent = 10*50=500, copilot = 1000*2=2000 -> copilot 80%, agent 20%.
+      expect(results.poolEconomics?.attribution.method).toBe('evc');
+      expect(results.poolEconomics?.attribution.copilotShare).toBeCloseTo(0.8, 2);
+      expect(results.poolEconomics?.attribution.agentShare).toBeCloseTo(0.2, 2);
+      expect(m0.copilotRevenue).toBeCloseTo(2173.08 * 0.8, 1);
+      expect(m0.agentRevenue).toBeCloseTo(2173.08 * 0.2, 1);
+    });
+
+    it('books only the flat fee (no overage) for addon billing, with breakage when under-consumed', () => {
+      const lowVolumeAgent = { ...poolAgentSvc, monthly_volume: 1, monetization: { monetization_type: 'addon' as const } };
+      const lowVolumeCopilot = { ...poolCopilotSvc, avg_requests_per_user_month: 0.1, monetization: { monetization_type: 'addon' as const } };
+      const results = calculateScenario(makePoolScenario([lowVolumeAgent, lowVolumeCopilot]), [poolProvider]);
+      const m0 = results.timeline[0];
+
+      // consumed = 1*300 + 100*10 = 1,300, well under the 10,000 pool -> no overage regardless of type.
+      expect(m0.revenue).toBeCloseTo(2000, 1); // exactly the flat fee
+      expect(m0.poolBreakage).toBeGreaterThan(0); // unused credits valued at the cost floor (memo)
+    });
+
+    it('caps usage at the pool with no overage revenue for hard-capped addon billing even when over-consumed', () => {
+      const addonAgent = { ...poolAgentSvc, monetization: { monetization_type: 'addon' as const } };
+      const addonCopilot = { ...poolCopilotSvc, monetization: { monetization_type: 'addon' as const } };
+      const results = calculateScenario(makePoolScenario([addonAgent, addonCopilot]), [poolProvider]);
+      const m0 = results.timeline[0];
+      // Same 13,000 consumed > 10,000 pool as the first test, but addon = hard cap -> no overage.
+      expect(m0.revenue).toBeCloseTo(2000, 1);
+    });
+
+    it('charges hybrid overage with the >1x markup', () => {
+      const hybridAgent = { ...poolAgentSvc, monetization: { monetization_type: 'hybrid' as const } };
+      const hybridCopilot = { ...poolCopilotSvc, monetization: { monetization_type: 'hybrid' as const } };
+      const usageResult = calculateScenario(
+        makePoolScenario([{ ...poolAgentSvc, monetization: { monetization_type: 'usage' as const } }, { ...poolCopilotSvc, monetization: { monetization_type: 'usage' as const } }]),
+        [poolProvider]
+      );
+      const hybridResult = calculateScenario(makePoolScenario([hybridAgent, hybridCopilot]), [poolProvider]);
+      const usageOverage = usageResult.timeline[0].revenue - 2000;
+      const hybridOverage = hybridResult.timeline[0].revenue - 2000;
+      expect(hybridOverage).toBeCloseTo(usageOverage * HYBRID_OVERAGE_MARKUP, 1);
+    });
+
+    it('protects margin with the cost floor when token cost exceeds the EVC-derived credit value', () => {
+      // Expensive interaction (1M input tokens @ $10/M = $10/interaction), trivial value_per_outcome
+      // ($0.001) -> the cost floor, not value, should set the credit price.
+      const expensiveAgent: Service & { rollout_month: number } = {
+        ...poolAgentSvc, monthly_volume: 2, avg_input_tokens: 1_000_000, value_per_outcome: 0.001
+      };
+      const tinyPoolScenario = makePoolScenario([expensiveAgent], {
+        pool_tier: { id: 'tier1', name: 'Gold', monthly_fee: 2000, credit_pool_size: 1 },
+        pool_burn_rates: [{ id: 'br1', tier_id: 'tier1', service_id: 's_pa', burn_rate: 1 }]
+      });
+      const results = calculateScenario(tinyPoolScenario, [poolProvider]);
+      // consumed = 2 credits (deflected=2, burn_rate=1); cost = 2 * $10 = $20 -> floor = $10/credit.
+      // value-based component = 0.30 * (2*0.001) / 2 ≈ $0.0003/credit — the floor dominates.
+      // overage = 1 credit * $10 = $10 (usage billing, no markup).
+      expect(results.timeline[0].revenue).toBeCloseTo(2010, 1);
+    });
+
+    it('falls back to an even split when no service sets value_per_outcome', () => {
+      const noValueAgent = { ...poolAgentSvc, value_per_outcome: undefined };
+      const noValueCopilot = { ...poolCopilotSvc, value_per_outcome: undefined };
+      const results = calculateScenario(makePoolScenario([noValueAgent, noValueCopilot]), [poolProvider]);
+      expect(results.poolEconomics?.attribution.method).toBe('even_split_fallback');
+      expect(results.poolEconomics?.attribution.copilotShare).toBe(0.5);
+      expect(results.poolEconomics?.attribution.agentShare).toBe(0.5);
+    });
+
+    it('blocks a pool scenario that mixes billing models across services', () => {
+      const usageAgent = { ...poolAgentSvc, monetization: { monetization_type: 'usage' as const } };
+      const hybridCopilot = { ...poolCopilotSvc, monetization: { monetization_type: 'hybrid' as const } };
+      const res = validateRevenueIntegrity(makePoolScenario([usageAgent, hybridCopilot]));
+      expect(res.status).toBe('block');
+      expect(res.message).toContain('same billing model');
+    });
+
+    it('blocks a pool scenario where a service uses outcome pricing', () => {
+      const outcomeAgent = { ...poolAgentSvc, monetization: { monetization_type: 'outcome' as const, outcome_basis: 'deflected' as const, price_per_outcome: 10 } };
+      const res = validateRevenueIntegrity(makePoolScenario([outcomeAgent]));
+      expect(res.status).toBe('block');
+    });
+
+    it('does not block a homogeneous pool scenario', () => {
+      const res = validateRevenueIntegrity(makePoolScenario([poolAgentSvc, poolCopilotSvc]));
+      expect(res.status).not.toBe('block');
+    });
+  });
+
+  describe('per-stream blended margin (streamMargins)', () => {
+    const provider2: Provider = {
+      id: 'p2', name: 'Prov2', model_name: 'm', input_price: 10, output_price: 0,
+      is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000000, output_tokens_per_credit: 333333, updated_at: ''
+    };
+    // agent: 1000 interactions/mo fully contained, 100k input tokens/interaction @ $10/M ->
+    // $1.00 COGS/interaction = $1,000 COGS; $10/outcome price -> $10,000 revenue, 90% margin.
+    const agentSvc: Service & { rollout_month: number } = {
+      id: 's_a', name: 'Agent', status: 'planned', service_type: 'agent',
+      interaction_driver_type: 'flat', monthly_volume: 1000, volume_growth_rate: 0,
+      containment_rate: 1.0, containment_start_rate: 1.0, containment_ramp_months: 0,
+      escalation_rate: 0, failed_deflection_penalty: 0, fully_loaded_cost_per_fte_month: 0,
+      productive_hours_per_fte_month: 100, average_handle_time_seconds: 0, baseline_fte: 0,
+      staffing_realization_lag_months: 0, churn_rate_uplift: 0,
+      rollout_month: 0, provider_id: 'p2', avg_input_tokens: 100000, avg_output_tokens: 0, avg_requests_per_user_month: 0,
+      monetization: { monetization_type: 'outcome', outcome_basis: 'deflected', price_per_outcome: 10 }
+    };
+    // copilot: 1000 AI users * 10 req/user/mo, 10k input tokens/request @ $10/M -> $0.10 token
+    // cost/request -> $1,000 COGS; $5/outcome price -> $50,000 revenue, 98% margin.
+    const copilotSvc: Service & { rollout_month: number } = {
+      id: 's_c', name: 'Copilot', status: 'planned', service_type: 'copilot',
+      rollout_month: 0, provider_id: 'p2', avg_input_tokens: 10000, avg_output_tokens: 0,
+      avg_requests_per_user_month: 10,
+      monetization: { monetization_type: 'outcome', outcome_basis: 'interactions', price_per_outcome: 5 }
+    };
+
+    it('computes copilot/agent/blended margins from the timeline', () => {
+      const results = calculateScenario(makeScenario([agentSvc, copilotSvc]), [provider2]);
+      expect(results.streamMargins.agent).toBeCloseTo(0.9, 3);
+      expect(results.streamMargins.copilot).toBeCloseTo(0.98, 3);
+      expect(results.streamMargins.blended).toBeCloseTo(0.96667, 3);
+      expect(results.streamMargins.copilotThreshold).toBeCloseTo(DEFAULT_COPILOT_MARGIN_THRESHOLD, 5);
+      expect(results.streamMargins.agentThreshold).toBeCloseTo(DEFAULT_AGENT_MARGIN_THRESHOLD, 5);
+    });
+
+    it('returns null for a stream with no revenue, and respects scenario-level threshold overrides', () => {
+      const scenario = makeScenario([agentSvc], { copilot_margin_threshold: 0.5, agent_margin_threshold: 0.5 });
+      const results = calculateScenario(scenario, [provider2]);
+      expect(results.streamMargins.copilot).toBeNull();
+      expect(results.streamMargins.agent).toBeCloseTo(0.9, 3);
+      expect(results.streamMargins.copilotThreshold).toBe(0.5);
+      expect(results.streamMargins.agentThreshold).toBe(0.5);
+    });
+
+    it('blended margin reconciles with the per-stream revenue/COGS sums (incl. failed-deflection COGS)', () => {
+      // Partial containment + a failed-deflection penalty makes failedDeflectionCost > 0. That cost
+      // lives in opex (not tokenCosts), so a scenario-wide token-COGS blended would drop it; the
+      // per-stream agentCogs includes it. Blended must tie out to the streams (ADR 0009 Decision 6).
+      const agentWithFailures: Service & { rollout_month: number } = {
+        ...agentSvc, containment_rate: 0.8, containment_start_rate: 0.8, failed_deflection_penalty: 2
+      };
+      const results = calculateScenario(makeScenario([agentWithFailures, copilotSvc]), [provider2]);
+      const t = results.timeline;
+      const copRev = t.reduce((s, m) => s + (m.copilotRevenue ?? 0), 0);
+      const agRev = t.reduce((s, m) => s + (m.agentRevenue ?? 0), 0);
+      const copCogs = t.reduce((s, m) => s + (m.copilotCogs ?? 0), 0);
+      const agCogs = t.reduce((s, m) => s + (m.agentCogs ?? 0), 0);
+      const agTokenCogs = t.reduce((s, m) => s + (m.agentTokenCosts ?? 0), 0);
+      const streamRev = copRev + agRev;
+
+      // 1) blended = (Σ per-stream contribution) / (Σ per-stream revenue)
+      expect(results.streamMargins.blended).toBeCloseTo((streamRev - copCogs - agCogs) / streamRev, 4);
+      // 2) equivalently, the revenue-weighted average of the two stream margins
+      const weighted = (results.streamMargins.copilot! * copRev + results.streamMargins.agent! * agRev) / streamRev;
+      expect(results.streamMargins.blended).toBeCloseTo(weighted, 3);
+      // 3) the agent COGS feeding blended includes the failed-deflection penalty (the #1 fix)
+      expect(agCogs).toBeGreaterThan(agTokenCogs);
+    });
+  });
+
+  describe('value_per_outcome -> price_per_outcome derivation (price_from_evc overlay)', () => {
+    it('derives price_per_outcome = captureTargetPct * value_per_outcome for an outcome-monetized service', () => {
+      const svc = makeAgentService({
+        id: 's_out',
+        value_per_outcome: 40,
+        monetization: { monetization_type: 'outcome', outcome_basis: 'deflected', price_per_outcome: 0 }
+      });
+      const scenario = makeScenario([svc], {
+        price_from_evc: true,
+        evc_nba_annual_value: 1200,
+        evc_capture_target_pct: 0.25,
+        evc_capture_ceiling_pct: 0.5,
+        evc_capture_floor_pct: 0.1
+      });
+      const results = calculateScenario(scenario, [provider]);
+      // deflected = 10000 (full containment of monthly_volume); derived price = 0.25 * 40 = $10,
+      // so outcome revenue = 10000 * 10 = $100,000/mo, flowing into agentRevenue.
+      expect(results.timeline[0].agentRevenue).toBeCloseTo(100000, 1);
+    });
+  });
+});
+
 describe('resolveRevenueModel (carrier-first revenue resolution)', () => {
   it('treats an explicit revenue_carrier as authoritative and derives the label', () => {
     expect(resolveRevenueModel({ revenue_carrier: 'plan' })).toEqual({ modeling_type: 'gtm', revenue_carrier: 'plan' });
@@ -1245,6 +1686,9 @@ describe('deriveModelingType', () => {
     expect(deriveModelingType('pack')).toBe('appraisal');
     expect(deriveModelingType('feature')).toBe('appraisal');
     expect(deriveModelingType('cohort')).toBe('incremental');
+    // ADR 0010 — 'pool' must resolve to 'appraisal' so the ADR 0001 incremental block never
+    // fires for pool scenarios (which always carry monetized services by design).
+    expect(deriveModelingType('pool')).toBe('appraisal');
   });
 
   it('keeps a cohort carrier on appraisal when a bridge is present', () => {
@@ -1795,6 +2239,253 @@ describe('S-Curve Market Expansion (Phase 3)', () => {
       expect(breakdown.outcomeRevenue).toBe(30000);
       expect(breakdown.monetizationRevenue).toBe(30000);
       expect(breakdown.revenue).toBe(30000);
+    });
+  });
+
+  describe('buildPricingCorridor', () => {
+    it('should build pricing corridor correctly with multiple cohorts', () => {
+      const scenario: Scenario = {
+        id: 's-corridor',
+        name: 'Corridor Scenario',
+        projection_months: 12,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        scope_cohorts: [
+          {
+            id: 'c1',
+            name: 'Cohort Light',
+            current_users: 100,
+            monthly_acquisition: 0,
+            acquisition_growth_rate: 0,
+            monthly_churn_rate: 0,
+            retention_floor: 0,
+            monthly_expansion_rate: 0,
+            ai_adoption_rate: 0.2,
+            gross_margin: 0.8,
+            base_arpu: 50
+          },
+          {
+            id: 'c2',
+            name: 'Cohort Heavy',
+            current_users: 100,
+            monthly_acquisition: 0,
+            acquisition_growth_rate: 0,
+            monthly_churn_rate: 0,
+            retention_floor: 0,
+            monthly_expansion_rate: 0,
+            ai_adoption_rate: 0.8,
+            gross_margin: 0.5,
+            base_arpu: 50
+          }
+        ]
+      };
+
+      const timeline = [
+        {
+          month: 12,
+          revenue: 12000, // 12000 / 200 = 60 actualPrice
+          customers: 200,
+          aiUsers: 100,
+          opex: 2000, // 2000 / 200 = 10 fixed cost
+          tokenCosts: 2000, // 2000 / 100 = 20 token cost per AI user
+          grossRevenue: 12000,
+          baselineRevenue: 10000,
+          baselineCustomers: 200,
+          monetizationRevenue: 0,
+          addonRevenue: 0,
+          usageRevenue: 0,
+          hybridBaseRevenue: 0,
+          overchargeRevenue: 0,
+          outcomeRevenue: 0,
+          totalCosts: 4000,
+          capex: 0,
+          netCashFlow: 8000,
+          cumulativeCashFlow: 8000
+        }
+      ];
+
+      const evc: EvcResult = {
+        evc: 150,
+        referenceValue: 50,
+        positiveValueTotal: 120,
+        negativeValueTotal: 20,
+        netCreatedValue: 100,
+        priceFloor: 65,
+        priceTarget: 80,
+        priceCeiling: 100,
+        laborSavings: 0,
+        extraPositiveValue: 0,
+        unitNetValue: 100,
+        targetCapturePerUserMonth: 30,
+        customerSurplusPerUserMonth: 70,
+        vendorGrossProfitPerUserMonth: 23,
+        cogsPerUserMonth: 20
+      };
+
+      const corridor = buildPricingCorridor(scenario, timeline, evc);
+
+      expect(corridor.actualPrice).toBe(60);
+      expect(corridor.points.length).toBe(2);
+
+      // Light cohort: a = 0.2. cogs = 0.2 * 20 (u) + 10 (o) = 14.
+      // Heavy cohort: a = 0.8. cogs = 0.8 * 20 (u) + 10 (o) = 26.
+      // Light is sorted first.
+      expect(corridor.points[0].cohortName).toBe('Cohort Light');
+      expect(corridor.points[0].cogs).toBe(14);
+      expect(corridor.points[0].floorTarget).toBeCloseTo(14 / (1 - 0.8), 1); // 70
+      // actualPrice (60) is between cogs (14) and floorTarget (70) -> below_margin
+      expect(corridor.points[0].status).toBe('below_margin');
+
+      expect(corridor.points[1].cohortName).toBe('Cohort Heavy');
+      expect(corridor.points[1].cogs).toBe(26);
+      expect(corridor.points[1].floorTarget).toBeCloseTo(26 / (1 - 0.5), 1); // 52
+      // actualPrice (60) is between floorTarget (52) and ceiling (100) -> healthy
+      expect(corridor.points[1].status).toBe('healthy');
+
+      expect(corridor.hasBreak).toBe(false);
+    });
+
+    it('should detect a break in pricing corridor', () => {
+      const scenario: Scenario = {
+        id: 's-corridor-break',
+        name: 'Corridor Break Scenario',
+        projection_months: 12,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        scope_cohorts: [
+          {
+            id: 'c1',
+            name: 'Cohort High Burn',
+            current_users: 100,
+            monthly_acquisition: 0,
+            acquisition_growth_rate: 0,
+            monthly_churn_rate: 0,
+            retention_floor: 0,
+            monthly_expansion_rate: 0,
+            ai_adoption_rate: 0.9,
+            gross_margin: 0.5,
+            base_arpu: 20
+          }
+        ]
+      };
+
+      const timeline = [
+        {
+          month: 12,
+          revenue: 2000, // 2000 / 100 = 20 actualPrice
+          customers: 100,
+          aiUsers: 90,
+          opex: 1000, // 1000 / 100 = 10 fixed cost
+          tokenCosts: 1800, // 1800 / 90 = 20 token cost per AI user
+          grossRevenue: 2000,
+          baselineRevenue: 1000,
+          baselineCustomers: 100,
+          monetizationRevenue: 0,
+          addonRevenue: 0,
+          usageRevenue: 0,
+          hybridBaseRevenue: 0,
+          overchargeRevenue: 0,
+          outcomeRevenue: 0,
+          totalCosts: 2800,
+          capex: 0,
+          netCashFlow: -800,
+          cumulativeCashFlow: -800
+        }
+      ];
+
+      const evc: EvcResult = {
+        evc: 50,
+        referenceValue: 10,
+        positiveValueTotal: 45,
+        negativeValueTotal: 5,
+        netCreatedValue: 40,
+        priceFloor: 16,
+        priceTarget: 22,
+        priceCeiling: 30,
+        laborSavings: 0,
+        extraPositiveValue: 0,
+        unitNetValue: 40,
+        targetCapturePerUserMonth: 12,
+        customerSurplusPerUserMonth: 28,
+        vendorGrossProfitPerUserMonth: -16,
+        cogsPerUserMonth: 28
+      };
+
+      const corridor = buildPricingCorridor(scenario, timeline, evc);
+      
+      // cogs = 0.9 * 20 + 10 = 28
+      // actualPrice = 20
+      // actualPrice < cogs -> status is loss (corridor break!)
+      expect(corridor.points[0].status).toBe('loss');
+      expect(corridor.hasBreak).toBe(true);
+    });
+  });
+
+  describe('buildPocketMarginWaterfall', () => {
+    it('should build pocket margin waterfall with correct step types and values', () => {
+      const scenario: Scenario = {
+        id: 's-waterfall',
+        name: 'Waterfall Scenario',
+        projection_months: 12,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        scope_cohorts: []
+      };
+
+      const timeline = [
+        {
+          month: 12,
+          revenue: 10000,
+          customers: 100,
+          aiUsers: 50,
+          opex: 1000, // 10 fixed cost
+          tokenCosts: 1000, // 20 token cost per AI user
+          grossRevenue: 10000,
+          baselineRevenue: 8000,
+          baselineCustomers: 100,
+          monetizationRevenue: 0,
+          addonRevenue: 0,
+          usageRevenue: 0,
+          hybridBaseRevenue: 0,
+          overchargeRevenue: 0,
+          outcomeRevenue: 0,
+          totalCosts: 2000,
+          capex: 0,
+          netCashFlow: 8000,
+          cumulativeCashFlow: 8000
+        }
+      ];
+
+      const evc: EvcResult = {
+        evc: 120,
+        referenceValue: 40,
+        positiveValueTotal: 100,
+        negativeValueTotal: 20,
+        netCreatedValue: 80,
+        priceFloor: 52,
+        priceTarget: 64,
+        priceCeiling: 80,
+        laborSavings: 0,
+        extraPositiveValue: 0,
+        unitNetValue: 80,
+        targetCapturePerUserMonth: 24,
+        customerSurplusPerUserMonth: 56,
+        vendorGrossProfitPerUserMonth: 4,
+        cogsPerUserMonth: 20
+      };
+
+      const waterfall = buildPocketMarginWaterfall(scenario, timeline, evc);
+
+      expect(waterfall.pocketMargin).toBe(64 - 10 - 10); // priceTarget - u - o = 44
+      expect(waterfall.reconciliationError).toBe(0);
+      expect(waterfall.steps.length).toBe(6);
+
+      expect(waterfall.steps[0]).toEqual({ name: 'Economic Value to Customer (EVC)', value: 120, type: 'base' });
+      expect(waterfall.steps[1]).toEqual({ name: 'Customer Surplus', value: -56, type: 'delta' });
+      expect(waterfall.steps[2]).toEqual({ name: 'Target Price', value: 64, type: 'total' });
+      expect(waterfall.steps[3]).toEqual({ name: 'AI COGS', value: -10, type: 'delta' });
+      expect(waterfall.steps[4]).toEqual({ name: 'Cost-to-Serve', value: -10, type: 'delta' });
+      expect(waterfall.steps[5]).toEqual({ name: 'Pocket Margin', value: 44, type: 'total' });
     });
   });
 });

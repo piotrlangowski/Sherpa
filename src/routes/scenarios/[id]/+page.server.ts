@@ -56,6 +56,11 @@ export const load: PageServerLoad = async ({ params }) => {
   }
 
   const captureCurve = results?.evc?.captureCurve ?? null;
+  const pricingCorridor = detailedResult?.evc?.pricingCorridor ?? null;
+  const pocketMarginWaterfall = detailedResult?.evc?.pocketMarginWaterfall ?? null;
+  const driverProfile = detailedResult?.driverProfile ?? null;
+  const streamMargins = detailedResult?.streamMargins ?? null;
+  const poolEconomics = detailedResult?.poolEconomics ?? null;
 
   return {
     scenario,
@@ -64,7 +69,12 @@ export const load: PageServerLoad = async ({ params }) => {
     scopeSummary,
     resolvedConfigs,
     diagnostics,
-    captureCurve
+    captureCurve,
+    pricingCorridor,
+    pocketMarginWaterfall,
+    driverProfile,
+    streamMargins,
+    poolEconomics
   };
 };
 

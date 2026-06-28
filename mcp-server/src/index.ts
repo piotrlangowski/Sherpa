@@ -17,7 +17,9 @@ import {
   resolveCarrier,
   resolveRevenueModel,
   validateRevenueIntegrity,
-  validateScenarioConfig
+  validateScenarioConfig,
+  DEFAULT_COPILOT_MARGIN_THRESHOLD,
+  DEFAULT_AGENT_MARGIN_THRESHOLD
 } from "./shared/financial-math.js";
 import {
   convertAmount,
@@ -331,7 +333,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
     SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
            evc_nba_annual_value, evc_extra_positive_value, evc_negative_value, evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
-           price_from_evc, adoption_elasticity
+           price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold, pool_tier_id
     FROM scenarios
     WHERE id = ?
   `).get(scenarioId) as any;
@@ -394,7 +396,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
            s.average_handle_time_seconds, s.baseline_fte,
            s.staffing_realization_lag_months, s.containment_rate,
            s.containment_start_rate, s.containment_ramp_months,
-           s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift,
+           s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift, s.value_per_outcome,
            ss.rollout_month
     FROM services s
     JOIN scenario_services ss ON s.id = ss.service_id
@@ -427,6 +429,20 @@ function getFullScenario(scenarioId: string): Scenario | null {
     JOIN scenario_costs sc ON c.id = sc.cost_item_id
     WHERE sc.scenario_id = ?
   `).all(scenarioId) as any[];
+
+  // Credit pool (ADR 0010) — resolve the selected tier + its burn-rate table, if any.
+  if (s.pool_tier_id) {
+    const tier = db.prepare(`
+      SELECT id, name, monthly_fee, credit_pool_size, capture, created_at, updated_at
+      FROM pool_tiers WHERE id = ?
+    `).get(s.pool_tier_id) as any;
+    if (tier) {
+      s.pool_tier = tier;
+      s.pool_burn_rates = db.prepare(`
+        SELECT id, tier_id, service_id, burn_rate FROM pool_burn_rates WHERE tier_id = ?
+      `).all(s.pool_tier_id) as any[];
+    }
+  }
 
   // Apply per-scenario entity overrides (service tokens / cost amount+frequency / plan base_price).
   // Provider-price overrides are applied separately via applyProviderOverrides at the calc sites.
@@ -1145,6 +1161,7 @@ server.tool(
     escalation_rate: z.number().optional().describe("Escalation rate floor."),
     failed_deflection_penalty: z.number().optional().describe("Cost penalty for failed deflection."),
     churn_rate_uplift: z.number().optional().describe("Uplift added to cohort churn rate."),
+    value_per_outcome: z.number().nullable().optional().describe("Economic value created per single outcome (e.g. per resolved ticket). When this service's monetization_type is 'outcome', its price_per_outcome is derived as captureTargetPct × this value (ADR 0007 Decision 4 / ADR 0009)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
   async (args) => {
@@ -1160,7 +1177,7 @@ server.tool(
                  s.average_handle_time_seconds, s.baseline_fte,
                  s.staffing_realization_lag_months, s.containment_rate,
                  s.containment_start_rate, s.containment_ramp_months,
-                 s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift,
+                 s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift, s.value_per_outcome,
                  p.name as provider_name, p.model_name as provider_model_name
           FROM services s
           LEFT JOIN providers p ON s.provider_id = p.id
@@ -1210,9 +1227,9 @@ server.tool(
             service_type, interaction_driver_type, monthly_volume, volume_growth_rate, interactions_per_customer_month,
             fully_loaded_cost_per_fte_month, productive_hours_per_fte_month, average_handle_time_seconds, baseline_fte,
             staffing_realization_lag_months, containment_rate, containment_start_rate, containment_ramp_months,
-            escalation_rate, failed_deflection_penalty, churn_rate_uplift, created_at, updated_at
+            escalation_rate, failed_deflection_penalty, churn_rate_uplift, value_per_outcome, created_at, updated_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           id,
           args.name,
@@ -1240,6 +1257,7 @@ server.tool(
           args.escalation_rate ?? 0,
           args.failed_deflection_penalty ?? 0,
           args.churn_rate_uplift ?? 0,
+          args.value_per_outcome ?? null,
           now,
           now
         );
@@ -1283,6 +1301,7 @@ server.tool(
         const escalation_rate = args.escalation_rate !== undefined ? args.escalation_rate : current.escalation_rate;
         const failed_deflection_penalty = args.failed_deflection_penalty !== undefined ? args.failed_deflection_penalty : current.failed_deflection_penalty;
         const churn_rate_uplift = args.churn_rate_uplift !== undefined ? args.churn_rate_uplift : current.churn_rate_uplift;
+        const value_per_outcome = args.value_per_outcome !== undefined ? args.value_per_outcome : current.value_per_outcome;
 
         const now = new Date().toISOString();
 
@@ -1292,14 +1311,14 @@ server.tool(
               service_type = ?, interaction_driver_type = ?, monthly_volume = ?, volume_growth_rate = ?, interactions_per_customer_month = ?,
               fully_loaded_cost_per_fte_month = ?, productive_hours_per_fte_month = ?, average_handle_time_seconds = ?, baseline_fte = ?,
               staffing_realization_lag_months = ?, containment_rate = ?, containment_start_rate = ?, containment_ramp_months = ?,
-              escalation_rate = ?, failed_deflection_penalty = ?, churn_rate_uplift = ?, updated_at = ?
+              escalation_rate = ?, failed_deflection_penalty = ?, churn_rate_uplift = ?, value_per_outcome = ?, updated_at = ?
           WHERE id = ?
         `).run(
           name, description, status, providerId, input, output, reqs, fixed, fixedCurrency,
           service_type, interaction_driver_type, monthly_volume, volume_growth_rate, interactions_per_customer_month,
           fully_loaded_cost_per_fte_month, productive_hours_per_fte_month, average_handle_time_seconds, baseline_fte,
           staffing_realization_lag_months, containment_rate, containment_start_rate, containment_ramp_months,
-          escalation_rate, failed_deflection_penalty, churn_rate_uplift, now, args.id
+          escalation_rate, failed_deflection_penalty, churn_rate_uplift, value_per_outcome, now, args.id
         );
 
         return {
@@ -1649,7 +1668,15 @@ function calculateScenarioWithIntegrity(
       piUpper: 0,
       piLower: 0,
       irr: { monthly: null, annualNominal: null, status: 'blocked_by_integrity', displayable: false },
-      tco: 0
+      tco: 0,
+      driverProfile: 'seat_only',
+      streamMargins: {
+        copilot: null,
+        agent: null,
+        blended: 0,
+        copilotThreshold: DEFAULT_COPILOT_MARGIN_THRESHOLD,
+        agentThreshold: DEFAULT_AGENT_MARGIN_THRESHOLD
+      }
     };
   }
   return calculateScenario(scenario, allProviders, creditSettings);
@@ -1667,9 +1694,10 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
         monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
         revenue_integrity_status, revenue_integrity_message,
-        evc, evc_price_floor, evc_price_target, evc_price_ceiling
+        evc, evc_price_floor, evc_price_target, evc_price_ceiling,
+        driver_profile, stream_margins, pool_economics
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       resultsId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
       results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
@@ -1678,7 +1706,10 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
       results.evc ? JSON.stringify(results.evc) : null,
       results.evc?.priceFloor ?? null,
       results.evc?.priceTarget ?? null,
-      results.evc?.priceCeiling ?? null
+      results.evc?.priceCeiling ?? null,
+      results.driverProfile ?? null,
+      results.streamMargins ? JSON.stringify(results.streamMargins) : null,
+      results.poolEconomics ? JSON.stringify(results.poolEconomics) : null
     );
   } else {
     db.prepare(`
@@ -1687,9 +1718,10 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
         monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
         revenue_integrity_status, revenue_integrity_message,
-        evc, evc_price_floor, evc_price_target, evc_price_ceiling
+        evc, evc_price_floor, evc_price_target, evc_price_ceiling,
+        driver_profile, stream_margins, pool_economics
       )
-      VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       scenarioId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
       results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
@@ -1698,7 +1730,10 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
       results.evc ? JSON.stringify(results.evc) : null,
       results.evc?.priceFloor ?? null,
       results.evc?.priceTarget ?? null,
-      results.evc?.priceCeiling ?? null
+      results.evc?.priceCeiling ?? null,
+      results.driverProfile ?? null,
+      results.streamMargins ? JSON.stringify(results.streamMargins) : null,
+      results.poolEconomics ? JSON.stringify(results.poolEconomics) : null
     );
   }
 }
@@ -1717,7 +1752,8 @@ server.tool(
     scope_type: z.enum(["all_clients", "verticals", "cohorts"]).optional().describe("Scope type (default: cohorts)."),
     revenue_source: z.enum(["cohort", "monetization", "both"]).optional().describe("Where the scenario draws its revenue from (deprecated, use modeling_type and revenue_carrier instead)."),
     modeling_type: z.enum(["incremental", "gtm", "appraisal"]).optional().describe("Business-centric modeling type: 'incremental', 'gtm', or 'appraisal' (default: appraisal)."),
-    revenue_carrier: z.enum(["cohort", "plan", "pack", "feature"]).nullable().optional().describe("Exactly one entity level carries revenue; the rest are cost/context (default: cohort)."),
+    revenue_carrier: z.enum(["cohort", "plan", "pack", "feature", "pool"]).nullable().optional().describe("Exactly one entity level carries revenue; the rest are cost/context (default: cohort). 'pool' is the ADR 0010 credit-pool carrier."),
+    pool_tier_id: z.string().nullable().optional().describe("UUID of the credit-pool tier this scenario draws from (ADR 0010). Required for revenue_carrier 'pool'; manage tiers with pool_tier_action."),
     revenue_bridge: z.enum(["upsell_on_cohort", "separate_market"]).nullable().optional().describe("When a plan-carrier scenario also references a cohort, how they relate."),
     capex_contingency_pct: z.number().min(0).max(1).optional().describe("CAPEX contingency buffer percentage (e.g. 0.20 for 20% contingency). Defaults to 0."),
     cohort_config: z.object({
@@ -1755,6 +1791,8 @@ server.tool(
     evc_capture_floor_pct: z.number().nullable().optional().describe("Capture floor percentage share (e.g. 0.15)."),
     price_from_evc: z.boolean().optional().describe("If true, drive pricing from EVC target capture rate."),
     adoption_elasticity: z.number().optional().describe("Adoption price elasticity (ε). 0 = inelastic. Higher values reduce adoption when capture exceeds target."),
+    copilot_margin_threshold: z.number().min(0).max(1).nullable().optional().describe("Soft (warn-only) copilot-stream gross-margin floor as a decimal (e.g. 0.78 for 78%). Defaults to 0.78 when unset."),
+    agent_margin_threshold: z.number().min(0).max(1).nullable().optional().describe("Soft (warn-only) agent-stream gross-margin floor as a decimal (e.g. 0.62 for 62%). Defaults to 0.62 when unset."),
     variation_percent: z.number().optional().describe("Sensitivity analysis variation percent (default: 0.10 for 10% variation)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
@@ -1839,10 +1877,11 @@ server.tool(
               ai_acceleration_factor, ai_som_lift_pct,
               evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
               evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
-              price_from_evc, adoption_elasticity,
+              price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold,
+              pool_tier_id,
               created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             scenarioId, args.name, args.description || null, args.projection_months ?? 36,
             args.discount_rate ?? 0.10, scopeType, revSource, args.capex_contingency_pct ?? 0,
@@ -1853,6 +1892,8 @@ server.tool(
             args.evc_negative_value ?? null, args.evc_capture_ceiling_pct ?? null,
             args.evc_capture_target_pct ?? null, args.evc_capture_floor_pct ?? null,
             args.price_from_evc ? 1 : 0, args.adoption_elasticity ?? 0,
+            args.copilot_margin_threshold ?? null, args.agent_margin_threshold ?? null,
+            args.pool_tier_id ?? null,
             now, now
           );
 
@@ -1988,6 +2029,9 @@ server.tool(
           const evc_capture_floor_pct = args.evc_capture_floor_pct !== undefined ? args.evc_capture_floor_pct : current.evc_capture_floor_pct;
           const price_from_evc = args.price_from_evc !== undefined ? args.price_from_evc : !!current.price_from_evc;
           const adoption_elasticity = args.adoption_elasticity !== undefined ? args.adoption_elasticity : current.adoption_elasticity;
+          const copilot_margin_threshold = args.copilot_margin_threshold !== undefined ? args.copilot_margin_threshold : current.copilot_margin_threshold;
+          const agent_margin_threshold = args.agent_margin_threshold !== undefined ? args.agent_margin_threshold : current.agent_margin_threshold;
+          const pool_tier_id = args.pool_tier_id !== undefined ? args.pool_tier_id : current.pool_tier_id;
 
           db.prepare(`
             UPDATE scenarios
@@ -1998,7 +2042,8 @@ server.tool(
                 ai_acceleration_factor = ?, ai_som_lift_pct = ?,
                 evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?,
                 evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?,
-                price_from_evc = ?, adoption_elasticity = ?,
+                price_from_evc = ?, adoption_elasticity = ?, copilot_margin_threshold = ?, agent_margin_threshold = ?,
+                pool_tier_id = ?,
                 updated_at = ?
             WHERE id = ?
           `).run(
@@ -2009,7 +2054,8 @@ server.tool(
             ai_acceleration_factor, ai_som_lift_pct,
             evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
             evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
-            price_from_evc ? 1 : 0, adoption_elasticity ?? 0,
+            price_from_evc ? 1 : 0, adoption_elasticity ?? 0, copilot_margin_threshold ?? null, agent_margin_threshold ?? null,
+            pool_tier_id ?? null,
             now, args.id
           );
 
@@ -2140,10 +2186,19 @@ server.tool(
         
         let warningText = integrity.status === 'warn' ? `\nWarning: ${integrity.message}` : '';
 
+        const sm = results.streamMargins;
+        const streamText = results.driverProfile === 'mixed'
+          ? `\n- Driver Profile: mixed (copilot + agent)\n- Stream Margins: copilot ${sm.copilot !== null ? (sm.copilot * 100).toFixed(1) + '%' : 'n/a'} (threshold ${(sm.copilotThreshold * 100).toFixed(0)}%), agent ${sm.agent !== null ? (sm.agent * 100).toFixed(1) + '%' : 'n/a'} (threshold ${(sm.agentThreshold * 100).toFixed(0)}%), blended ${(sm.blended * 100).toFixed(1)}%`
+          : `\n- Driver Profile: ${results.driverProfile}`;
+        const pe = results.poolEconomics;
+        const poolText = pe
+          ? `\n- Credit Pool: fee ${pe.tierMonthlyFee.toLocaleString()}/mo, pool ${pe.poolSize.toLocaleString()} credits, consumed ${pe.totalConsumedCredits.toLocaleString()}, breakage ${pe.totalBreakage.toLocaleString()} ${currency} (memo), overage ${pe.totalOverageRevenue.toLocaleString()} ${currency}\n- Pool Attribution (${pe.attribution.method}): copilot ${(pe.attribution.copilotShare * 100).toFixed(0)}%, agent ${(pe.attribution.agentShare * 100).toFixed(0)}%`
+          : '';
+
         return {
           content: [{
             type: "text",
-            text: `ROI Results calculated successfully:\n- NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}\n- IRR (Guarded Annualized): ${formatIrrMcp(results.irr)}\n- Payback Period Range: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n- TCO: ${results.tco.toLocaleString()} ${currency}\n- PI Range: ${results.piLower.toFixed(2)}x – ${results.piUpper.toFixed(2)}x${warningText}${formatDiagnosticsMcp(getScenarioDiagnostics(scenario, results))}`
+            text: `ROI Results calculated successfully:\n- NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}\n- IRR (Guarded Annualized): ${formatIrrMcp(results.irr)}\n- Payback Period Range: ${results.paybackUpper !== null ? results.paybackUpper + ' months' : 'Never'} – ${results.paybackLower !== null ? results.paybackLower + ' months' : 'Never'}\n- TCO: ${results.tco.toLocaleString()} ${currency}\n- PI Range: ${results.piLower.toFixed(2)}x – ${results.piUpper.toFixed(2)}x${streamText}${poolText}${warningText}${formatDiagnosticsMcp(getScenarioDiagnostics(scenario, results))}`
           }]
         };
       }
@@ -2387,6 +2442,142 @@ server.tool(
       throw new Error(`Nieobsługiwana akcja: ${args.action}`);
     } catch (err: any) {
       return formatSemanticError(err, "scenario_action");
+    }
+  }
+);
+
+server.tool(
+  "pool_tier_action",
+  "List, create, update, or delete unified credit-pool tiers (ADR 0010 Approach B). Each tier is a flat monthly subscription fee covering a shared credit pool; services drawing on the pool each have a burn-rate (credits consumed per activity unit — interaction for agent, request for copilot). A scenario adopts a tier via scenario_action's pool_tier_id with revenue_carrier 'pool'. All pool-participating services must share the same monetization_type (addon, usage, or hybrid) — enforced at scenario calculation time. Always specify the 'action' parameter. Deletions require 'confirm: true'.",
+  {
+    action: z.enum(["list", "get", "create", "update", "delete"]).describe("The action to perform: 'list' to view tiers, 'get' to inspect one tier's burn-rate table, 'create' to add a tier, 'update' to edit it, 'delete' to remove it."),
+    id: z.string().optional().describe("Unique UUID of the tier. Required for 'get', 'update', and 'delete' actions."),
+    name: z.string().optional().describe("Tier display name (e.g. 'Gold'). Required for 'create' action."),
+    monthly_fee: z.number().optional().describe("Flat monthly subscription fee, booked in full every month regardless of usage (ADR 0010 Decision 2)."),
+    credit_pool_size: z.number().optional().describe("Credits included per month. Unused credits are breakage (extra margin, no rollover); usage beyond this triggers overage per each service's monetization_type."),
+    capture: z.number().min(0).max(1).nullable().optional().describe("Override of the EVC capture rate used in the credit-value hybrid (max(token cost, capture × value_per_outcome)) and in copilot/agent stream attribution. Defaults to the scenario's evc_capture_target_pct (or 0.30) when unset."),
+    burn_rates: z.array(z.object({
+      service_id: z.string().describe("Service UUID drawing on this tier's pool."),
+      burn_rate: z.number().describe("Credits consumed per activity unit for this service (e.g. 10 for a copilot summary, 300 for an agent resolution).")
+    })).optional().describe("Per-service burn-rate table. On 'create', sets the initial table. On 'update', when provided, REPLACES the entire table (omit to leave it unchanged)."),
+    confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
+  },
+  async (args) => {
+    try {
+      if (args.action === "list") {
+        const tiers = db.prepare(`
+          SELECT id, name, monthly_fee, credit_pool_size, capture, created_at, updated_at
+          FROM pool_tiers ORDER BY name ASC
+        `).all();
+        return { content: [{ type: "text", text: JSON.stringify(tiers, null, 2) }] };
+      }
+
+      if (args.action === "get") {
+        if (!args.id) {
+          throw new z.ZodError([{ code: "custom", path: ["id"], message: "Identyfikator 'id' jest wymagany dla akcji 'get'." }]);
+        }
+        const tier = db.prepare(`
+          SELECT id, name, monthly_fee, credit_pool_size, capture, created_at, updated_at
+          FROM pool_tiers WHERE id = ?
+        `).get(args.id) as any;
+        if (!tier) {
+          return { content: [{ type: "text", text: `Pool tier '${args.id}' not found` }], isError: true };
+        }
+        tier.burn_rates = db.prepare(`
+          SELECT br.id, br.service_id, br.burn_rate, s.name as service_name
+          FROM pool_burn_rates br JOIN services s ON s.id = br.service_id
+          WHERE br.tier_id = ? ORDER BY s.name ASC
+        `).all(args.id);
+        return { content: [{ type: "text", text: JSON.stringify(tier, null, 2) }] };
+      }
+
+      if (args.action === "create") {
+        if (!args.name) {
+          throw new z.ZodError([{ code: "custom", path: ["name"], message: "Nazwa jest wymagana przy tworzeniu tieru." }]);
+        }
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        db.transaction(() => {
+          db.prepare(`
+            INSERT INTO pool_tiers (id, name, monthly_fee, credit_pool_size, capture, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(id, args.name, args.monthly_fee ?? 0, args.credit_pool_size ?? 0, args.capture ?? null, now, now);
+
+          if (args.burn_rates && args.burn_rates.length > 0) {
+            const insertRate = db.prepare("INSERT INTO pool_burn_rates (id, tier_id, service_id, burn_rate) VALUES (?, ?, ?, ?)");
+            for (const br of args.burn_rates) {
+              insertRate.run(crypto.randomUUID(), id, br.service_id, br.burn_rate);
+            }
+          }
+        })();
+        return { content: [{ type: "text", text: `Pool tier '${args.name}' created with ID: ${id}` }] };
+      }
+
+      if (args.action === "update") {
+        if (!args.id) {
+          throw new z.ZodError([{ code: "custom", path: ["id"], message: "Identyfikator 'id' jest wymagany do modyfikacji tieru." }]);
+        }
+        const current = db.prepare("SELECT * FROM pool_tiers WHERE id = ?").get(args.id) as any;
+        if (!current) {
+          return { content: [{ type: "text", text: `Pool tier with ID '${args.id}' not found.` }], isError: true };
+        }
+        const name = args.name !== undefined ? args.name : current.name;
+        const monthly_fee = args.monthly_fee !== undefined ? args.monthly_fee : current.monthly_fee;
+        const credit_pool_size = args.credit_pool_size !== undefined ? args.credit_pool_size : current.credit_pool_size;
+        const capture = args.capture !== undefined ? args.capture : current.capture;
+        const now = new Date().toISOString();
+
+        db.transaction(() => {
+          db.prepare(`
+            UPDATE pool_tiers SET name = ?, monthly_fee = ?, credit_pool_size = ?, capture = ?, updated_at = ?
+            WHERE id = ?
+          `).run(name, monthly_fee, credit_pool_size, capture ?? null, now, args.id);
+
+          if (args.burn_rates !== undefined) {
+            db.prepare("DELETE FROM pool_burn_rates WHERE tier_id = ?").run(args.id);
+            const insertRate = db.prepare("INSERT INTO pool_burn_rates (id, tier_id, service_id, burn_rate) VALUES (?, ?, ?, ?)");
+            for (const br of args.burn_rates) {
+              insertRate.run(crypto.randomUUID(), args.id, br.service_id, br.burn_rate);
+            }
+          }
+        })();
+
+        // Invalidate cached results for scenarios using this tier — its economics just changed.
+        const affected = (db.prepare("SELECT id FROM scenarios WHERE pool_tier_id = ?").all(args.id) as any[]).map(r => r.id);
+        if (affected.length > 0) {
+          db.prepare(`DELETE FROM scenario_results WHERE scenario_id IN (${affected.map(() => '?').join(',')})`).run(...affected);
+        }
+
+        return { content: [{ type: "text", text: `Pool tier '${name}' updated successfully.` }] };
+      }
+
+      if (args.action === "delete") {
+        if (!args.id) {
+          throw new z.ZodError([{ code: "custom", path: ["id"], message: "Identyfikator 'id' jest wymagany do usunięcia tieru." }]);
+        }
+        const current = db.prepare("SELECT name FROM pool_tiers WHERE id = ?").get(args.id) as any;
+        if (!current) {
+          return { content: [{ type: "text", text: `Pool tier with ID '${args.id}' not found.` }], isError: true };
+        }
+        if (!args.confirm) {
+          return {
+            content: [{
+              type: "text",
+              text: `Ostrzeżenie: Ta operacja usunie pool tier '${current.name}' (ID: ${args.id}) wraz z jego tabelą burn-rate. Scenariusze używające tego tieru utracą swój carrier 'pool'. Jest to akcja destrukcyjna. Aby kontynuować, wywołaj ponownie to narzędzie przekazując parametr 'confirm: true'.`
+            }]
+          };
+        }
+        db.transaction(() => {
+          db.prepare("UPDATE scenarios SET pool_tier_id = NULL WHERE pool_tier_id = ?").run(args.id);
+          db.prepare("DELETE FROM pool_burn_rates WHERE tier_id = ?").run(args.id);
+          db.prepare("DELETE FROM pool_tiers WHERE id = ?").run(args.id);
+        })();
+        return { content: [{ type: "text", text: `Pool tier '${current.name}' (ID: ${args.id}) deleted successfully.` }] };
+      }
+
+      throw new Error(`Nieobsługiwana akcja: ${args.action}`);
+    } catch (err: any) {
+      return formatSemanticError(err, "pool_tier_action");
     }
   }
 );

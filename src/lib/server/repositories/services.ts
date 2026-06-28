@@ -16,12 +16,13 @@ export const servicesRepository = {
              s.staffing_realization_lag_months, s.containment_rate,
              s.containment_start_rate, s.containment_ramp_months,
              s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift,
+             s.value_per_outcome,
              p.name as provider_name, p.model_name as provider_model_name
       FROM services s
       LEFT JOIN providers p ON s.provider_id = p.id
       ORDER BY s.status DESC, s.name ASC
     `).all() as any[];
-    
+
     return rows.map(r => ({
       id: r.id,
       name: r.name,
@@ -49,6 +50,7 @@ export const servicesRepository = {
       escalation_rate: r.escalation_rate || 0,
       failed_deflection_penalty: r.failed_deflection_penalty || 0,
       churn_rate_uplift: r.churn_rate_uplift || 0,
+      value_per_outcome: r.value_per_outcome,
       created_at: r.created_at,
       updated_at: r.updated_at,
       provider: r.provider_id ? {
@@ -78,6 +80,7 @@ export const servicesRepository = {
              s.staffing_realization_lag_months, s.containment_rate,
              s.containment_start_rate, s.containment_ramp_months,
              s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift,
+             s.value_per_outcome,
              p.name as provider_name, p.model_name as provider_model_name,
              p.input_price as provider_input_price, p.output_price as provider_output_price,
              p.currency as provider_currency,
@@ -136,6 +139,7 @@ export const servicesRepository = {
       escalation_rate: r.escalation_rate || 0,
       failed_deflection_penalty: r.failed_deflection_penalty || 0,
       churn_rate_uplift: r.churn_rate_uplift || 0,
+      value_per_outcome: r.value_per_outcome,
       created_at: r.created_at,
       updated_at: r.updated_at,
       provider: r.provider_id ? {
@@ -165,9 +169,9 @@ export const servicesRepository = {
         service_type, interaction_driver_type, monthly_volume, volume_growth_rate, interactions_per_customer_month,
         fully_loaded_cost_per_fte_month, productive_hours_per_fte_month, average_handle_time_seconds, baseline_fte,
         staffing_realization_lag_months, containment_rate, containment_start_rate, containment_ramp_months,
-        escalation_rate, failed_deflection_penalty, churn_rate_uplift, created_at, updated_at
+        escalation_rate, failed_deflection_penalty, churn_rate_uplift, value_per_outcome, created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.name,
@@ -195,10 +199,11 @@ export const servicesRepository = {
       data.escalation_rate || 0,
       data.failed_deflection_penalty || 0,
       data.churn_rate_uplift || 0,
+      data.value_per_outcome ?? null,
       now,
       now
     );
-    
+
     return {
       id,
       ...data,
@@ -219,6 +224,7 @@ export const servicesRepository = {
       escalation_rate: data.escalation_rate || 0,
       failed_deflection_penalty: data.failed_deflection_penalty || 0,
       churn_rate_uplift: data.churn_rate_uplift || 0,
+      value_per_outcome: data.value_per_outcome ?? null,
       created_at: now,
       updated_at: now
     };
@@ -254,13 +260,14 @@ export const servicesRepository = {
     const escalation_rate = data.escalation_rate !== undefined ? data.escalation_rate : current.escalation_rate;
     const failed_deflection_penalty = data.failed_deflection_penalty !== undefined ? data.failed_deflection_penalty : current.failed_deflection_penalty;
     const churn_rate_uplift = data.churn_rate_uplift !== undefined ? data.churn_rate_uplift : current.churn_rate_uplift;
+    const value_per_outcome = data.value_per_outcome !== undefined ? data.value_per_outcome : current.value_per_outcome;
 
     const now = new Date().toISOString();
-    
+
     db.prepare(`
       UPDATE services
-      SET name = ?, description = ?, status = ?, provider_id = ?, 
-          avg_input_tokens = ?, avg_output_tokens = ?, avg_requests_per_user_month = ?, 
+      SET name = ?, description = ?, status = ?, provider_id = ?,
+          avg_input_tokens = ?, avg_output_tokens = ?, avg_requests_per_user_month = ?,
           fixed_cost_per_month = ?, fixed_cost_currency = ?,
           service_type = ?, interaction_driver_type = ?, monthly_volume = ?,
           volume_growth_rate = ?, interactions_per_customer_month = ?,
@@ -269,7 +276,7 @@ export const servicesRepository = {
           staffing_realization_lag_months = ?, containment_rate = ?,
           containment_start_rate = ?, containment_ramp_months = ?,
           escalation_rate = ?, failed_deflection_penalty = ?, churn_rate_uplift = ?,
-          updated_at = ?
+          value_per_outcome = ?, updated_at = ?
       WHERE id = ?
     `).run(
       name,
@@ -297,6 +304,7 @@ export const servicesRepository = {
       escalation_rate,
       failed_deflection_penalty,
       churn_rate_uplift,
+      value_per_outcome ?? null,
       now,
       id
     );

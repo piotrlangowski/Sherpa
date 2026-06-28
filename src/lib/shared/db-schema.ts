@@ -927,4 +927,88 @@ function runDataMigrations(db: DatabaseConnection): void {
   if (resultsInvalidated17) {
     db.prepare("DELETE FROM scenario_results").run();
   }
+
+  // Migration 18: ADR 0009 (Foundation) — per-archetype revenue streams. Adds the per-outcome
+  // value field driving price_per_outcome (ADR 0007 Decision 4), the soft margin-threshold
+  // cascade (client_base global default → scenario override), and persists the computed driver
+  // profile + stream margins. The engine behavior change (agent/copilot outcome revenue now
+  // flows regardless of carrier) alters NPV for any monetized-outcome scenario, so cached
+  // results are invalidated once on upgrade.
+  let resultsInvalidated18 = false;
+
+  const serviceColumns18 = (db.prepare("PRAGMA table_info(services)").all() as any[]).map(c => c.name);
+  if (!serviceColumns18.includes('value_per_outcome')) {
+    db.prepare("ALTER TABLE services ADD COLUMN value_per_outcome REAL").run();
+  }
+
+  const clientBaseColumns18 = (db.prepare("PRAGMA table_info(client_base)").all() as any[]).map(c => c.name);
+  if (!clientBaseColumns18.includes('default_copilot_margin_threshold')) {
+    db.prepare("ALTER TABLE client_base ADD COLUMN default_copilot_margin_threshold REAL DEFAULT 0.78").run();
+  }
+  if (!clientBaseColumns18.includes('default_agent_margin_threshold')) {
+    db.prepare("ALTER TABLE client_base ADD COLUMN default_agent_margin_threshold REAL DEFAULT 0.62").run();
+  }
+
+  const scenarioCols18 = (db.prepare("PRAGMA table_info(scenarios)").all() as any[]).map(c => c.name);
+  if (!scenarioCols18.includes('copilot_margin_threshold')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN copilot_margin_threshold REAL").run();
+    resultsInvalidated18 = true;
+  }
+  if (!scenarioCols18.includes('agent_margin_threshold')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN agent_margin_threshold REAL").run();
+    resultsInvalidated18 = true;
+  }
+
+  const resultsCols18 = (db.prepare("PRAGMA table_info(scenario_results)").all() as any[]).map(c => c.name);
+  if (!resultsCols18.includes('driver_profile')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN driver_profile TEXT").run();
+  }
+  if (!resultsCols18.includes('stream_margins')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN stream_margins TEXT").run();
+  }
+
+  if (resultsInvalidated18) {
+    db.prepare("DELETE FROM scenario_results").run();
+  }
+
+  // Migration 19: ADR 0010 (Approach B) — unified credit pool. New tier entity + burn-rate table
+  // (a separate carrier, not overloaded onto 'addon' — ADR 0010 Decision 5). A pool scenario
+  // selects one tier via scenarios.pool_tier_id. New carrier behavior alters NPV for any scenario
+  // that adopts it, but since 'pool' didn't exist before this migration, no existing scenario can
+  // already use it — invalidation here is for schema-version hygiene, not behavior drift.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS pool_tiers (
+      id               TEXT PRIMARY KEY,
+      name             TEXT NOT NULL,
+      monthly_fee      REAL NOT NULL DEFAULT 0,
+      credit_pool_size REAL NOT NULL DEFAULT 0,
+      capture          REAL,
+      created_at       TEXT NOT NULL,
+      updated_at       TEXT NOT NULL
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS pool_burn_rates (
+      id         TEXT PRIMARY KEY,
+      tier_id    TEXT NOT NULL REFERENCES pool_tiers(id) ON DELETE CASCADE,
+      service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+      burn_rate  REAL NOT NULL DEFAULT 1
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pool_burn_rates_unique
+    ON pool_burn_rates(tier_id, service_id)
+  `).run();
+
+  const scenarioCols19 = (db.prepare("PRAGMA table_info(scenarios)").all() as any[]).map(c => c.name);
+  if (!scenarioCols19.includes('pool_tier_id')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN pool_tier_id TEXT REFERENCES pool_tiers(id)").run();
+  }
+
+  const resultsCols19 = (db.prepare("PRAGMA table_info(scenario_results)").all() as any[]).map(c => c.name);
+  if (!resultsCols19.includes('pool_economics')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN pool_economics TEXT").run();
+  }
 }

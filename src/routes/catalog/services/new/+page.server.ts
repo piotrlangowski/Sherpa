@@ -41,6 +41,8 @@ export const actions: Actions = {
     const escalationRate = parseFloat(formData.get('escalation_rate') as string || '0');
     const failedDeflectionPenalty = parseFloat(formData.get('failed_deflection_penalty') as string || '0');
     const churnRateUplift = parseFloat(formData.get('churn_rate_uplift') as string || '0');
+    const valuePerOutcomeStr = formData.get('value_per_outcome') as string;
+    const valuePerOutcome = valuePerOutcomeStr ? parseFloat(valuePerOutcomeStr) : null;
 
     if (!name || !status) {
       return fail(400, { error: 'Name and Status are required fields' });
@@ -72,7 +74,8 @@ export const actions: Actions = {
         containment_ramp_months: containmentRampMonths,
         escalation_rate: escalationRate,
         failed_deflection_penalty: failedDeflectionPenalty,
-        churn_rate_uplift: churnRateUplift
+        churn_rate_uplift: churnRateUplift,
+        value_per_outcome: valuePerOutcome
       });
       saveMonetizationFromForm('service', created.id, formData);
     } catch (err: any) {

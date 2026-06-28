@@ -43,6 +43,7 @@
   import { normalizeScenarioCurrency } from '$lib/shared/currency';
   import { formatCurrency, formatPercent, formatMonths, formatIrr, formatPI, getCurrencySymbol } from '$lib/utils/format';
   import { mode } from 'mode-watcher';
+  import { appState } from '$lib/stores/app.svelte';
 
   let { data, mode: wizardMode, action, form } = $props();
 
@@ -62,6 +63,7 @@
   let modelingType = $state<ModelingType>('incremental');
   let revenueCarrier = $state<RevenueCarrier | null>('cohort');
   let revenueBridge = $state<RevenueBridge | null>(null);
+  let poolTierId = $state<string>('');
   let selectedCohorts = $state<Record<string, boolean>>({});
   
   // Cohort picker filter
@@ -233,6 +235,7 @@
       modelingType = s.modeling_type ?? 'appraisal';
       revenueCarrier = s.revenue_carrier ?? 'cohort';
       revenueBridge = s.revenue_bridge ?? null;
+      poolTierId = s.pool_tier_id ?? '';
       expansion_vertical_id = s.expansion_vertical_id ?? null;
       penetration_baseline_months = s.penetration_baseline_months ?? 12;
       ai_acceleration_factor_arr = [s.ai_acceleration_factor ?? 0.6];
@@ -969,6 +972,7 @@
       <input type="hidden" name="modelingType" value={modelingType} />
       <input type="hidden" name="revenueCarrier" value={resolvedCarrier} />
       <input type="hidden" name="revenueBridge" value={revenueBridge || ''} />
+      <input type="hidden" name="pool_tier_id" value={resolvedCarrier === 'pool' ? poolTierId : ''} />
 
       <!-- Step 1: Details, Route & Scope selection -->
       <div class={currentStep === 1 ? 'block' : 'hidden'}>
@@ -1072,7 +1076,7 @@
           {#if selectedRouteOption === 'monetization'}
             <div class="space-y-3 glass-inset border border-border p-4 rounded-lg">
               <Label class="font-semibold text-xs text-muted-foreground">Appraisal Carrier Level</Label>
-              <div class="grid grid-cols-2 gap-3 mt-1">
+              <div class="grid grid-cols-3 gap-3 mt-1">
                 <label class="flex items-center space-x-2 text-xs cursor-pointer hover:bg-foreground/5 p-2 border rounded border-border/40 {revenueCarrier === 'feature' ? 'bg-primary/5 border-primary/50' : ''}">
                   <input type="radio" name="revenueCarrierOption" value="feature" checked={revenueCarrier === 'feature'} onclick={() => { revenueCarrier = 'feature'; }} class="accent-primary" />
                   <span class="font-medium">Atomic Service</span>
@@ -1081,8 +1085,39 @@
                   <input type="radio" name="revenueCarrierOption" value="pack" checked={revenueCarrier === 'pack'} onclick={() => { revenueCarrier = 'pack'; }} class="accent-primary" />
                   <span class="font-medium">Feature Pack</span>
                 </label>
+                <label class="flex items-center space-x-2 text-xs cursor-pointer hover:bg-foreground/5 p-2 border rounded border-border/40 {revenueCarrier === 'pool' ? 'bg-primary/5 border-primary/50' : ''}">
+                  <input type="radio" name="revenueCarrierOption" value="pool" checked={revenueCarrier === 'pool'} onclick={() => { revenueCarrier = 'pool'; }} class="accent-primary" />
+                  <span class="font-medium">Unified Credit Pool</span>
+                </label>
               </div>
             </div>
+
+            {#if revenueCarrier === 'pool'}
+              <div class="space-y-2 glass-inset border border-border p-4 rounded-lg mt-3">
+                <div class="flex items-center justify-between">
+                  <Label for="pool_tier_select" class="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Select Credit Pool Tier</Label>
+                  <a href="/catalog/pools" class="text-[10px] text-primary hover:underline">Manage Pools</a>
+                </div>
+                {#if !data.poolTiers || data.poolTiers.length === 0}
+                  <div class="text-xs text-rose-500 bg-rose-500/10 border border-rose-500/20 p-3 rounded-md">
+                    No credit pool tiers found in the catalog. Please <a href="/catalog/pools/new" class="underline font-semibold hover:text-rose-600">create a credit pool tier</a> first.
+                  </div>
+                {:else}
+                  <select
+                    id="pool_tier_select"
+                    bind:value={poolTierId}
+                    required
+                    class="w-full bg-background border border-input rounded-md px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-medium font-sans"
+                  >
+                    <option value="">-- Choose Pool Tier --</option>
+                    {#each data.poolTiers as tier}
+                      <option value={tier.id}>{tier.name} ({tier.credit_pool_size.toLocaleString()} credits/mo, {formatCurrency(tier.monthly_fee, appState.currency, 0)}/mo)</option>
+                    {/each}
+                  </select>
+                  <p class="text-[10px] text-muted-foreground mt-1">This scenario will draw usage from this credit pool under Approach B billing.</p>
+                {/if}
+              </div>
+            {/if}
           {/if}
 
           <!-- Opt-in Revenue Bridge: Only visible in Cohort carrier and when plans are selected -->
@@ -1642,21 +1677,21 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="space-y-4">
               <div class="space-y-1.5">
-                <Label for="evc_nba_annual_value" class="font-semibold text-xs">Next Best Alternative (Annual Reference Value, {getCurrencySymbol(data.settings.currency)})</Label>
+                <Label for="evc_nba_annual_value" class="font-semibold text-xs">Next Best Alternative (Annual Reference Value/Customer, {getCurrencySymbol(data.settings.currency)})</Label>
                 <NumberField id="evc_nba_annual_value" name="evc_nba_annual_value" required={false} min="0" step="0.01" bind:value={evc_nba_annual_value} placeholder="e.g. 50000.00" raw={true} grouped={true} decimals={2} class="text-right" />
-                <p class="text-[10px] text-muted-foreground">The annual cost/value of the customer's current non-AI alternative solution (e.g. human labor, legacy vendor).</p>
+                <p class="text-[10px] text-muted-foreground">Per single average customer (not your total base) — the annual cost/value of their current non-AI alternative (e.g. human labor, legacy vendor).</p>
               </div>
 
               <div class="space-y-1.5">
-                <Label for="evc_extra_positive_value" class="font-semibold text-xs">Extra Positive Value (Annual, {getCurrencySymbol(data.settings.currency)})</Label>
+                <Label for="evc_extra_positive_value" class="font-semibold text-xs">Extra Positive Value (Annual/Customer, {getCurrencySymbol(data.settings.currency)})</Label>
                 <NumberField id="evc_extra_positive_value" name="evc_extra_positive_value" required={false} min="0" step="0.01" bind:value={evc_extra_positive_value} placeholder="e.g. 10000.00" raw={true} grouped={true} decimals={2} class="text-right" />
-                <p class="text-[10px] text-muted-foreground">Other soft/hard annual benefits (e.g., higher quality, CSAT lift, risk reduction) not captured in labor/margin savings.</p>
+                <p class="text-[10px] text-muted-foreground">Per single average customer. Other soft/hard annual benefits (e.g., higher quality, CSAT lift, risk reduction) not captured in labor/margin savings.</p>
               </div>
 
               <div class="space-y-1.5">
-                <Label for="evc_negative_value" class="font-semibold text-xs">Negative Value / Switching Costs ({getCurrencySymbol(data.settings.currency)})</Label>
+                <Label for="evc_negative_value" class="font-semibold text-xs">Negative Value / Switching Costs (per Customer, {getCurrencySymbol(data.settings.currency)})</Label>
                 <NumberField id="evc_negative_value" name="evc_negative_value" required={false} min="0" step="0.01" bind:value={evc_negative_value} placeholder="e.g. 5000.00" raw={true} grouped={true} decimals={2} class="text-right" />
-                <p class="text-[10px] text-muted-foreground">Implementation fees, training costs, or any disadvantage compared to the Next Best Alternative.</p>
+                <p class="text-[10px] text-muted-foreground">Per single average customer. Implementation fees, training costs, or any disadvantage compared to the Next Best Alternative.</p>
               </div>
 
               <div class="space-y-4 pt-4 border-t border-border/40">
@@ -1695,7 +1730,7 @@
             <!-- Live Calculation & Projections Box -->
             <div class="space-y-4">
               <div class="glass border rounded-xl p-5 space-y-4 bg-primary/5">
-                <h4 class="text-xs font-bold text-primary uppercase tracking-wider">Live EVC Projections (First 12 Months)</h4>
+                <h4 class="text-xs font-bold text-primary uppercase tracking-wider">Live EVC Projections (per Customer, Monthly)</h4>
                 
                 {#if previewResult && previewResult.evc}
                   {@const evcObj = previewResult.evc}

@@ -9,6 +9,7 @@ import { costsRepository } from '$lib/server/repositories/costs';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
 import { providersRepository } from '$lib/server/repositories/providers';
 import { settingsRepository } from '$lib/server/repositories/settings';
+import { poolTiersRepository } from '$lib/server/repositories/pool-tiers';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
 import { validateRevenueIntegrity } from '$lib/shared/financial-math';
 import { fail, redirect } from '@sveltejs/kit';
@@ -23,6 +24,7 @@ export const load: PageServerLoad = async () => {
   const costs = costsRepository.getAll();
   const providers = providersRepository.getAll();
   const settings = settingsRepository.get();
+  const poolTiers = poolTiersRepository.getAll();
 
   return {
     clientBase,
@@ -33,7 +35,8 @@ export const load: PageServerLoad = async () => {
     plans,
     costs,
     providers,
-    settings
+    settings,
+    poolTiers
   };
 };
 
@@ -50,6 +53,7 @@ export const actions: Actions = {
     const modelingType = (formData.get('modelingType') as string) || 'appraisal';
     const revenueCarrier = (formData.get('revenueCarrier') as string) || null;
     const revenueBridge = (formData.get('revenueBridge') as string) || null;
+    const pool_tier_id = (formData.get('pool_tier_id') as string) || null;
 
     // S-curve Expansion (Phase 3)
     const expansion_vertical_id = (formData.get('expansion_vertical_id') as string) || null;
@@ -133,6 +137,7 @@ export const actions: Actions = {
       modeling_type: modelingType as any,
       revenue_carrier: revenueCarrier as any,
       revenue_bridge: revenueBridge as any,
+      pool_tier_id,
       plans,
       services,
       scope_cohorts
@@ -156,6 +161,7 @@ export const actions: Actions = {
         modeling_type: modelingType as any,
         revenue_carrier: revenueCarrier as any,
         revenue_bridge: revenueBridge as any,
+        pool_tier_id,
         vertical_ids: verticalIds,
         cohort_config_ids: cohortConfigIds,
         scope_overrides: scopeOverrides,

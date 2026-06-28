@@ -7,7 +7,9 @@ import {
   calculateScenario as pureCalculateScenario,
   runCaptureCurve as pureRunCaptureCurve,
   applyScopeOverrides,
-  validateRevenueIntegrity
+  validateRevenueIntegrity,
+  DEFAULT_COPILOT_MARGIN_THRESHOLD,
+  DEFAULT_AGENT_MARGIN_THRESHOLD
 } from '../../shared/financial-math.js';
 import { scenariosRepository } from '../repositories/scenarios';
 import { providersRepository } from '../repositories/providers';
@@ -15,6 +17,8 @@ import { cohortsRepository } from '../repositories/cohorts';
 import { settingsRepository } from '../repositories/settings';
 import { monetizationRepository } from '../repositories/monetization';
 import { entityOverridesRepository } from '../repositories/entity-overrides';
+import { clientBaseRepository } from '../repositories/client-base';
+import { poolTiersRepository } from '../repositories/pool-tiers';
 import db from '../db';
 
 import { normalizeScenarioCurrency } from '../../shared/currency.js';
@@ -195,6 +199,14 @@ export function applyEntityOverrides(
   return { services, costs, plans, providers };
 }
 
+/** Resolves a scenario's selected pool tier + its burn-rate table (ADR 0010), if any. */
+function resolvePoolTier(scenario: Scenario): { pool_tier?: Scenario['pool_tier']; pool_burn_rates?: Scenario['pool_burn_rates'] } {
+  if (!scenario.pool_tier_id) return {};
+  const tier = poolTiersRepository.getById(scenario.pool_tier_id);
+  if (!tier) return {};
+  return { pool_tier: tier, pool_burn_rates: poolTiersRepository.getBurnRates(scenario.pool_tier_id) };
+}
+
 export function resolveScenarioCohorts(scenario: Scenario): CohortConfig[] {
   let resolvedCohorts: CohortConfig[] = [];
 
@@ -222,7 +234,15 @@ export function calculateScenario(scenario: Scenario): CalculationResult {
       piUpper: 0,
       piLower: 0,
       irr: { monthly: null, annualNominal: null, status: 'blocked_by_integrity', displayable: false },
-      tco: 0
+      tco: 0,
+      driverProfile: 'seat_only',
+      streamMargins: {
+        copilot: null,
+        agent: null,
+        blended: 0,
+        copilotThreshold: DEFAULT_COPILOT_MARGIN_THRESHOLD,
+        agentThreshold: DEFAULT_AGENT_MARGIN_THRESHOLD
+      }
     };
   }
 
@@ -234,12 +254,22 @@ export function calculateScenario(scenario: Scenario): CalculationResult {
   const monetized = attachMonetization(scenario);
   const { services, costs, plans, providers } = applyEntityOverrides(monetized, allProviders);
 
+  // Per-stream margin thresholds (ADR 0009): scenario override wins, else the client_base
+  // global default. Resolved here (not in the pure engine) so it follows the same
+  // global-cascade pattern as gross_margin/adoption_ramp_months.
+  const clientBase = clientBaseRepository.get();
+  const copilot_margin_threshold = scenario.copilot_margin_threshold ?? clientBase.default_copilot_margin_threshold ?? DEFAULT_COPILOT_MARGIN_THRESHOLD;
+  const agent_margin_threshold = scenario.agent_margin_threshold ?? clientBase.default_agent_margin_threshold ?? DEFAULT_AGENT_MARGIN_THRESHOLD;
+
   const runtimeScenario = {
     ...monetized,
     scope_cohorts: resolvedConfigs,
     services,
     costs,
-    plans
+    plans,
+    copilot_margin_threshold,
+    agent_margin_threshold,
+    ...resolvePoolTier(scenario)
   };
 
   const settings = settingsRepository.get();
@@ -294,7 +324,10 @@ export function runAndSaveScenario(scenarioId: string): CalculationResult {
     evc: result.evc ? { ...result.evc, captureCurve: captureCurve ?? undefined } : null,
     evc_price_floor: result.evc?.priceFloor ?? null,
     evc_price_target: result.evc?.priceTarget ?? null,
-    evc_price_ceiling: result.evc?.priceCeiling ?? null
+    evc_price_ceiling: result.evc?.priceCeiling ?? null,
+    driver_profile: result.driverProfile,
+    stream_margins: result.streamMargins,
+    pool_economics: result.poolEconomics ?? null
   });
 
   return result;
@@ -321,12 +354,19 @@ export function runCaptureCurve(scenario: Scenario): CaptureCurveResult {
   const monetized = attachMonetization(scenario);
   const { services, costs, plans, providers } = applyEntityOverrides(monetized, allProviders);
 
+  const clientBase = clientBaseRepository.get();
+  const copilot_margin_threshold = scenario.copilot_margin_threshold ?? clientBase.default_copilot_margin_threshold ?? DEFAULT_COPILOT_MARGIN_THRESHOLD;
+  const agent_margin_threshold = scenario.agent_margin_threshold ?? clientBase.default_agent_margin_threshold ?? DEFAULT_AGENT_MARGIN_THRESHOLD;
+
   const runtimeScenario = {
     ...monetized,
     scope_cohorts: resolvedConfigs,
     services,
     costs,
-    plans
+    plans,
+    copilot_margin_threshold,
+    agent_margin_threshold,
+    ...resolvePoolTier(scenario)
   };
 
   const settings = settingsRepository.get();

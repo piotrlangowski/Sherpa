@@ -54,6 +54,7 @@
   let escalationRate = $state(service.escalation_rate || 0);
   let failedDeflectionPenalty = $state(service.failed_deflection_penalty || 0);
   let churnRateUplift = $state(service.churn_rate_uplift || 0);
+  let valuePerOutcome = $state(service.value_per_outcome ?? null);
 
   // Find active provider and calculate cost estimations
   let activeProvider = $derived(providers.find(p => p.id === providerId));
@@ -492,6 +493,15 @@
           </p>
         </div>
       {/if}
+
+      <!-- Outcome pricing value (ADR 0007 Decision 4 / ADR 0009) -->
+      <div class="glass border rounded-xl p-6 space-y-1.5">
+        <Label for="value_per_outcome">Economic Value per Outcome (optional)</Label>
+        <NumberField id="value_per_outcome" name="value_per_outcome" min="0" step="0.01" placeholder="e.g. 25.00" bind:value={valuePerOutcome} required={false} raw={true} grouped={true} decimals={2} class="text-right max-w-xs" />
+        <p class="text-xs text-muted-foreground">
+          The value created per single outcome (e.g. per resolved ticket). When this service's billing model below is set to "Outcome-based", its price per outcome is derived automatically as <code>capture target % × this value</code>, instead of being set manually.
+        </p>
+      </div>
 
       <MonetizationFields monetization={service.monetization} inheritedFromLabel="from its Pack or Plan" />
 

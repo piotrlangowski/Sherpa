@@ -34,24 +34,28 @@ export const clientBaseRepository = {
     const default_acquisition_uplift = data.default_acquisition_uplift !== undefined ? data.default_acquisition_uplift : current.default_acquisition_uplift;
     const default_gross_margin = data.default_gross_margin !== undefined ? data.default_gross_margin : (current.default_gross_margin !== undefined ? current.default_gross_margin : 1.0);
     const default_adoption_ramp_months = data.default_adoption_ramp_months !== undefined ? data.default_adoption_ramp_months : (current.default_adoption_ramp_months !== undefined ? current.default_adoption_ramp_months : 0);
+    const default_copilot_margin_threshold = data.default_copilot_margin_threshold !== undefined ? data.default_copilot_margin_threshold : (current.default_copilot_margin_threshold !== undefined ? current.default_copilot_margin_threshold : 0.78);
+    const default_agent_margin_threshold = data.default_agent_margin_threshold !== undefined ? data.default_agent_margin_threshold : (current.default_agent_margin_threshold !== undefined ? current.default_agent_margin_threshold : 0.62);
     const now = new Date().toISOString();
-    
+
     db.prepare(`
       UPDATE client_base
       SET total_users = ?, default_arpu = ?, default_monthly_churn_rate = ?,
           default_monthly_acquisition = ?, default_acquisition_growth_rate = ?,
           default_ai_adoption_rate = ?, default_retention_floor = ?,
           default_expansion_rate = ?, default_arpu_uplift = ?, default_arpu_uplift_percent = ?,
-          default_churn_reduction = ?, default_acquisition_uplift = ?, 
-          default_gross_margin = ?, default_adoption_ramp_months = ?, updated_at = ?
+          default_churn_reduction = ?, default_acquisition_uplift = ?,
+          default_gross_margin = ?, default_adoption_ramp_months = ?,
+          default_copilot_margin_threshold = ?, default_agent_margin_threshold = ?, updated_at = ?
       WHERE id = 'singleton'
     `).run(
       total_users, default_arpu, default_monthly_churn_rate,
       default_monthly_acquisition, default_acquisition_growth_rate,
       default_ai_adoption_rate, default_retention_floor,
       default_expansion_rate, default_arpu_uplift, default_arpu_uplift_percent,
-      default_churn_reduction, default_acquisition_uplift, 
-      default_gross_margin, default_adoption_ramp_months, now
+      default_churn_reduction, default_acquisition_uplift,
+      default_gross_margin, default_adoption_ramp_months,
+      default_copilot_margin_threshold, default_agent_margin_threshold, now
     );
     
     return this.get();

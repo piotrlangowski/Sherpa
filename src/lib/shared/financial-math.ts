@@ -19,6 +19,7 @@ import type {
   SensitivityParamResult,
   SensitivityAnalysisResult,
   MonetizationConfig,
+  MonetizationType,
   CreditSettings,
   MonetizationRevenueResult,
   IrrResult,
@@ -34,7 +35,15 @@ import type {
   EvcResult,
   Currency,
   CaptureCurveResult,
-  CaptureCurvePoint
+  CaptureCurvePoint,
+  PricingCorridorPoint,
+  PricingCorridorResult,
+  PocketMarginWaterfallStep,
+  PocketMarginWaterfallResult,
+  DriverProfile,
+  StreamMargins,
+  PoolAttribution,
+  PoolEconomics
 } from './types.js';
 
 /**
@@ -347,6 +356,37 @@ export const DEFAULT_CREDIT_SETTINGS: CreditSettings = {
  */
 export const REVENUE_INTEGRITY_TOLERANCE = 1.2;
 
+/** Soft (warn-only) per-stream gross-margin floors (ADR 0009). Cascade: client_base global
+ *  default → per-scenario override; these are the pure-engine fallback when no override is given. */
+export const DEFAULT_COPILOT_MARGIN_THRESHOLD = 0.78;
+export const DEFAULT_AGENT_MARGIN_THRESHOLD = 0.62;
+
+/** ADR 0010 parameters (settled 2026-06-28): hybrid-billed pool overage carries a >1x markup. */
+export const HYBRID_OVERAGE_MARKUP = 1.3;
+
+/**
+ * Classifies a scenario's service mix into a driver profile (ADR 0009): which
+ * archetype(s) actually carry value. service_type defaults to 'copilot' (the DB
+ * default) when unset, matching the rest of the engine's archetype branching.
+ */
+export function detectDriverProfile(
+  scenario: Pick<Scenario, 'services' | 'plans' | 'modeling_type' | 'revenue_carrier' | 'revenue_bridge'>
+): DriverProfile {
+  const services = scenario.services ?? [];
+  const hasAgent = services.some(s => s.service_type === 'agent');
+  const hasCopilotService = services.some(s => (s.service_type ?? 'copilot') !== 'agent');
+  // A seat-priced plan is the copilot/seat economy even with no literal copilot Service attached
+  // (ADR 0009 Phase A: copilot seat-plan + agent per-resolution as one two-track scenario) — but
+  // only when its seats actually book revenue (carrier 'plan', or 'cohort' bridged separate_market).
+  const carrier = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
+  const seatPlanBooksRevenue = carrier === 'plan' || (carrier === 'cohort' && scenario.revenue_bridge === 'separate_market');
+  const hasSeatPlan = seatPlanBooksRevenue && (scenario.plans ?? []).some(p => (p.seats ?? 0) > 0);
+  const hasCopilot = hasCopilotService || hasSeatPlan;
+  if (hasAgent && hasCopilot) return 'mixed';
+  if (hasAgent) return 'interaction_only';
+  return 'seat_only';
+}
+
 /**
  * Sum of (current_users × ai_adoption_rate) across all cohorts.
  * Represents the implied population that a plan's seats should be anchored to.
@@ -391,7 +431,8 @@ export function deriveModelingType(
   switch (carrier) {
     case 'plan':    return 'gtm';
     case 'pack':
-    case 'feature': return 'appraisal';
+    case 'feature':
+    case 'pool':    return 'appraisal';
     case 'cohort':
     default:        return revenueBridge ? 'appraisal' : 'incremental';
   }
@@ -498,20 +539,58 @@ export function buildPenetrationCurve(params: {
  * Returns 'block' when saving should be prevented, 'warn' when the user
  * should be alerted, and 'ok' when everything is anchored properly.
  */
+/**
+ * ADR 0009 Decision 1 (disjointness doctrine) — a service's monetized revenue is
+ * disjoint from the cohort/seat economy when it is an agent (per-interaction /
+ * per-outcome) service: a different event class, and often a different payer,
+ * than the seat subscription. A monetized *copilot* service shares the cohort's
+ * per-seat event (same user, same billing unit), so summing it with cohort ARPU
+ * would double-count — it is NOT disjoint.
+ */
+export function streamsDisjoint(scenario: Scenario): boolean {
+  const monetizedServices = (scenario.services ?? []).filter(
+    s => s.monetization && s.monetization.monetization_type !== 'none'
+  );
+  if (monetizedServices.length === 0) return true;
+  return monetizedServices.every(s => s.service_type === 'agent');
+}
+
 export function validateRevenueIntegrity(scenario: Scenario): RevenueIntegrityResult {
   const mt = scenario.modeling_type ?? 'appraisal';
   const carrier = resolveCarrier(mt, scenario.revenue_carrier);
 
-  // ADR 0001 — incremental scenarios must not have monetization or seats
+  // ADR 0010 Decision 4 — billing-homogeneity invariant. A shared credit pool only makes sense
+  // when every service drawing on it bills the same way; outcome pricing is Approach A and is
+  // never compatible with the pool (Approach B unifies billing into one tier fee instead).
+  if (carrier === 'pool') {
+    const types = new Set(
+      (scenario.services ?? [])
+        .map(s => s.monetization?.monetization_type)
+        .filter((t): t is MonetizationType => !!t && t !== 'none')
+    );
+    if (types.size > 1 || types.has('outcome')) {
+      return {
+        status: 'block',
+        severity: 'block',
+        message: `Credit-pool scenarios require every pool service to share the same billing model (addon, usage, or hybrid) — found: ${types.size > 0 ? [...types].join(', ') : 'none'}. Outcome-based pricing is Approach A and is not compatible with a shared pool.`
+      };
+    }
+  }
+
+  // ADR 0001 — incremental scenarios must not have non-disjoint monetization or seats.
+  // ADR 0009 Decision 1 relaxes this for monetized *agent* services: their outcome
+  // revenue is a disjoint second stream alongside cohort ARPU uplift, so it is
+  // legal (warn, not block). A monetized *copilot* service still shares the
+  // cohort's seat event and stays hard-blocked.
   if (mt === 'incremental') {
     const hasMonetization = (scenario.services ?? []).some(
       s => s.monetization && s.monetization.monetization_type !== 'none'
     );
-    if (hasMonetization) {
+    if (hasMonetization && !streamsDisjoint(scenario)) {
       return {
         status: 'block',
         severity: 'block',
-        message: 'Incremental scenarios cannot have monetization overrides. Remove monetization or switch to appraisal/GTM modeling.'
+        message: 'Incremental scenarios cannot have copilot monetization overrides (same seat economy as cohort ARPU uplift). Remove monetization, switch the service to the agent archetype, or switch to appraisal/GTM modeling.'
       };
     }
     const totalSeats = (scenario.plans ?? []).reduce((sum, p) => sum + (p.seats ?? 0), 0);
@@ -520,6 +599,13 @@ export function validateRevenueIntegrity(scenario: Scenario): RevenueIntegrityRe
         status: 'block',
         severity: 'block',
         message: 'Incremental scenarios cannot use plan seats as a revenue source. Remove seats or switch to GTM modeling.'
+      };
+    }
+    if (hasMonetization) {
+      return {
+        status: 'warn',
+        severity: 'warn',
+        message: 'Monetized agent service(s) book outcome revenue alongside cohort ARPU uplift as a disjoint second stream (ADR 0009). Their labor savings are excluded from revenue (memo only) to avoid double-counting price against cost-avoidance.'
       };
     }
     return { status: 'ok', severity: 'ok', message: null };
@@ -1152,12 +1238,14 @@ export function calculateScenario(
       }
     }
 
+    const captureTargetPct = sweepParams?.runtime_capture_pct !== undefined ? sweepParams.runtime_capture_pct : (scenario.evc_capture_target_pct ?? 0.30);
+
     const evcInputs: EvcInputs = {
       nbaAnnualValue: scenario.evc_nba_annual_value,
       extraPositiveValue: scenario.evc_extra_positive_value ?? 0,
       negativeValue: scenario.evc_negative_value ?? 0,
       captureCeilingPct: scenario.evc_capture_ceiling_pct ?? 0.50,
-      captureTargetPct: sweepParams?.runtime_capture_pct !== undefined ? sweepParams.runtime_capture_pct : (scenario.evc_capture_target_pct ?? 0.30),
+      captureTargetPct,
       captureFloorPct: scenario.evc_capture_floor_pct ?? 0.15,
       unitLaborSavingsAnnual,
       grossMargin: weightedGrossMargin
@@ -1168,6 +1256,17 @@ export function calculateScenario(
     // 3. Clone scenario and apply pricing overlay to the correct carrier
     const overlaidScenario = cloneScenario(scenario);
     overlaidScenario.price_from_evc = false; // Prevent recursion in final call
+
+    // ADR 0007 Decision 4 / ADR 0009 — derive price_per_outcome = captureTarget × value_per_outcome
+    // for any outcome-monetized service that carries a per-outcome value. Independent of which
+    // carrier books the seat-denominated price below (outcome revenue is a disjoint stream).
+    if (overlaidScenario.services) {
+      for (const s of overlaidScenario.services) {
+        if (s.monetization?.monetization_type === 'outcome' && s.value_per_outcome != null) {
+          s.monetization.price_per_outcome = captureTargetPct * s.value_per_outcome;
+        }
+      }
+    }
 
     const carrier = resolveCarrier(overlaidScenario.modeling_type, overlaidScenario.revenue_carrier);
 
@@ -1212,8 +1311,11 @@ export function calculateScenario(
 
     // 4. Calculate scenario using the overlaid parameters
     const finalResult = calculateScenario(overlaidScenario, allProviders, creditSettings, sweepParams);
-    // Recalculate EVC using the actual final timeline to get correct COGS/profit
     finalResult.evc = calculateEVC(finalResult.timeline, evcInputs);
+    if (finalResult.evc) {
+      finalResult.evc.pricingCorridor = buildPricingCorridor(scenario, finalResult.timeline, finalResult.evc);
+      finalResult.evc.pocketMarginWaterfall = buildPocketMarginWaterfall(scenario, finalResult.timeline, finalResult.evc);
+    }
     return finalResult;
   }
 
@@ -1283,11 +1385,19 @@ export function calculateScenario(
     providersMap.set(prov.id, prov);
   }
 
+  // Credit pool (ADR 0010) — map of service -> credits burned per activity unit.
+  const poolBurnRateMap = new Map((scenario.pool_burn_rates ?? []).map(br => [br.service_id, br.burn_rate]));
+
   const timeline: MonthlyBreakdown[] = [];
   let cumulativeCashFlow = 0;
   let cumulativeCashFlowLower = 0;
   const cashFlowsLower: number[] = [];
   let totalRevenueLowerSum = 0;
+  // Credit pool (ADR 0010) — lifetime sums, used post-loop for the attribution split (Decision 3)
+  // and the scenario-level pool economics summary.
+  let sumPoolConsumedCreditsUpper = 0;
+  let sumCopilotEvcValue = 0;
+  let sumAgentEvcValue = 0;
 
   const serviceRealizableHistory = new Map<string, number[]>();
 
@@ -1419,6 +1529,12 @@ export function calculateScenario(
         upperRevenue = monetizationUpper.totalRevenue + planSubscriptionRevenueUpper;
         lowerRevenue = monetizationLower.totalRevenue + planSubscriptionRevenueLower;
         break;
+      case 'pool':
+        // Tier fee + overage (ADR 0010) depend on this month's consumed credits, only known
+        // after the per-service loop below runs — added in there, not here.
+        upperRevenue = 0;
+        lowerRevenue = 0;
+        break;
       case 'cohort':
       default:
         upperRevenue = upperMarginSum + planSubscriptionRevenueUpper;
@@ -1438,8 +1554,19 @@ export function calculateScenario(
     let monthLaborSavingsCapacity = 0;
     let monthFailedDeflectionCost = 0;
     let monthAgentTokenCosts = 0;
+    let monthCopilotTokenCosts = 0;
     let monthOutcomeRevenueUpper = 0;
     let monthOutcomeRevenueLower = 0;
+    let monthAgentOutcomeRevenueUpper = 0;
+    let monthAgentOutcomeRevenueLower = 0;
+    let monthCopilotOutcomeRevenueUpper = 0;
+    let monthCopilotOutcomeRevenueLower = 0;
+    // Credit pool (ADR 0010) — credits burned this month and the "value created" proxy
+    // (value_per_outcome × activity, independent of capture) used for stream attribution.
+    let monthPoolConsumedCreditsUpper = 0;
+    let monthPoolConsumedCreditsLower = 0;
+    let monthCopilotEvcValueUpper = 0;
+    let monthAgentEvcValueUpper = 0;
 
     // A. Direct AI Services Costs (from scenario_services rollout)
     if (scenario.services) {
@@ -1470,6 +1597,16 @@ export function calculateScenario(
             const deflected = serviceInteractions * contain_t;
             const failed = serviceInteractions * failed_t;
 
+            // Credit pool (ADR 0010) — a resolved interaction is the agent's natural "activity"
+            // unit; both bands share the same figure since agent volume doesn't depend on
+            // activeAiUsersUpper/Lower (it's driven by monthly_volume / per-customer interactions).
+            const poolBurnRate = poolBurnRateMap.get(service.id);
+            if (poolBurnRate !== undefined) {
+              monthPoolConsumedCreditsUpper += deflected * poolBurnRate;
+              monthPoolConsumedCreditsLower += deflected * poolBurnRate;
+              monthAgentEvcValueUpper += deflected * (service.value_per_outcome ?? 0);
+            }
+
             const averageHandleTime = service.average_handle_time_seconds || 0;
             const productiveHours = service.productive_hours_per_fte_month || 120;
             const baselineFte = service.baseline_fte || 0;
@@ -1489,6 +1626,12 @@ export function calculateScenario(
             const lag = service.staffing_realization_lag_months || 0;
             const src = t - lag >= 0 ? realizableHistory[t - lag] : 0;
 
+            // ADR 0009 Decision 4 covers any billing mechanism, not just outcome pricing — a pool-
+            // billed agent (addon/usage/hybrid, ADR 0010) is monetized too, just via the shared
+            // credit pool instead of a per-outcome price. isMonetizedOutcome stays narrower: it
+            // only gates the per-outcome pricing block below, which is specific to that one mechanism.
+            const isMonetized = !!service.monetization && service.monetization.monetization_type !== 'none';
+            const isMonetizedOutcome = service.monetization?.monetization_type === 'outcome';
             const serviceLaborCash = Math.floor(src) * fullyLoadedCost;
             const serviceLaborCapacity = (realizable - Math.floor(src)) * fullyLoadedCost;
 
@@ -1508,8 +1651,15 @@ export function calculateScenario(
 
             monthTotalInteractions += serviceInteractions;
             monthDeflectedInteractions += deflected;
-            monthLaborSavingsCash += serviceLaborCash;
-            monthLaborSavingsCapacity += serviceLaborCapacity;
+            // ADR 0009 Decision 4: a monetized agent's labor savings become a memo-only EVC anchor
+            // (its real revenue is the price it's billed at, whatever the mechanism), not cash —
+            // otherwise price and labor-savings would double-count the same value creation.
+            if (isMonetized) {
+              monthLaborSavingsCapacity += serviceLaborCash + serviceLaborCapacity;
+            } else {
+              monthLaborSavingsCash += serviceLaborCash;
+              monthLaborSavingsCapacity += serviceLaborCapacity;
+            }
             monthFailedDeflectionCost += failedCost;
             monthAgentTokenCosts += totalAgentTokenCost;
 
@@ -1517,20 +1667,27 @@ export function calculateScenario(
             tokenCostsLower += totalAgentTokenCost;
             opex += failedCost;
 
-            // Outcome pricing logic for Agent
-            if (service.monetization?.monetization_type === 'outcome') {
-              const config = service.monetization;
+            // Outcome pricing logic for Agent — a disjoint second stream (ADR 0009 Decision 1),
+            // booked regardless of revenue carrier.
+            if (isMonetizedOutcome) {
+              const config = service.monetization!;
               const price = config.price_per_outcome || 0;
+              let revUpper = 0;
+              let revLower = 0;
               if (config.outcome_basis === 'per_user') {
-                monthOutcomeRevenueUpper += activeAiUsersUpper * (config.outcomes_per_user_month || 0) * price;
-                monthOutcomeRevenueLower += activeAiUsersLower * (config.outcomes_per_user_month || 0) * price;
+                revUpper = activeAiUsersUpper * (config.outcomes_per_user_month || 0) * price;
+                revLower = activeAiUsersLower * (config.outcomes_per_user_month || 0) * price;
               } else if (config.outcome_basis === 'deflected') {
-                monthOutcomeRevenueUpper += deflected * price;
-                monthOutcomeRevenueLower += deflected * price;
+                revUpper = deflected * price;
+                revLower = deflected * price;
               } else if (config.outcome_basis === 'interactions') {
-                monthOutcomeRevenueUpper += serviceInteractions * price;
-                monthOutcomeRevenueLower += serviceInteractions * price;
+                revUpper = serviceInteractions * price;
+                revLower = serviceInteractions * price;
               }
+              monthOutcomeRevenueUpper += revUpper;
+              monthOutcomeRevenueLower += revLower;
+              monthAgentOutcomeRevenueUpper += revUpper;
+              monthAgentOutcomeRevenueLower += revLower;
             }
           } else {
             let realizableHistory = serviceRealizableHistory.get(service.id);
@@ -1560,33 +1717,116 @@ export function calculateScenario(
             const serviceFixedCost = service.fixed_cost_per_month || 0;
             tokenCostsUpper += serviceTokenCostUpper + serviceFixedCost;
             tokenCostsLower += serviceTokenCostLower + serviceFixedCost;
+            monthCopilotTokenCosts += serviceTokenCostUpper + serviceFixedCost;
 
-            // Outcome pricing logic for Copilot
+            // Credit pool (ADR 0010) — a request is the copilot's natural "activity" unit.
+            const poolBurnRate = poolBurnRateMap.get(service.id);
+            if (poolBurnRate !== undefined) {
+              const activityUpper = activeAiUsersUpper * (service.avg_requests_per_user_month || 0);
+              const activityLower = activeAiUsersLower * (service.avg_requests_per_user_month || 0);
+              monthPoolConsumedCreditsUpper += activityUpper * poolBurnRate;
+              monthPoolConsumedCreditsLower += activityLower * poolBurnRate;
+              monthCopilotEvcValueUpper += activityUpper * (service.value_per_outcome ?? 0);
+            }
+
+            // Outcome pricing logic for Copilot — a disjoint second stream (ADR 0009 Decision 1),
+            // booked regardless of revenue carrier.
             if (service.monetization?.monetization_type === 'outcome') {
               const config = service.monetization;
               const price = config.price_per_outcome || 0;
+              let revUpper = 0;
+              let revLower = 0;
               if (config.outcome_basis === 'per_user') {
-                monthOutcomeRevenueUpper += activeAiUsersUpper * (config.outcomes_per_user_month || 0) * price;
-                monthOutcomeRevenueLower += activeAiUsersLower * (config.outcomes_per_user_month || 0) * price;
+                revUpper = activeAiUsersUpper * (config.outcomes_per_user_month || 0) * price;
+                revLower = activeAiUsersLower * (config.outcomes_per_user_month || 0) * price;
               } else if (config.outcome_basis === 'interactions') {
                 const serviceInteractionsUpper = activeAiUsersUpper * (service.avg_requests_per_user_month || 0);
                 const serviceInteractionsLower = activeAiUsersLower * (service.avg_requests_per_user_month || 0);
-                monthOutcomeRevenueUpper += serviceInteractionsUpper * price;
-                monthOutcomeRevenueLower += serviceInteractionsLower * price;
+                revUpper = serviceInteractionsUpper * price;
+                revLower = serviceInteractionsLower * price;
               }
+              monthOutcomeRevenueUpper += revUpper;
+              monthOutcomeRevenueLower += revLower;
+              monthCopilotOutcomeRevenueUpper += revUpper;
+              monthCopilotOutcomeRevenueLower += revLower;
             }
           }
         }
       }
     }
 
-    // Add labor savings cash (Decision 2: labor cash in BOTH bands)
+    // Add labor savings cash (Decision 2: labor cash in BOTH bands). Already excludes
+    // monetized-outcome agents (ADR 0009 Decision 4 — their labor savings are memo-only above).
     upperRevenue += monthLaborSavingsCash;
     lowerRevenue += monthLaborSavingsCash;
 
-    if (carrierIncludesMonetization) {
-      upperRevenue += monthOutcomeRevenueUpper;
-      lowerRevenue += monthOutcomeRevenueLower;
+    // Outcome revenue (copilot + agent) is a disjoint second stream — it books regardless of
+    // the revenue carrier (ADR 0009 Decision 1), unlike addon/usage/hybrid monetization which
+    // shares the cohort/plan seat economy and stays carrier-gated above.
+    upperRevenue += monthOutcomeRevenueUpper;
+    lowerRevenue += monthOutcomeRevenueLower;
+
+    // Per-stream attribution (ADR 0009): agent stream = labor-savings cash (unmonetized) +
+    // agent outcome revenue (monetized); copilot stream = copilot outcome revenue. The
+    // seat/cohort economy above (upperMarginSum / planSubscriptionRevenue / monetization
+    // totals) stays the existing carrier-resolved revenue, unattributed to either stream.
+    // LIMITATION: In a mixed scenario where copilot value is carried solely by cohort ARPU uplift
+    // (no plan seats or outcome monetization), copilotRevenue stays 0, resulting in
+    // copilot stream margin = null. The copilot margin guardrail (e.g. 78%) is inactive in this case.
+    const agentRevenueUpper = monthLaborSavingsCash + monthAgentOutcomeRevenueUpper;
+    // Plan-seat subscription revenue is the seat economy (ADR 0009 Phase A: two-track hybrid
+    // billing) — attributed to copilot whenever it's booked above (carrier 'plan', or 'cohort'
+    // with a 'separate_market' bridge). Zero in every other case, so this is always safe to add.
+    const copilotRevenueUpper = monthCopilotOutcomeRevenueUpper + planSubscriptionRevenueUpper;
+    const agentCogs = monthAgentTokenCosts + monthFailedDeflectionCost;
+    const copilotCogs = monthCopilotTokenCosts;
+
+    // Credit pool (ADR 0010) — tier fee (Decision 2) + overage (Decision 4), gated on the credit
+    // value hybrid (Decision 1). Stream attribution (Decision 3) happens after the full timeline
+    // is built, since it's based on lifetime EVC weight, not this month's consumption alone.
+    let monthPoolBreakageUpper = 0;
+    if (carrier === 'pool' && scenario.pool_tier) {
+      const tier = scenario.pool_tier;
+      const captureForPool = tier.capture ?? scenario.evc_capture_target_pct ?? 0.30;
+
+      // Blended $/credit: this month's actual token cost ÷ credits consumed earning it. Token
+      // costs already include every service (pool homogeneity means that's effectively the pool's
+      // services), so reusing tokenCostsUpper avoids a second, pool-scoped COGS accumulator.
+      const creditFloorUpper = monthPoolConsumedCreditsUpper > 0 ? tokenCostsUpper / monthPoolConsumedCreditsUpper : 0;
+      const valuePerCreditUpper = monthPoolConsumedCreditsUpper > 0
+        ? (captureForPool * (monthCopilotEvcValueUpper + monthAgentEvcValueUpper)) / monthPoolConsumedCreditsUpper
+        : 0;
+      const creditValueUpper = Math.max(creditFloorUpper, valuePerCreditUpper);
+
+      // Breakage (Decision 2/Parameters): unused credits valued at the cost floor, memo only —
+      // no rollover, no cash impact (the full fee is already booked below regardless of usage).
+      monthPoolBreakageUpper = Math.max(0, tier.credit_pool_size - monthPoolConsumedCreditsUpper) * creditFloorUpper;
+
+      // Pool exhaustion (Decision 4) — behavior from the pool services' shared monetization_type
+      // (homogeneity is enforced by validateRevenueIntegrity, so any one service's type applies).
+      const poolService = (scenario.services ?? []).find(s => poolBurnRateMap.has(s.id));
+      const poolBillingType = poolService?.monetization?.monetization_type;
+      let overageRevenueUpper = 0;
+      if (monthPoolConsumedCreditsUpper > tier.credit_pool_size) {
+        const overageCreditsUpper = monthPoolConsumedCreditsUpper - tier.credit_pool_size;
+        if (poolBillingType === 'hybrid') {
+          overageRevenueUpper = overageCreditsUpper * creditValueUpper * HYBRID_OVERAGE_MARKUP;
+        } else if (poolBillingType === 'usage') {
+          overageRevenueUpper = overageCreditsUpper * creditValueUpper;
+        }
+        // 'addon' -> hard cap: no overage revenue: the excess activity's COGS (already booked via
+        // tokenCostsUpper above) becomes a margin hit, modeling real hard-cap risk.
+      }
+
+      // Overage pricing only varies the volume by band in principle; reusing the upper-band
+      // credit value for both keeps this in line with how plan/seat figures are also only
+      // banded when an expansion curve is active (none here).
+      upperRevenue += tier.monthly_fee + overageRevenueUpper;
+      lowerRevenue += tier.monthly_fee + overageRevenueUpper;
+
+      sumPoolConsumedCreditsUpper += monthPoolConsumedCreditsUpper;
+      sumCopilotEvcValue += monthCopilotEvcValueUpper;
+      sumAgentEvcValue += monthAgentEvcValueUpper;
     }
 
     // B. OPEX / CAPEX Line Items (from scenario_costs)
@@ -1648,7 +1888,15 @@ export function calculateScenario(
       laborSavingsCash: parseFloat(monthLaborSavingsCash.toFixed(2)),
       laborSavingsCapacity: parseFloat(monthLaborSavingsCapacity.toFixed(2)),
       failedDeflectionCost: parseFloat(monthFailedDeflectionCost.toFixed(2)),
-      agentTokenCosts: parseFloat(monthAgentTokenCosts.toFixed(2))
+      agentTokenCosts: parseFloat(monthAgentTokenCosts.toFixed(2)),
+      // Per-stream revenue/COGS (ADR 0009)
+      copilotRevenue: parseFloat(copilotRevenueUpper.toFixed(2)),
+      copilotCogs: parseFloat(copilotCogs.toFixed(2)),
+      copilotTokenCosts: parseFloat(monthCopilotTokenCosts.toFixed(2)),
+      agentRevenue: parseFloat(agentRevenueUpper.toFixed(2)),
+      agentCogs: parseFloat(agentCogs.toFixed(2)),
+      // Credit pool (ADR 0010)
+      poolBreakage: parseFloat(monthPoolBreakageUpper.toFixed(2))
     });
 
     cashFlowsLower.push(parseFloat(netCashFlowLower.toFixed(2)));
@@ -1701,7 +1949,74 @@ export function calculateScenario(
       grossMargin: avgGrossMargin
     };
     evc = calculateEVC(timeline, evcInputs);
+    if (evc) {
+      evc.pricingCorridor = buildPricingCorridor(scenario, timeline, evc);
+      evc.pocketMarginWaterfall = buildPocketMarginWaterfall(scenario, timeline, evc);
+    }
   }
+
+  const driverProfile = detectDriverProfile(scenario);
+
+  // Credit pool (ADR 0010 Decision 3) — attribute each month's pool revenue (tier fee + overage,
+  // already the entirety of that month's `revenue` for a pool carrier — labor savings and outcome
+  // revenue are both excluded/absent under the billing-homogeneity invariant) to copilot/agent
+  // proportional to the *lifetime* EVC weight. Resolved only now, after the full timeline (and
+  // hence the lifetime EVC sums) is available — mutating the already-built MonthlyBreakdown
+  // objects before streamMargins sums them below.
+  let poolEconomics: PoolEconomics | null = null;
+  const carrierForPool = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
+  if (carrierForPool === 'pool' && scenario.pool_tier) {
+    const totalEvcValue = sumCopilotEvcValue + sumAgentEvcValue;
+    const attribution: PoolAttribution = totalEvcValue > 0
+      ? {
+          copilotShare: parseFloat((sumCopilotEvcValue / totalEvcValue).toFixed(4)),
+          agentShare: parseFloat((sumAgentEvcValue / totalEvcValue).toFixed(4)),
+          method: 'evc'
+        }
+      : { copilotShare: 0.5, agentShare: 0.5, method: 'even_split_fallback' };
+
+    let totalOverageRevenue = 0;
+    let totalBreakage = 0;
+    for (const m of timeline) {
+      m.copilotRevenue = parseFloat(((m.copilotRevenue ?? 0) + m.revenue * attribution.copilotShare).toFixed(2));
+      m.agentRevenue = parseFloat(((m.agentRevenue ?? 0) + m.revenue * attribution.agentShare).toFixed(2));
+      totalOverageRevenue += Math.max(0, m.revenue - scenario.pool_tier.monthly_fee);
+      totalBreakage += m.poolBreakage ?? 0;
+    }
+
+    poolEconomics = {
+      tierMonthlyFee: scenario.pool_tier.monthly_fee,
+      poolSize: scenario.pool_tier.credit_pool_size,
+      totalConsumedCredits: parseFloat(sumPoolConsumedCreditsUpper.toFixed(2)),
+      totalBreakage: parseFloat(totalBreakage.toFixed(2)),
+      totalOverageRevenue: parseFloat(totalOverageRevenue.toFixed(2)),
+      attribution
+    };
+  }
+
+  const copilotMarginThreshold = scenario.copilot_margin_threshold ?? DEFAULT_COPILOT_MARGIN_THRESHOLD;
+  const agentMarginThreshold = scenario.agent_margin_threshold ?? DEFAULT_AGENT_MARGIN_THRESHOLD;
+
+  const sumCopilotRevenue = timeline.reduce((s, m) => s + (m.copilotRevenue ?? 0), 0);
+  const sumCopilotCogs = timeline.reduce((s, m) => s + (m.copilotCogs ?? 0), 0);
+  const sumAgentRevenue = timeline.reduce((s, m) => s + (m.agentRevenue ?? 0), 0);
+  const sumAgentCogs = timeline.reduce((s, m) => s + (m.agentCogs ?? 0), 0);
+  // Blended = revenue-weighted blend of the two billing streams (ADR 0009 Decision 6 / methodology
+  // Step 4): [(Rev_cop − COGS_cop) + (Rev_ag − COGS_ag)] / (Rev_cop + Rev_ag). Built on the same
+  // revenue base and the same COGS as the per-stream margins — including the agent's failed-deflection
+  // penalty, which sits in opex (not tokenCosts) — so blended reconciles with the streams by
+  // construction. (A scenario-wide tokenCosts ratio silently dropped failed-deflection cost and folded
+  // in unattributed cohort/seat revenue, so it didn't tie out to the per-stream margins.)
+  const sumStreamRevenue = sumCopilotRevenue + sumAgentRevenue;
+  const sumStreamCogs = sumCopilotCogs + sumAgentCogs;
+
+  const streamMargins: StreamMargins = {
+    copilot: sumCopilotRevenue > 0 ? parseFloat(((sumCopilotRevenue - sumCopilotCogs) / sumCopilotRevenue).toFixed(4)) : null,
+    agent: sumAgentRevenue > 0 ? parseFloat(((sumAgentRevenue - sumAgentCogs) / sumAgentRevenue).toFixed(4)) : null,
+    blended: sumStreamRevenue > 0 ? parseFloat(((sumStreamRevenue - sumStreamCogs) / sumStreamRevenue).toFixed(4)) : 0,
+    copilotThreshold: copilotMarginThreshold,
+    agentThreshold: agentMarginThreshold
+  };
 
   return {
     timeline,
@@ -1713,7 +2028,10 @@ export function calculateScenario(
     piLower,
     irr,
     tco,
-    evc
+    evc,
+    driverProfile,
+    streamMargins,
+    poolEconomics
   };
 }
 
@@ -1779,6 +2097,117 @@ export function calculateEVC(timeline: MonthlyBreakdown[], inputs: EvcInputs): E
     customerSurplusPerUserMonth,
     vendorGrossProfitPerUserMonth,
     cogsPerUserMonth
+  };
+}
+
+export function buildPricingCorridor(
+  scenario: Scenario,
+  timeline: MonthlyBreakdown[],
+  evc: EvcResult
+): PricingCorridorResult {
+  const lastMonth = timeline[timeline.length - 1];
+  const aiUsers = lastMonth ? lastMonth.aiUsers : 0;
+  const customers = lastMonth ? lastMonth.customers : 0;
+
+  const u = aiUsers > 0 && lastMonth ? lastMonth.tokenCosts / aiUsers : 0;
+  const o = customers > 0 && lastMonth ? lastMonth.opex / customers : 0;
+  const actualPrice = customers > 0 && lastMonth ? lastMonth.revenue / customers : 0;
+  const ceiling = evc.priceCeiling;
+
+  const cohorts = scenario.scope_cohorts || [];
+  
+  const points: PricingCorridorPoint[] = cohorts.map(cohort => {
+    const a = cohort.ai_adoption_rate ?? 0;
+    const gm = Math.max(0, Math.min(0.99, cohort.gross_margin ?? 1.0));
+    const cogs = a * u + o;
+    const floorTarget = cogs / (1 - gm);
+    
+    let status: 'loss' | 'below_margin' | 'healthy' | 'over_ceiling' = 'healthy';
+    if (actualPrice < cogs) {
+      status = 'loss';
+    } else if (actualPrice < floorTarget) {
+      status = 'below_margin';
+    } else if (actualPrice > ceiling) {
+      status = 'over_ceiling';
+    }
+
+    return {
+      cohortId: cohort.id,
+      cohortName: cohort.name,
+      adoptionRate: a,
+      grossMargin: cohort.gross_margin ?? 1.0,
+      cogs,
+      floorTarget,
+      ceiling,
+      status
+    };
+  });
+
+  // Sort ascending by cogs
+  points.sort((a, b) => a.cogs - b.cogs);
+
+  const hasBreak = points.some(p => p.status === 'loss');
+
+  // Compute blended/average reference lines
+  const blendedMediumCogs = evc.cogsPerUserMonth;
+  // Weighted or simple average of gross margin for the blended floor target
+  let avgGrossMargin = 1.0;
+  if (cohorts.length > 0) {
+    const totUsers = cohorts.reduce((s, cc) => s + (cc.current_users || 0), 0);
+    if (totUsers > 0) {
+      avgGrossMargin = cohorts.reduce(
+        (s, cc) => s + (cc.gross_margin !== undefined ? cc.gross_margin : 1.0) * (cc.current_users || 0), 0
+      ) / totUsers;
+    } else {
+      avgGrossMargin = cohorts.reduce(
+        (s, cc) => s + (cc.gross_margin !== undefined ? cc.gross_margin : 1.0), 0
+      ) / cohorts.length;
+    }
+  }
+  const clampedAvgGrossMargin = Math.max(0, Math.min(0.99, avgGrossMargin));
+  const blendedMediumFloorTarget = blendedMediumCogs / (1 - clampedAvgGrossMargin);
+
+  return {
+    points,
+    actualPrice,
+    blendedMediumCogs,
+    blendedMediumFloorTarget,
+    hasBreak
+  };
+}
+
+export function buildPocketMarginWaterfall(
+  scenario: Scenario,
+  timeline: MonthlyBreakdown[],
+  evc: EvcResult
+): PocketMarginWaterfallResult {
+  const lastMonth = timeline[timeline.length - 1];
+  const customers = lastMonth ? lastMonth.customers : 0;
+
+  // All per-customer/month so the bridge reconciles with evc.cogsPerUserMonth (= u + o).
+  const u = customers > 0 && lastMonth ? lastMonth.tokenCosts / customers : 0;
+  const o = customers > 0 && lastMonth ? lastMonth.opex / customers : 0;
+
+  // Realized price per customer
+  const actualPrice = customers > 0 && lastMonth ? lastMonth.revenue / customers : 0;
+
+  const steps: PocketMarginWaterfallStep[] = [
+    { name: 'Economic Value to Customer (EVC)', value: evc.evc, type: 'base' },
+    { name: 'Customer Surplus', value: -evc.customerSurplusPerUserMonth, type: 'delta' },
+    { name: 'Target Price', value: evc.priceTarget, type: 'total' },
+    { name: 'AI COGS', value: -u, type: 'delta' },
+    { name: 'Cost-to-Serve', value: -o, type: 'delta' },
+    { name: 'Pocket Margin', value: evc.priceTarget - u - o, type: 'total' }
+  ];
+
+  const pocketMargin = evc.priceTarget - u - o;
+  const reconciliationError = Math.abs((evc.evc - evc.customerSurplusPerUserMonth - u - o) - pocketMargin);
+
+  return {
+    steps,
+    actualPrice,
+    pocketMargin,
+    reconciliationError
   };
 }
 

@@ -7,7 +7,8 @@ export const scenariosRepository = {
     const rows = db.prepare(`
       SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.created_at, s.updated_at,
              s.capex_contingency_pct, s.modeling_type, s.revenue_carrier, s.revenue_bridge,
-             s.price_from_evc, s.adoption_elasticity,
+             s.price_from_evc, s.adoption_elasticity, s.copilot_margin_threshold, s.agent_margin_threshold,
+             s.pool_tier_id,
              r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index, r.calculated_at,
              r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status
       FROM scenarios s
@@ -87,6 +88,9 @@ export const scenariosRepository = {
         revenue_bridge: (r.revenue_bridge as RevenueBridge) || null,
         price_from_evc: !!r.price_from_evc,
         adoption_elasticity: r.adoption_elasticity ?? 0,
+        copilot_margin_threshold: r.copilot_margin_threshold,
+        agent_margin_threshold: r.agent_margin_threshold,
+        pool_tier_id: r.pool_tier_id,
         created_at: r.created_at,
         updated_at: r.updated_at,
         scope_verticals: vrtMap[r.id] || [],
@@ -128,7 +132,8 @@ export const scenariosRepository = {
              s.expansion_vertical_id, s.penetration_baseline_months, s.ai_acceleration_factor, s.ai_som_lift_pct,
              s.evc_nba_annual_value, s.evc_extra_positive_value, s.evc_negative_value,
              s.evc_capture_ceiling_pct, s.evc_capture_target_pct, s.evc_capture_floor_pct,
-             s.price_from_evc, s.adoption_elasticity,
+             s.price_from_evc, s.adoption_elasticity, s.copilot_margin_threshold, s.agent_margin_threshold,
+             s.pool_tier_id,
              s.created_at, s.updated_at
       FROM scenarios s
       WHERE s.id = ?
@@ -265,8 +270,14 @@ export const scenariosRepository = {
 
     // Load services in scenario
     const serviceRows = db.prepare(`
-      SELECT s.id, s.name, s.status, s.provider_id, s.avg_input_tokens, s.avg_output_tokens,
-             s.avg_requests_per_user_month, s.fixed_cost_per_month, s.fixed_cost_currency, ss.rollout_month
+      SELECT s.id, s.name, s.description, s.status, s.provider_id, s.avg_input_tokens, s.avg_output_tokens,
+             s.avg_requests_per_user_month, s.fixed_cost_per_month, s.fixed_cost_currency, ss.rollout_month,
+             s.service_type, s.interaction_driver_type, s.monthly_volume, s.volume_growth_rate,
+             s.interactions_per_customer_month, s.fully_loaded_cost_per_fte_month,
+             s.productive_hours_per_fte_month, s.average_handle_time_seconds, s.baseline_fte,
+             s.staffing_realization_lag_months, s.containment_rate, s.containment_start_rate,
+             s.containment_ramp_months, s.escalation_rate, s.failed_deflection_penalty, s.churn_rate_uplift,
+             s.value_per_outcome
       FROM services s
       JOIN scenario_services ss ON s.id = ss.service_id
       WHERE ss.scenario_id = ?
@@ -329,6 +340,9 @@ export const scenariosRepository = {
       evc_capture_floor_pct: r.evc_capture_floor_pct,
       price_from_evc: !!r.price_from_evc,
       adoption_elasticity: r.adoption_elasticity ?? 0,
+      copilot_margin_threshold: r.copilot_margin_threshold,
+      agent_margin_threshold: r.agent_margin_threshold,
+      pool_tier_id: r.pool_tier_id,
       created_at: r.created_at,
       updated_at: r.updated_at,
       scope_verticals: verticalRows,
@@ -367,10 +381,11 @@ export const scenariosRepository = {
           expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
           evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
           evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
-          price_from_evc, adoption_elasticity,
+          price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold,
+          pool_tier_id,
           created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, legacyRevenueSource, data.capex_contingency_pct ?? 0,
         data.modeling_type || 'appraisal', data.revenue_carrier || null, data.revenue_bridge || null,
@@ -378,6 +393,8 @@ export const scenariosRepository = {
         data.evc_nba_annual_value ?? null, data.evc_extra_positive_value ?? null, data.evc_negative_value ?? null,
         data.evc_capture_ceiling_pct ?? null, data.evc_capture_target_pct ?? null, data.evc_capture_floor_pct ?? null,
         data.price_from_evc ? 1 : 0, data.adoption_elasticity ?? 0,
+        data.copilot_margin_threshold ?? null, data.agent_margin_threshold ?? null,
+        data.pool_tier_id ?? null,
         now, now
       );
 
@@ -474,13 +491,16 @@ export const scenariosRepository = {
     const evc_capture_floor_pct = data.evc_capture_floor_pct !== undefined ? data.evc_capture_floor_pct : current.evc_capture_floor_pct;
     const price_from_evc = data.price_from_evc !== undefined ? data.price_from_evc : current.price_from_evc;
     const adoption_elasticity = data.adoption_elasticity !== undefined ? data.adoption_elasticity : current.adoption_elasticity;
+    const copilot_margin_threshold = data.copilot_margin_threshold !== undefined ? data.copilot_margin_threshold : current.copilot_margin_threshold;
+    const agent_margin_threshold = data.agent_margin_threshold !== undefined ? data.agent_margin_threshold : current.agent_margin_threshold;
+    const pool_tier_id = data.pool_tier_id !== undefined ? data.pool_tier_id : current.pool_tier_id;
     const now = new Date().toISOString();
 
     db.transaction(() => {
       const capex_contingency_pct = data.capex_contingency_pct !== undefined ? data.capex_contingency_pct : current.capex_contingency_pct;
       db.prepare(`
         UPDATE scenarios
-        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?, evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?, price_from_evc = ?, adoption_elasticity = ?, updated_at = ?
+        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?, evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?, price_from_evc = ?, adoption_elasticity = ?, copilot_margin_threshold = ?, agent_margin_threshold = ?, pool_tier_id = ?, updated_at = ?
         WHERE id = ?
       `).run(
         name, description || null, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier || null, revenue_bridge || null,
@@ -488,6 +508,7 @@ export const scenariosRepository = {
         evc_nba_annual_value ?? null, evc_extra_positive_value ?? null, evc_negative_value ?? null,
         evc_capture_ceiling_pct ?? null, evc_capture_target_pct ?? null, evc_capture_floor_pct ?? null,
         price_from_evc ? 1 : 0, adoption_elasticity ?? 0,
+        copilot_margin_threshold ?? null, agent_margin_threshold ?? null, pool_tier_id ?? null,
         now, id
       );
 
@@ -575,7 +596,8 @@ export const scenariosRepository = {
       SELECT id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
              payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
              revenue_integrity_status, revenue_integrity_message,
-             evc, evc_price_floor, evc_price_target, evc_price_ceiling
+             evc, evc_price_floor, evc_price_target, evc_price_ceiling,
+             driver_profile, stream_margins, pool_economics
       FROM scenario_results
       WHERE scenario_id = ?
     `).get(scenarioId) as any;
@@ -604,7 +626,10 @@ export const scenariosRepository = {
       evc: r.evc ? JSON.parse(r.evc) : null,
       evc_price_floor: r.evc_price_floor,
       evc_price_target: r.evc_price_target,
-      evc_price_ceiling: r.evc_price_ceiling
+      evc_price_ceiling: r.evc_price_ceiling,
+      driver_profile: r.driver_profile || null,
+      stream_margins: r.stream_margins ? JSON.parse(r.stream_margins) : null,
+      pool_economics: r.pool_economics ? JSON.parse(r.pool_economics) : null
     };
   },
 
@@ -614,12 +639,13 @@ export const scenariosRepository = {
 
     db.prepare(`
       INSERT OR REPLACE INTO scenario_results (
-        id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index, 
+        id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index,
         monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
         revenue_integrity_status, revenue_integrity_message,
-        evc, evc_price_floor, evc_price_target, evc_price_ceiling
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        evc, evc_price_floor, evc_price_target, evc_price_ceiling,
+        driver_profile, stream_margins, pool_economics
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       results.scenario_id,
@@ -643,7 +669,10 @@ export const scenariosRepository = {
       results.evc ? JSON.stringify(results.evc) : null,
       results.evc_price_floor ?? null,
       results.evc_price_target ?? null,
-      results.evc_price_ceiling ?? null
+      results.evc_price_ceiling ?? null,
+      results.driver_profile || null,
+      results.stream_margins ? JSON.stringify(results.stream_margins) : null,
+      results.pool_economics ? JSON.stringify(results.pool_economics) : null
     );
   },
 
@@ -685,5 +714,10 @@ export const scenariosRepository = {
       WHERE s.provider_id = ?
     `).all(providerId) as any[])
       .map(r => r.scenario_id);
+  },
+
+  findScenarioIdsByPoolTierId(tierId: string): string[] {
+    return (db.prepare(`SELECT id FROM scenarios WHERE pool_tier_id = ?`).all(tierId) as any[])
+      .map(r => r.id);
   }
 };

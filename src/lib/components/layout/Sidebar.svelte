@@ -6,18 +6,19 @@
 
   // Lucide Icons
   import Server from '@lucide/svelte/icons/server';
-  import Layers from '@lucide/svelte/icons/layers';
-  import CreditCard from '@lucide/svelte/icons/credit-card';
-  import GitFork from '@lucide/svelte/icons/git-fork';
-  import Globe from '@lucide/svelte/icons/globe';
-  import Users from '@lucide/svelte/icons/users';
-  import BrainCircuit from '@lucide/svelte/icons/brain-circuit';
-  import DollarSign from '@lucide/svelte/icons/dollar-sign';
-  import Settings from '@lucide/svelte/icons/settings';
-  import ChevronRight from '@lucide/svelte/icons/chevron-right';
-  import Compass from '@lucide/svelte/icons/compass';
-  import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
-  import Database from '@lucide/svelte/icons/database';
+import Layers from '@lucide/svelte/icons/layers';
+import CreditCard from '@lucide/svelte/icons/credit-card';
+import Coins from '@lucide/svelte/icons/coins';
+import GitFork from '@lucide/svelte/icons/git-fork';
+import Globe from '@lucide/svelte/icons/globe';
+import Users from '@lucide/svelte/icons/users';
+import BrainCircuit from '@lucide/svelte/icons/brain-circuit';
+import DollarSign from '@lucide/svelte/icons/dollar-sign';
+import Settings from '@lucide/svelte/icons/settings';
+import ChevronRight from '@lucide/svelte/icons/chevron-right';
+import Compass from '@lucide/svelte/icons/compass';
+import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
+import Database from '@lucide/svelte/icons/database';
 
   // Helper to determine if link is active
   function isActive(path: string, exact = false): boolean {
@@ -117,6 +118,7 @@
         {@render navLink('/catalog/services', 'AI Services', BrainCircuit, isActive('/catalog/services'))}
         {@render navLink('/catalog/packs', 'Feature Packs', Layers, isActive('/catalog/packs'))}
         {@render navLink('/catalog/plans', 'Pricing Plans', CreditCard, isActive('/catalog/plans'))}
+        {@render navLink('/catalog/pools', 'Credit Pools', Coins, isActive('/catalog/pools'))}
         {@render navLink('/catalog/dependencies', 'Dependencies', GitFork, isActive('/catalog/dependencies'))}
       </div>
     </div>
