@@ -1159,7 +1159,7 @@ server.tool(
     avg_input_tokens: z.number().optional().describe("Average number of input tokens sent per LLM call (e.g. 1500)."),
     avg_output_tokens: z.number().optional().describe("Average number of output tokens received per LLM call (e.g. 800)."),
     avg_requests_per_user_month: z.number().optional().describe("Expected average number of service calls made by a single user per month (e.g. 50)."),
-    fixed_cost_per_month: z.number().nullable().optional().describe("Fixed monthly charge associated with this service (excluding token costs)."),
+    fixed_cost_per_month: nullableNumberInput().describe("Fixed monthly charge associated with this service (excluding token costs)."),
     fixed_cost_currency: z.enum(["USD", "EUR", "PLN", "GBP"]).optional().describe("Currency for fixed costs (default: USD)."),
     service_type: z.enum(["copilot", "agent"]).optional().describe("Service archetype: 'copilot' or 'agent'."),
     interaction_driver_type: z.enum(["flat", "per_customer"]).optional().describe("Interaction driver type: 'flat' or 'per_customer'."),
@@ -1177,7 +1177,7 @@ server.tool(
     escalation_rate: z.number().optional().describe("Escalation rate floor."),
     failed_deflection_penalty: z.number().optional().describe("Cost penalty for failed deflection."),
     churn_rate_uplift: z.number().optional().describe("Uplift added to cohort churn rate."),
-    value_per_outcome: z.number().nullable().optional().describe("Economic value created per single outcome (e.g. per resolved ticket). When this service's monetization_type is 'outcome', its price_per_outcome is derived as captureTargetPct × this value (ADR 0007 Decision 4 / ADR 0009)."),
+    value_per_outcome: nullableNumberInput().describe("Economic value created per single outcome (e.g. per resolved ticket). When this service's monetization_type is 'outcome', its price_per_outcome is derived as captureTargetPct × this value (ADR 0007 Decision 4 / ADR 0009)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
   async (args) => {
@@ -2471,7 +2471,7 @@ server.tool(
     name: z.string().optional().describe("Tier display name (e.g. 'Gold'). Required for 'create' action."),
     monthly_fee: z.number().optional().describe("Flat monthly subscription fee, booked in full every month regardless of usage (ADR 0010 Decision 2)."),
     credit_pool_size: z.number().optional().describe("Credits included per month. Unused credits are breakage (extra margin, no rollover); usage beyond this triggers overage per each service's monetization_type."),
-    capture: z.number().min(0).max(1).nullable().optional().describe("Override of the EVC capture rate used in the credit-value hybrid (max(token cost, capture × value_per_outcome)) and in copilot/agent stream attribution. Defaults to the scenario's evc_capture_target_pct (or 0.30) when unset."),
+    capture: nullableNumberInput({ min: 0, max: 1 }).describe("Override of the EVC capture rate used in the credit-value hybrid (max(token cost, capture × value_per_outcome)) and in copilot/agent stream attribution. Defaults to the scenario's evc_capture_target_pct (or 0.30) when unset."),
     burn_rates: z.array(z.object({
       service_id: z.string().describe("Service UUID drawing on this tier's pool."),
       burn_rate: z.number().describe("Credits consumed per activity unit for this service (e.g. 10 for a copilot summary, 300 for an agent resolution).")
@@ -2811,21 +2811,21 @@ server.tool(
     
     // MonetizationConfig parameters (optional/nullable)
     monetization_type: z.enum(["none", "addon", "usage", "hybrid", "outcome"]).optional().describe("Monetization model type (default: none)."),
-    addon_monthly_fee: z.number().nullable().optional().describe("Monthly flat fee for add-on."),
+    addon_monthly_fee: nullableNumberInput().describe("Monthly flat fee for add-on."),
     addon_has_usage_limit: z.boolean().optional().describe("Whether the add-on has usage limits."),
-    addon_usage_limit: z.number().nullable().optional().describe("Usage credit limit for add-on."),
+    addon_usage_limit: nullableNumberInput().describe("Usage credit limit for add-on."),
     addon_overcharge_policy: z.enum(["hard_stop", "credit_pack", "payg"]).nullable().optional().describe("Policy when addon limit is reached."),
     usage_variant: z.enum(["prepaid", "payg"]).nullable().optional().describe("Usage billing variant: 'prepaid' or 'payg'."),
-    price_per_credit: z.number().nullable().optional().describe("Price charged per usage credit."),
-    hybrid_monthly_fee: z.number().nullable().optional().describe("Monthly base fee for hybrid model."),
-    hybrid_included_credits: z.number().nullable().optional().describe("Included credits in hybrid model monthly fee."),
+    price_per_credit: nullableNumberInput().describe("Price charged per usage credit."),
+    hybrid_monthly_fee: nullableNumberInput().describe("Monthly base fee for hybrid model."),
+    hybrid_included_credits: nullableNumberInput().describe("Included credits in hybrid model monthly fee."),
     hybrid_overcharge_policy: z.enum(["hard_stop", "credit_pack", "payg"]).nullable().optional().describe("Policy when hybrid credit pool is exhausted."),
-    overcharge_markup: z.number().nullable().optional().describe("Markup multiplier for overcharge credits."),
-    overcharge_user_pct: z.number().min(0).max(1).nullable().optional().describe("Percentage of users exceeding usage limits."),
-    avg_overcharge_pct: z.number().nullable().optional().describe("Average amount of overcharge as a percentage of standard limit."),
+    overcharge_markup: nullableNumberInput().describe("Markup multiplier for overcharge credits."),
+    overcharge_user_pct: nullableNumberInput({ min: 0, max: 1 }).describe("Percentage of users exceeding usage limits."),
+    avg_overcharge_pct: nullableNumberInput().describe("Average amount of overcharge as a percentage of standard limit."),
     outcome_basis: z.enum(["deflected", "per_user", "interactions"]).nullable().optional().describe("Basis for outcome billing."),
-    price_per_outcome: z.number().nullable().optional().describe("Price charged per outcome."),
-    outcomes_per_user_month: z.number().nullable().optional().describe("Estimated outcomes volume per user per month.")
+    price_per_outcome: nullableNumberInput().describe("Price charged per outcome."),
+    outcomes_per_user_month: nullableNumberInput().describe("Estimated outcomes volume per user per month.")
   },
   async (args) => {
     try {
@@ -3026,19 +3026,19 @@ server.tool(
     target_id: z.string().nullable().optional().describe("Cohort UUID or Vertical UUID this override targets. Must be null/omitted for 'all_clients'."),
     
     // 13 Overridable fields (optional/nullable)
-    monthly_churn_rate: z.number().nullable().optional().describe("Overridden monthly churn rate as a decimal (e.g. 0.05)."),
-    monthly_acquisition: z.number().nullable().optional().describe("Overridden monthly acquisition count."),
-    acquisition_growth_rate: z.number().nullable().optional().describe("Overridden monthly acquisition growth rate as a decimal (e.g. 0.02)."),
-    ai_adoption_rate: z.number().nullable().optional().describe("Overridden AI adoption rate as a decimal (e.g. 0.30)."),
-    retention_floor: z.number().nullable().optional().describe("Overridden retention floor as a decimal (e.g. 0.60)."),
-    expansion_rate: z.number().nullable().optional().describe("Overridden monthly expansion rate as a decimal (e.g. 0.02) - maps to expansion_rate column."),
-    arpu_override: z.number().nullable().optional().describe("Overridden base ARPU value - maps to arpu_override column."),
-    arpu_uplift: z.number().nullable().optional().describe("Overridden ARPU uplift (flat)."),
-    arpu_uplift_percent: z.number().nullable().optional().describe("Overridden ARPU uplift percentage as a decimal (e.g. 0.15 for 15%)."),
-    churn_reduction: z.number().nullable().optional().describe("Overridden churn reduction as a decimal (e.g. 0.10 for 10% reduction)."),
-    acquisition_uplift: z.number().nullable().optional().describe("Overridden acquisition uplift as a decimal (e.g. 0.05 for 5%)."),
-    gross_margin: z.number().nullable().optional().describe("Overridden gross margin as a decimal (e.g. 0.90 for 90%)."),
-    adoption_ramp_months: z.number().nullable().optional().describe("Overridden adoption ramp in months.")
+    monthly_churn_rate: nullableNumberInput().describe("Overridden monthly churn rate as a decimal (e.g. 0.05)."),
+    monthly_acquisition: nullableNumberInput().describe("Overridden monthly acquisition count."),
+    acquisition_growth_rate: nullableNumberInput().describe("Overridden monthly acquisition growth rate as a decimal (e.g. 0.02)."),
+    ai_adoption_rate: nullableNumberInput().describe("Overridden AI adoption rate as a decimal (e.g. 0.30)."),
+    retention_floor: nullableNumberInput().describe("Overridden retention floor as a decimal (e.g. 0.60)."),
+    expansion_rate: nullableNumberInput().describe("Overridden monthly expansion rate as a decimal (e.g. 0.02) - maps to expansion_rate column."),
+    arpu_override: nullableNumberInput().describe("Overridden base ARPU value - maps to arpu_override column."),
+    arpu_uplift: nullableNumberInput().describe("Overridden ARPU uplift (flat)."),
+    arpu_uplift_percent: nullableNumberInput().describe("Overridden ARPU uplift percentage as a decimal (e.g. 0.15 for 15%)."),
+    churn_reduction: nullableNumberInput().describe("Overridden churn reduction as a decimal (e.g. 0.10 for 10% reduction)."),
+    acquisition_uplift: nullableNumberInput().describe("Overridden acquisition uplift as a decimal (e.g. 0.05 for 5%)."),
+    gross_margin: nullableNumberInput().describe("Overridden gross margin as a decimal (e.g. 0.90 for 90%)."),
+    adoption_ramp_months: nullableNumberInput().describe("Overridden adoption ramp in months.")
   },
   async (args) => {
     try {
@@ -3172,26 +3172,26 @@ server.tool(
     entity_id: z.string().optional().describe("UUID of the catalog entity (service/cost/provider/plan). Required for get, set, and delete."),
 
     // service overrides
-    avg_input_tokens: z.number().nullable().optional().describe("[service] Override avg input tokens per request."),
-    avg_output_tokens: z.number().nullable().optional().describe("[service] Override avg output tokens per request."),
-    avg_requests_per_user_month: z.number().nullable().optional().describe("[service] Override avg requests per AI user per month."),
-    fixed_cost_per_month: z.number().nullable().optional().describe("[service] Override the fixed monthly cost."),
+    avg_input_tokens: nullableNumberInput().describe("[service] Override avg input tokens per request."),
+    avg_output_tokens: nullableNumberInput().describe("[service] Override avg output tokens per request."),
+    avg_requests_per_user_month: nullableNumberInput().describe("[service] Override avg requests per AI user per month."),
+    fixed_cost_per_month: nullableNumberInput().describe("[service] Override the fixed monthly cost."),
     // service (agent archetype) overrides
-    monthly_volume: z.number().nullable().optional().describe("[service/agent] Override the flat monthly interaction volume."),
-    interactions_per_customer_month: z.number().nullable().optional().describe("[service/agent] Override interactions per customer per month."),
-    containment_rate: z.number().nullable().optional().describe("[service/agent] Override the target containment rate (0..1)."),
-    average_handle_time_seconds: z.number().nullable().optional().describe("[service/agent] Override the average human handle time in seconds."),
-    fully_loaded_cost_per_fte_month: z.number().nullable().optional().describe("[service/agent] Override the fully loaded cost per FTE per month."),
-    baseline_fte: z.number().nullable().optional().describe("[service/agent] Override the baseline FTE cap (0 = uncapped)."),
-    churn_rate_uplift: z.number().nullable().optional().describe("[service/agent] Override the absolute uplift added to cohort churn rate."),
+    monthly_volume: nullableNumberInput().describe("[service/agent] Override the flat monthly interaction volume."),
+    interactions_per_customer_month: nullableNumberInput().describe("[service/agent] Override interactions per customer per month."),
+    containment_rate: nullableNumberInput().describe("[service/agent] Override the target containment rate (0..1)."),
+    average_handle_time_seconds: nullableNumberInput().describe("[service/agent] Override the average human handle time in seconds."),
+    fully_loaded_cost_per_fte_month: nullableNumberInput().describe("[service/agent] Override the fully loaded cost per FTE per month."),
+    baseline_fte: nullableNumberInput().describe("[service/agent] Override the baseline FTE cap (0 = uncapped)."),
+    churn_rate_uplift: nullableNumberInput().describe("[service/agent] Override the absolute uplift added to cohort churn rate."),
     // cost overrides
-    amount: z.number().nullable().optional().describe("[cost] Override the cost amount."),
+    amount: nullableNumberInput().describe("[cost] Override the cost amount."),
     frequency: z.enum(["one_time", "monthly", "yearly"]).nullable().optional().describe("[cost] Override the cost frequency."),
     // provider overrides
-    input_price: z.number().nullable().optional().describe("[provider] Override input token price (per 1M tokens)."),
-    output_price: z.number().nullable().optional().describe("[provider] Override output token price (per 1M tokens)."),
+    input_price: nullableNumberInput().describe("[provider] Override input token price (per 1M tokens)."),
+    output_price: nullableNumberInput().describe("[provider] Override output token price (per 1M tokens)."),
     // plan overrides
-    base_price: z.number().nullable().optional().describe("[plan] Override the plan base price.")
+    base_price: nullableNumberInput().describe("[plan] Override the plan base price.")
   },
   async (args) => {
     try {

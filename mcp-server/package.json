@@ -1,10 +1,10 @@
 {
   "name": "sherpa-mcp-server",
-  "version": "1.0.33",
+  "version": "1.0.34",
   "type": "module",
   "scripts": {
     "prebuild": "node ../scripts/gen-guidance.mjs",
-    "build": "tsc",
+    "build": "node ../scripts/check-mcp-schemas.mjs && tsc",
     "start": "node build/index.js",
     "dev": "tsx src/index.ts"
   },
