@@ -2983,7 +2983,7 @@ server.tool(
                 hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
                 overcharge_markup, overcharge_user_pct, avg_overcharge_pct,
                 outcome_basis, price_per_outcome, outcomes_per_user_month
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(crypto.randomUUID(), entityType, entityId, scenarioId, ...values);
           }
           db.prepare("DELETE FROM scenario_results").run();
