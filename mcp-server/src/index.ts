@@ -44,6 +44,20 @@ import type {
 } from "./shared/types.js";
 import { SERVER_INSTRUCTIONS, GUIDANCE_PROMPTS } from "./generated/guidance.js";
 
+// Nullable, optional number input that also coerces numeric strings. Plain z.number().nullable()
+// renders as an array/anyOf type (no bare "type": "number") in the JSON Schema some MCP clients
+// list tools with, which can lead them to send a stringified number; coercion keeps that working
+// while still distinguishing omitted (leave unchanged) from explicit null (clear the override).
+function nullableNumberInput(bounds?: { min?: number; max?: number }) {
+  let inner = z.number();
+  if (bounds?.min !== undefined) inner = inner.min(bounds.min);
+  if (bounds?.max !== undefined) inner = inner.max(bounds.max);
+  return z.preprocess(
+    (val) => (typeof val === "string" && val.trim() !== "" ? Number(val) : val),
+    inner.nullable()
+  ).optional();
+}
+
 const manifestPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../manifest.json');
 let version = "1.1.0";
 try {
@@ -1783,16 +1797,16 @@ server.tool(
     penetration_baseline_months: z.number().min(1).optional().describe("Baseline pacing midpoint in months (months to 50% SOM)."),
     ai_acceleration_factor: z.number().min(0.1).max(1.0).optional().describe("AI acceleration midpoint multiplier (e.g. 0.60 for 40% faster)."),
     ai_som_lift_pct: z.number().min(0).max(1.0).optional().describe("AI SOM expansion lift percentage as decimal (e.g. 0.25 for +25% SOM)."),
-    evc_nba_annual_value: z.number().nullable().optional().describe("Next Best Alternative annual value ($)."),
-    evc_extra_positive_value: z.number().nullable().optional().describe("Extra positive annual value ($)."),
-    evc_negative_value: z.number().nullable().optional().describe("Negative value/switching costs ($)."),
-    evc_capture_ceiling_pct: z.number().nullable().optional().describe("Capture ceiling percentage share (e.g. 0.50)."),
-    evc_capture_target_pct: z.number().nullable().optional().describe("Capture target percentage share (e.g. 0.30)."),
-    evc_capture_floor_pct: z.number().nullable().optional().describe("Capture floor percentage share (e.g. 0.15)."),
+    evc_nba_annual_value: nullableNumberInput().describe("Next Best Alternative annual value ($)."),
+    evc_extra_positive_value: nullableNumberInput().describe("Extra positive annual value ($)."),
+    evc_negative_value: nullableNumberInput().describe("Negative value/switching costs ($)."),
+    evc_capture_ceiling_pct: nullableNumberInput({ min: 0, max: 1 }).describe("Capture ceiling percentage share (e.g. 0.50)."),
+    evc_capture_target_pct: nullableNumberInput({ min: 0, max: 1 }).describe("Capture target percentage share (e.g. 0.30)."),
+    evc_capture_floor_pct: nullableNumberInput({ min: 0, max: 1 }).describe("Capture floor percentage share (e.g. 0.15)."),
     price_from_evc: z.boolean().optional().describe("If true, drive pricing from EVC target capture rate."),
     adoption_elasticity: z.number().optional().describe("Adoption price elasticity (ε). 0 = inelastic. Higher values reduce adoption when capture exceeds target."),
-    copilot_margin_threshold: z.number().min(0).max(1).nullable().optional().describe("Soft (warn-only) copilot-stream gross-margin floor as a decimal (e.g. 0.78 for 78%). Defaults to 0.78 when unset."),
-    agent_margin_threshold: z.number().min(0).max(1).nullable().optional().describe("Soft (warn-only) agent-stream gross-margin floor as a decimal (e.g. 0.62 for 62%). Defaults to 0.62 when unset."),
+    copilot_margin_threshold: nullableNumberInput({ min: 0, max: 1 }).describe("Soft (warn-only) copilot-stream gross-margin floor as a decimal (e.g. 0.78 for 78%). Defaults to 0.78 when unset."),
+    agent_margin_threshold: nullableNumberInput({ min: 0, max: 1 }).describe("Soft (warn-only) agent-stream gross-margin floor as a decimal (e.g. 0.62 for 62%). Defaults to 0.62 when unset."),
     variation_percent: z.number().optional().describe("Sensitivity analysis variation percent (default: 0.10 for 10% variation)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
