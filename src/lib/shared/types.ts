@@ -281,6 +281,7 @@ export interface CohortConfig {
   acquisition_uplift?: number;
   gross_margin?: number;
   adoption_ramp_months?: number;
+  usage_intensity?: number;
   created_at?: string;
   updated_at?: string;
   
@@ -305,6 +306,7 @@ export interface ScopeOverride {
   acquisition_uplift?: number | null;
   gross_margin?: number | null;
   adoption_ramp_months?: number | null;
+  usage_intensity?: number | null;
   
   // Presentation-only fields loaded on demand
   target_name?: string;
@@ -506,6 +508,9 @@ export interface PricingCorridorPoint {
   floorTarget: number;
   ceiling: number;
   status: 'loss' | 'below_margin' | 'healthy' | 'over_ceiling';
+  targetPrice?: number;
+  floorPrice?: number;
+  valueFromOutcomes?: number;
 }
 
 export interface PricingCorridorResult {
@@ -627,6 +632,7 @@ export interface MonthlyBreakdown {
   revenue: number; // ΔRevenue
   customers: number; // active customers (with AI)
   aiUsers: number;
+  aiUsersWeighted?: number; // AI users weighted by per-cohort usage_intensity (ADR 0011); intensity-free base unit cost = tokenCosts / aiUsersWeighted
   opex: number;
   capex: number;
   tokenCosts: number;

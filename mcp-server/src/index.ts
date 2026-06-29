@@ -926,12 +926,13 @@ server.tool(
     acquisition_uplift: z.number().min(0).max(5).optional().describe("Percentage increase in new customer acquisition (e.g. 0.10 for 10%). Applied directly, NOT weighted by adoption."),
     gross_margin: z.number().min(0).max(1).optional().describe("Cohort gross margin percentage (e.g. 0.80 for 80% margin). Defaults to 1.0."),
     adoption_ramp_months: z.number().int().nonnegative().optional().describe("Number of months over which AI adoption ramps up linearly. Defaults to 0."),
+    usage_intensity: z.number().min(0.1).max(10.0).optional().describe("Multiplier for requests/interactions per user for this cohort (e.g. 1.5). Defaults to 1.0."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
   async (args) => {
     try {
       if (args.action === "list") {
-        const cohorts = db.prepare("SELECT id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months FROM cohort_configs ORDER BY name ASC").all() as any[];
+        const cohorts = db.prepare("SELECT id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, usage_intensity FROM cohort_configs ORDER BY name ASC").all() as any[];
         return { content: [{ type: "text", text: JSON.stringify(cohorts, null, 2) }] };
       }
       if (args.action === "create") {
@@ -950,14 +951,14 @@ server.tool(
           INSERT INTO cohort_configs (
             id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate,
             monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu,
-            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months,
+            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, usage_intensity,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           id, args.name, args.vertical_id || null, args.current_users, args.monthly_acquisition, args.acquisition_growth_rate ?? 0,
           args.monthly_churn_rate ?? 0.05, args.retention_floor ?? 0.60, args.monthly_expansion_rate ?? 0.02, args.ai_adoption_rate ?? 0.30, args.base_arpu ?? 100,
           args.arpu_uplift ?? 0, args.arpu_uplift_percent ?? 0, args.churn_reduction ?? 0, args.acquisition_uplift ?? 0,
-          args.gross_margin ?? 1.0, args.adoption_ramp_months ?? 0,
+          args.gross_margin ?? 1.0, args.adoption_ramp_months ?? 0, args.usage_intensity ?? 1.0,
           now, now
         );
         return { content: [{ type: "text", text: `Cohort '${args.name}' created with ID: ${id}` }] };
@@ -986,6 +987,7 @@ server.tool(
         const acquisition_uplift = args.acquisition_uplift !== undefined ? args.acquisition_uplift : current.acquisition_uplift;
         const gross_margin = args.gross_margin !== undefined ? args.gross_margin : current.gross_margin;
         const adoption_ramp_months = args.adoption_ramp_months !== undefined ? args.adoption_ramp_months : current.adoption_ramp_months;
+        const usage_intensity = args.usage_intensity !== undefined ? args.usage_intensity : current.usage_intensity;
         const now = new Date().toISOString();
 
         db.prepare(`
@@ -994,7 +996,7 @@ server.tool(
               acquisition_growth_rate = ?, monthly_churn_rate = ?, retention_floor = ?,
               monthly_expansion_rate = ?, ai_adoption_rate = ?, base_arpu = ?,
               arpu_uplift = ?, arpu_uplift_percent = ?, churn_reduction = ?, acquisition_uplift = ?,
-              gross_margin = ?, adoption_ramp_months = ?,
+              gross_margin = ?, adoption_ramp_months = ?, usage_intensity = ?,
               updated_at = ?
           WHERE id = ?
         `).run(
@@ -1002,7 +1004,7 @@ server.tool(
           acquisition_growth_rate, monthly_churn_rate, retention_floor,
           monthly_expansion_rate, ai_adoption_rate, base_arpu,
           arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
-          gross_margin, adoption_ramp_months,
+          gross_margin, adoption_ramp_months, usage_intensity,
           now, args.id
         );
         return { content: [{ type: "text", text: `Cohort '${name}' updated successfully.` }] };

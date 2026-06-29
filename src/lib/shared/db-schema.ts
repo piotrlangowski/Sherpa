@@ -1011,4 +1011,11 @@ function runDataMigrations(db: DatabaseConnection): void {
   if (!resultsCols19.includes('pool_economics')) {
     db.prepare("ALTER TABLE scenario_results ADD COLUMN pool_economics TEXT").run();
   }
+
+  // Migration 20: ADR 0011 — EVC per-segment (usage intensity per cohort config)
+  const cohortCols20 = (db.prepare("PRAGMA table_info(cohort_configs)").all() as any[]).map(c => c.name);
+  if (!cohortCols20.includes('usage_intensity')) {
+    db.prepare("ALTER TABLE cohort_configs ADD COLUMN usage_intensity REAL DEFAULT 1.0").run();
+    db.prepare("DELETE FROM scenario_results").run();
+  }
 }

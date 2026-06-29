@@ -31,6 +31,7 @@ export const actions: Actions = {
     const acquisitionUplift = parseFloat(formData.get('acquisitionUplift') as string || '0') / 100;
     const grossMargin = parseFloat(formData.get('grossMargin') as string || '100') / 100;
     const adoptionRampMonths = parseInt(formData.get('adoptionRampMonths') as string || '0', 10);
+    const usageIntensity = parseFloat(formData.get('usageIntensity') as string || '1.0');
 
     if (!name) {
       return fail(400, { error: 'Cohort name is required' });
@@ -53,7 +54,8 @@ export const actions: Actions = {
         churn_reduction: churnReduction,
         acquisition_uplift: acquisitionUplift,
         gross_margin: grossMargin,
-        adoption_ramp_months: adoptionRampMonths
+        adoption_ramp_months: adoptionRampMonths,
+        usage_intensity: usageIntensity
       });
       return { success: true };
     } catch (err: any) {
@@ -80,6 +82,7 @@ export const actions: Actions = {
     const acquisitionUplift = parseFloat(formData.get('acquisitionUplift') as string || '0') / 100;
     const grossMargin = parseFloat(formData.get('grossMargin') as string || '100') / 100;
     const adoptionRampMonths = parseInt(formData.get('adoptionRampMonths') as string || '0', 10);
+    const usageIntensity = parseFloat(formData.get('usageIntensity') as string || '1.0');
 
     if (!id || !name) {
       return fail(400, { error: 'ID and Cohort name are required' });
@@ -102,7 +105,8 @@ export const actions: Actions = {
         churn_reduction: churnReduction,
         acquisition_uplift: acquisitionUplift,
         gross_margin: grossMargin,
-        adoption_ramp_months: adoptionRampMonths
+        adoption_ramp_months: adoptionRampMonths,
+        usage_intensity: usageIntensity
       });
       return { success: true };
     } catch (err: any) {

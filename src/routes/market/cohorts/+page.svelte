@@ -67,6 +67,9 @@
         arpu_uplift: arpuUp,
         arpu_uplift_percent: arpuUpPct,
         churn_reduction: churnRed,
+        gross_margin: (+grossMargin || 0) / 100,
+        adoption_ramp_months: +adoptionRampMonths || 0,
+        usage_intensity: +usageIntensity || 1.0,
         acquisition_uplift: acqUplift
       },
       12
@@ -95,6 +98,7 @@
   let acquisitionUplift = $state(10);
   let grossMargin = $state(100);
   let adoptionRampMonths = $state(0);
+  let usageIntensity = $state(1.0);
 
   const openCreateDialog = () => {
     dialogMode = 'create';
@@ -115,6 +119,7 @@
     acquisitionUplift = 10;
     grossMargin = 100;
     adoptionRampMonths = 0;
+    usageIntensity = 1.0;
     showDialog = true;
   };
 
@@ -137,6 +142,7 @@
     acquisitionUplift = Math.round((cohort.acquisition_uplift || 0) * 1000) / 10;
     grossMargin = Math.round((cohort.gross_margin !== undefined ? cohort.gross_margin : 1.0) * 1000) / 10;
     adoptionRampMonths = cohort.adoption_ramp_months || 0;
+    usageIntensity = cohort.usage_intensity !== undefined ? cohort.usage_intensity : 1.0;
     showDialog = true;
   };
 
@@ -646,6 +652,17 @@
       step={1}
       required
       help="Number of months over which AI adoption ramps up linearly to target rate"
+    />
+    <NumberField
+      id="usageIntensity"
+      name="usageIntensity"
+      bind:value={usageIntensity}
+      label="Usage Intensity Multiplier"
+      min={0.1}
+      max={10.0}
+      step={0.1}
+      required
+      help="Multiplier for requests/interactions per user for this cohort, scaling both EVC ceiling and COGS"
     />
   </FormSection>
 </FormDialog>

@@ -76,8 +76,8 @@ export function seedDatabase(db: DatabaseConnection): void {
 
     // 3. Insert Services
     const insertService = db.prepare(`
-      INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, fixed_cost_currency, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?)
+      INSERT INTO services (id, name, description, status, provider_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month, fixed_cost_currency, value_per_outcome, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)
     `);
 
     const sSummarization = uuidv4();
@@ -94,6 +94,7 @@ export function seedDatabase(db: DatabaseConnection): void {
       400, 
       150, 
       null, 
+      0.15,
       now, 
       now
     );
@@ -108,6 +109,7 @@ export function seedDatabase(db: DatabaseConnection): void {
       500, 
       100, 
       null, 
+      0.25,
       now, 
       now
     );
@@ -122,6 +124,7 @@ export function seedDatabase(db: DatabaseConnection): void {
       100, 
       300, 
       null, 
+      0.05,
       now, 
       now
     );
@@ -193,32 +196,21 @@ export function seedDatabase(db: DatabaseConnection): void {
 
     // 9. Cohorts
     const insertCohort = db.prepare(`
-      INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cohort_configs (id, name, vertical_id, current_users, monthly_acquisition, acquisition_growth_rate, monthly_churn_rate, retention_floor, monthly_expansion_rate, ai_adoption_rate, base_arpu, arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift, gross_margin, adoption_ramp_months, usage_intensity, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const coSMBHelpdesk = uuidv4();
-    insertCohort.run(
-      coSMBHelpdesk, 
-      'SMB Helpdesk Customers', 
-      vB2BSupport, 
-      1000, 
-      40, 
-      0, 
-      0.03, 
-      0.50, 
-      0, 
-      0.50, 
-      80.00, 
-      10.00, 
-      0, 
-      0.20, 
-      0.10, 
-      0.60, 
-      0, 
-      now, 
-      now
-    );
+    const coPro = uuidv4();
+    insertCohort.run(coPro, 'Individual Pro', vB2BSupport, 1000, 40, 0, 0.03, 0.50, 0, 0.50, 80.00, 10.00, 0, 0.20, 0.10, 0.60, 0, 0.7, now, now);
+
+    const coProPlus = uuidv4();
+    insertCohort.run(coProPlus, 'Individual Pro+', vB2BSupport, 500, 20, 0, 0.02, 0.60, 0, 0.60, 120.00, 15.00, 0, 0.25, 0.15, 0.65, 0, 0.9, now, now);
+
+    const coBusiness = uuidv4();
+    insertCohort.run(coBusiness, 'Business', vB2BSupport, 300, 15, 0, 0.015, 0.70, 0, 0.70, 150.00, 20.00, 0, 0.30, 0.20, 0.70, 0, 1.1, now, now);
+
+    const coEnterprise = uuidv4();
+    insertCohort.run(coEnterprise, 'Enterprise', vB2BSupport, 100, 5, 0, 0.01, 0.80, 0, 0.80, 250.00, 40.00, 0, 0.40, 0.25, 0.75, 0, 1.5, now, now);
 
     // 10. Scenarios
     const insertScenario = db.prepare(`
@@ -241,8 +233,11 @@ export function seedDatabase(db: DatabaseConnection): void {
       now
     );
     
-    // Link cohort
-    insertScenarioCohort.run(scHero, coSMBHelpdesk);
+    // Link cohorts
+    insertScenarioCohort.run(scHero, coPro);
+    insertScenarioCohort.run(scHero, coProPlus);
+    insertScenarioCohort.run(scHero, coBusiness);
+    insertScenarioCohort.run(scHero, coEnterprise);
 
     // Link service
     insertScenarioService.run(scHero, sSummarization, 0);

@@ -673,6 +673,7 @@ export function applyScopeOverrides(cohorts: CohortConfig[], overrides: ScopeOve
     if (override.acquisition_uplift !== null && override.acquisition_uplift !== undefined) c.acquisition_uplift = override.acquisition_uplift;
     if (override.gross_margin !== null && override.gross_margin !== undefined) c.gross_margin = override.gross_margin;
     if (override.adoption_ramp_months !== null && override.adoption_ramp_months !== undefined) c.adoption_ramp_months = override.adoption_ramp_months;
+    if (override.usage_intensity !== null && override.usage_intensity !== undefined) c.usage_intensity = override.usage_intensity;
     return c;
   };
 
@@ -1272,8 +1273,16 @@ export function calculateScenario(
 
     if (carrier === 'cohort') {
       if (overlaidScenario.scope_cohorts) {
+        const hasAnyValuePerOutcome = (overlaidScenario.services || []).some(s => s.value_per_outcome != null && s.value_per_outcome > 0);
         for (const cc of overlaidScenario.scope_cohorts) {
-          cc.arpu_uplift = targetPrice;
+          let cohortTargetPrice = targetPrice;
+          if (hasAnyValuePerOutcome) {
+            const { netValue } = calculateCohortNetValue(cc, overlaidScenario);
+            const referenceValue = (overlaidScenario.evc_nba_annual_value || 0) / 12;
+            const capTarget = overlaidScenario.evc_capture_target_pct ?? 0.30;
+            cohortTargetPrice = referenceValue + capTarget * netValue;
+          }
+          cc.arpu_uplift = cohortTargetPrice;
           cc.arpu_uplift_percent = 0; // reset percentage to avoid double calculation
         }
       }
@@ -1419,6 +1428,7 @@ export function calculateScenario(
   for (let t = 0; t < projectionMonths; t++) {
     let activeCustomers = 0;
     let activeAiUsers = 0;
+    let weightedActiveAiUsers = 0;
     let grossRevenue = 0;
     let baselineRevenue = 0;
     let baselineCustomers = 0;
@@ -1446,6 +1456,10 @@ export function calculateScenario(
 
         activeCustomers += cohortCustomers;
         activeAiUsers += cohortAiUsers;
+        
+        const intensity = scenario.scope_cohorts[i].usage_intensity ?? 1.0;
+        weightedActiveAiUsers += cohortAiUsers * intensity;
+
         grossRevenue += cohortGrossRev;
 
         const incrementalUpper = cohortGrossRev - baseMonth.mrr;
@@ -1470,6 +1484,10 @@ export function calculateScenario(
       activeAiUsersUpper = expansionCurve.withAiUpper[t];
       activeAiUsersLower = expansionCurve.withAiLower[t];
     }
+
+    const avgIntensity = activeAiUsers > 0 ? weightedActiveAiUsers / activeAiUsers : 1.0;
+    const activeAiUsersWeightedUpper = activeAiUsersUpper * avgIntensity;
+    const activeAiUsersWeightedLower = activeAiUsersLower * avgIntensity;
 
     // AI monetization revenue
     let monetizationUpper = { totalRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0, outcomeRevenue: 0 };
@@ -1710,8 +1728,8 @@ export function calculateScenario(
               const costMultiplier = (service.avg_requests_per_user_month || 0) *
                 ((service.avg_input_tokens || 0) * inputPrice + (service.avg_output_tokens || 0) * outputPrice);
 
-              serviceTokenCostUpper = activeAiUsersUpper * costMultiplier;
-              serviceTokenCostLower = activeAiUsersLower * costMultiplier;
+              serviceTokenCostUpper = activeAiUsersWeightedUpper * costMultiplier;
+              serviceTokenCostLower = activeAiUsersWeightedLower * costMultiplier;
             }
 
             const serviceFixedCost = service.fixed_cost_per_month || 0;
@@ -1722,8 +1740,8 @@ export function calculateScenario(
             // Credit pool (ADR 0010) — a request is the copilot's natural "activity" unit.
             const poolBurnRate = poolBurnRateMap.get(service.id);
             if (poolBurnRate !== undefined) {
-              const activityUpper = activeAiUsersUpper * (service.avg_requests_per_user_month || 0);
-              const activityLower = activeAiUsersLower * (service.avg_requests_per_user_month || 0);
+              const activityUpper = activeAiUsersWeightedUpper * (service.avg_requests_per_user_month || 0);
+              const activityLower = activeAiUsersWeightedLower * (service.avg_requests_per_user_month || 0);
               monthPoolConsumedCreditsUpper += activityUpper * poolBurnRate;
               monthPoolConsumedCreditsLower += activityLower * poolBurnRate;
               monthCopilotEvcValueUpper += activityUpper * (service.value_per_outcome ?? 0);
@@ -1737,11 +1755,11 @@ export function calculateScenario(
               let revUpper = 0;
               let revLower = 0;
               if (config.outcome_basis === 'per_user') {
-                revUpper = activeAiUsersUpper * (config.outcomes_per_user_month || 0) * price;
-                revLower = activeAiUsersLower * (config.outcomes_per_user_month || 0) * price;
+                revUpper = activeAiUsersWeightedUpper * (config.outcomes_per_user_month || 0) * price;
+                revLower = activeAiUsersWeightedLower * (config.outcomes_per_user_month || 0) * price;
               } else if (config.outcome_basis === 'interactions') {
-                const serviceInteractionsUpper = activeAiUsersUpper * (service.avg_requests_per_user_month || 0);
-                const serviceInteractionsLower = activeAiUsersLower * (service.avg_requests_per_user_month || 0);
+                const serviceInteractionsUpper = activeAiUsersWeightedUpper * (service.avg_requests_per_user_month || 0);
+                const serviceInteractionsLower = activeAiUsersWeightedLower * (service.avg_requests_per_user_month || 0);
                 revUpper = serviceInteractionsUpper * price;
                 revLower = serviceInteractionsLower * price;
               }
@@ -1864,6 +1882,7 @@ export function calculateScenario(
       revenue: parseFloat(upperRevenue.toFixed(2)),
       customers: activeCustomers,
       aiUsers: expansionCurve ? activeAiUsersUpper : activeAiUsers,
+      aiUsersWeighted: expansionCurve ? activeAiUsersWeightedUpper : weightedActiveAiUsers,
       opex: parseFloat(opex.toFixed(2)),
       capex: parseFloat(capex.toFixed(2)),
       tokenCosts: parseFloat(tokenCostsUpper.toFixed(2)),
@@ -2100,6 +2119,63 @@ export function calculateEVC(timeline: MonthlyBreakdown[], inputs: EvcInputs): E
   };
 }
 
+export function calculateCohortNetValue(
+  cohort: CohortConfig,
+  scenario: Scenario
+): { valueFromOutcomes: number; laborSavingsMonthly: number; netValue: number } {
+  const intensity = cohort.usage_intensity ?? 1.0;
+  let valueFromOutcomes = 0;
+  let laborSavingsMonthly = 0;
+
+  const cohorts = scenario.scope_cohorts || [];
+  const totalStartingCustomers = cohorts.reduce((sum, cc) => sum + (cc.current_users || 0), 0);
+  const representativeCustomers = totalStartingCustomers > 0 ? totalStartingCustomers : 1;
+
+  for (const service of scenario.services || []) {
+    const isAgent = service.service_type === 'agent';
+    const hasValue = service.value_per_outcome != null && service.value_per_outcome > 0;
+    
+    let baseActivity = 0;
+    if (isAgent) {
+      const containmentRate = service.containment_rate || 0;
+      let interactionsPerCustomerMonth = 0;
+      if (service.interaction_driver_type === 'per_customer') {
+        interactionsPerCustomerMonth = service.interactions_per_customer_month || 0;
+      } else {
+        interactionsPerCustomerMonth = (service.monthly_volume || 0) / representativeCustomers;
+      }
+      baseActivity = interactionsPerCustomerMonth * containmentRate;
+    } else {
+      // copilot
+      baseActivity = service.avg_requests_per_user_month || 0;
+    }
+
+    const activity = baseActivity * intensity;
+
+    if (hasValue) {
+      valueFromOutcomes += (service.value_per_outcome || 0) * activity;
+    } else if (isAgent) {
+      // labor savings path only for agents without value_per_outcome
+      const hoursSaved = (activity * (service.average_handle_time_seconds || 0)) / 3600;
+      const productiveHours = service.productive_hours_per_fte_month || 120;
+      const baselineFte = service.baseline_fte || 0;
+      const fteSaved = hoursSaved / productiveHours;
+      const realizable = baselineFte > 0 
+        ? Math.min(fteSaved, baselineFte / representativeCustomers) 
+        : fteSaved;
+      laborSavingsMonthly += (realizable * (service.fully_loaded_cost_per_fte_month || 0));
+    }
+  }
+
+  const netValue = valueFromOutcomes + laborSavingsMonthly - (scenario.evc_negative_value || 0) / 12;
+
+  return {
+    valueFromOutcomes,
+    laborSavingsMonthly,
+    netValue
+  };
+}
+
 export function buildPricingCorridor(
   scenario: Scenario,
   timeline: MonthlyBreakdown[],
@@ -2109,25 +2185,52 @@ export function buildPricingCorridor(
   const aiUsers = lastMonth ? lastMonth.aiUsers : 0;
   const customers = lastMonth ? lastMonth.customers : 0;
 
-  const u = aiUsers > 0 && lastMonth ? lastMonth.tokenCosts / aiUsers : 0;
+  // u_base = intensity-free token cost per AI user. The main timeline scales tokenCosts by per-cohort
+  // usage_intensity (ADR 0011 Phase B), so divide by the intensity-weighted user count to recover the
+  // base unit cost before re-applying each cohort's own intensity below — otherwise the blended
+  // avgIntensity gets double-counted into every cohort's COGS floor.
+  const weightedAiUsers = lastMonth ? (lastMonth.aiUsersWeighted ?? aiUsers) : 0;
+  const u = weightedAiUsers > 0 && lastMonth ? lastMonth.tokenCosts / weightedAiUsers : 0;
   const o = customers > 0 && lastMonth ? lastMonth.opex / customers : 0;
   const actualPrice = customers > 0 && lastMonth ? lastMonth.revenue / customers : 0;
-  const ceiling = evc.priceCeiling;
 
   const cohorts = scenario.scope_cohorts || [];
+  const hasAnyValuePerOutcome = (scenario.services || []).some(s => s.value_per_outcome != null && s.value_per_outcome > 0);
   
   const points: PricingCorridorPoint[] = cohorts.map(cohort => {
     const a = cohort.ai_adoption_rate ?? 0;
+    const intensity = cohort.usage_intensity ?? 1.0;
     const gm = Math.max(0, Math.min(0.99, cohort.gross_margin ?? 1.0));
-    const cogs = a * u + o;
+    
+    // Scale COGS by usage intensity
+    const cogs = a * intensity * u + o;
     const floorTarget = cogs / (1 - gm);
     
+    let pointCeiling = evc.priceCeiling;
+    let pointTarget = evc.priceTarget;
+    let pointFloor = evc.priceFloor;
+    let cohortValFromOutcomes = 0;
+
+    if (hasAnyValuePerOutcome) {
+      const { valueFromOutcomes, netValue } = calculateCohortNetValue(cohort, scenario);
+      
+      const referenceValue = (scenario.evc_nba_annual_value || 0) / 12;
+      const capCeiling = scenario.evc_capture_ceiling_pct ?? 0.50;
+      const capTarget = scenario.evc_capture_target_pct ?? 0.30;
+      const capFloor = scenario.evc_capture_floor_pct ?? 0.15;
+
+      pointCeiling = referenceValue + capCeiling * netValue;
+      pointTarget = referenceValue + capTarget * netValue;
+      pointFloor = referenceValue + capFloor * netValue;
+      cohortValFromOutcomes = valueFromOutcomes;
+    }
+
     let status: 'loss' | 'below_margin' | 'healthy' | 'over_ceiling' = 'healthy';
     if (actualPrice < cogs) {
       status = 'loss';
     } else if (actualPrice < floorTarget) {
       status = 'below_margin';
-    } else if (actualPrice > ceiling) {
+    } else if (actualPrice > pointCeiling) {
       status = 'over_ceiling';
     }
 
@@ -2138,7 +2241,10 @@ export function buildPricingCorridor(
       grossMargin: cohort.gross_margin ?? 1.0,
       cogs,
       floorTarget,
-      ceiling,
+      ceiling: pointCeiling,
+      targetPrice: pointTarget,
+      floorPrice: pointFloor,
+      valueFromOutcomes: hasAnyValuePerOutcome ? cohortValFromOutcomes : undefined,
       status
     };
   });

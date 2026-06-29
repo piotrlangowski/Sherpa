@@ -2345,6 +2345,217 @@ describe('S-Curve Market Expansion (Phase 3)', () => {
       expect(corridor.hasBreak).toBe(false);
     });
 
+    it('should calculate per-cohort EVC values when value_per_outcome is set and respect usage_intensity', () => {
+      const scenario: Scenario = {
+        id: 's-evc-cohort',
+        name: 'EVC Cohort Scenario',
+        projection_months: 12,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        evc_nba_annual_value: 240, // 20/mo
+        evc_capture_ceiling_pct: 0.5,
+        evc_capture_target_pct: 0.3,
+        evc_capture_floor_pct: 0.15,
+        evc_negative_value: 120, // 10/mo
+        scope_cohorts: [
+          {
+            id: 'c1',
+            name: 'Pro',
+            current_users: 100,
+            monthly_acquisition: 0,
+            acquisition_growth_rate: 0,
+            monthly_churn_rate: 0,
+            retention_floor: 0,
+            monthly_expansion_rate: 0,
+            ai_adoption_rate: 0.5,
+            gross_margin: 0.8,
+            base_arpu: 50,
+            usage_intensity: 0.7
+          },
+          {
+            id: 'c2',
+            name: 'Enterprise',
+            current_users: 100,
+            monthly_acquisition: 0,
+            acquisition_growth_rate: 0,
+            monthly_churn_rate: 0,
+            retention_floor: 0,
+            monthly_expansion_rate: 0,
+            ai_adoption_rate: 0.5,
+            gross_margin: 0.8,
+            base_arpu: 50,
+            usage_intensity: 1.5
+          }
+        ],
+        services: [
+          {
+            id: 's1',
+            name: 'AI Summaries',
+            status: 'planned',
+            service_type: 'copilot',
+            avg_requests_per_user_month: 100,
+            avg_input_tokens: 1000,
+            avg_output_tokens: 200,
+            value_per_outcome: 2.0, // outcome value
+            rollout_month: 0
+          }
+        ]
+      };
+
+      const timeline = [
+        {
+          month: 12,
+          revenue: 10000,
+          customers: 200,
+          aiUsers: 100,
+          opex: 1000, // 5 per customer
+          tokenCosts: 2000, // 20 per AI user
+          grossRevenue: 10000,
+          baselineRevenue: 8000,
+          baselineCustomers: 200,
+          monetizationRevenue: 0,
+          addonRevenue: 0,
+          usageRevenue: 0,
+          hybridBaseRevenue: 0,
+          overchargeRevenue: 0,
+          outcomeRevenue: 0,
+          totalCosts: 3000,
+          capex: 0,
+          netCashFlow: 7000,
+          cumulativeCashFlow: 7000
+        }
+      ];
+
+      const evc: EvcResult = {
+        evc: 150,
+        referenceValue: 20,
+        positiveValueTotal: 120,
+        negativeValueTotal: 10,
+        netCreatedValue: 100,
+        priceFloor: 35,
+        priceTarget: 50,
+        priceCeiling: 70,
+        laborSavings: 0,
+        extraPositiveValue: 0,
+        unitNetValue: 100,
+        targetCapturePerUserMonth: 30,
+        customerSurplusPerUserMonth: 70,
+        vendorGrossProfitPerUserMonth: 23,
+        cogsPerUserMonth: 20
+      };
+
+      const corridor = buildPricingCorridor(scenario, timeline, evc);
+
+      expect(corridor.points.length).toBe(2);
+
+      // Pro point (usage_intensity = 0.7)
+      // baseActivity = 100 requests. activity = 70.
+      // valueFromOutcomes = 70 * 2 = 140.
+      // netValue = 140 - 10 (negValue/12) = 130.
+      // ceiling = 20 + 0.5 * 130 = 85.
+      // target = 20 + 0.3 * 130 = 59.
+      // floor = 20 + 0.15 * 130 = 39.5.
+      // cogs = 0.5 (adoption) * 0.7 (intensity) * 20 (u) + 5 (o) = 7 + 5 = 12.
+      const proPoint = corridor.points.find(p => p.cohortName === 'Pro')!;
+      expect(proPoint.cogs).toBe(12);
+      expect(proPoint.ceiling).toBe(85);
+      expect(proPoint.targetPrice).toBe(59);
+      expect(proPoint.floorPrice).toBe(39.5);
+
+      // Enterprise point (usage_intensity = 1.5)
+      // baseActivity = 100 requests. activity = 150.
+      // valueFromOutcomes = 150 * 2 = 300.
+      // netValue = 300 - 10 = 290.
+      // ceiling = 20 + 0.5 * 290 = 165.
+      // target = 20 + 0.3 * 290 = 107.
+      // floor = 20 + 0.15 * 290 = 63.5.
+      // cogs = 0.5 * 1.5 * 20 + 5 = 15 + 5 = 20.
+      const entPoint = corridor.points.find(p => p.cohortName === 'Enterprise')!;
+      expect(entPoint.cogs).toBe(20);
+      expect(entPoint.ceiling).toBe(165);
+      expect(entPoint.targetPrice).toBe(107);
+      expect(entPoint.floorPrice).toBe(63.5);
+    });
+
+    it('de-weights tokenCosts by aiUsersWeighted so usage_intensity is not double-counted in COGS (ADR 0011)', () => {
+      // Regression guard: the main timeline scales tokenCosts by per-cohort usage_intensity (Phase B),
+      // so the corridor must divide by aiUsersWeighted to recover the intensity-free unit cost before
+      // re-applying each cohort's own intensity. Without de-weighting, the blended avgIntensity is
+      // double-counted into every COGS floor. Here aiUsersWeighted (200) = aiUsers (100) × intensity (2.0).
+      const scenario: Scenario = {
+        id: 's-evc-deweight',
+        name: 'Deweight Scenario',
+        projection_months: 12,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        scope_cohorts: [
+          {
+            id: 'c1',
+            name: 'Heavy',
+            current_users: 100,
+            monthly_acquisition: 0,
+            acquisition_growth_rate: 0,
+            monthly_churn_rate: 0,
+            retention_floor: 0,
+            monthly_expansion_rate: 0,
+            ai_adoption_rate: 1.0,
+            gross_margin: 0.5,
+            base_arpu: 50,
+            usage_intensity: 2.0
+          }
+        ],
+        services: []
+      };
+
+      const timeline = [
+        {
+          month: 12,
+          revenue: 5000,
+          customers: 100,
+          aiUsers: 100,
+          aiUsersWeighted: 200, // engine already scaled tokenCosts by intensity 2.0
+          opex: 0,
+          tokenCosts: 2000, // = 200 weighted users × $10 intensity-free unit cost
+          grossRevenue: 5000,
+          baselineRevenue: 4000,
+          baselineCustomers: 100,
+          monetizationRevenue: 0,
+          addonRevenue: 0,
+          usageRevenue: 0,
+          hybridBaseRevenue: 0,
+          overchargeRevenue: 0,
+          outcomeRevenue: 0,
+          totalCosts: 2000,
+          capex: 0,
+          netCashFlow: 3000,
+          cumulativeCashFlow: 3000
+        }
+      ];
+
+      const evc: EvcResult = {
+        evc: 150,
+        referenceValue: 20,
+        positiveValueTotal: 120,
+        negativeValueTotal: 10,
+        netCreatedValue: 100,
+        priceFloor: 35,
+        priceTarget: 50,
+        priceCeiling: 70,
+        laborSavings: 0,
+        extraPositiveValue: 0,
+        unitNetValue: 100,
+        targetCapturePerUserMonth: 30,
+        customerSurplusPerUserMonth: 70,
+        vendorGrossProfitPerUserMonth: 23,
+        cogsPerUserMonth: 20
+      };
+
+      const corridor = buildPricingCorridor(scenario, timeline, evc);
+      // u_base = tokenCosts / aiUsersWeighted = 2000 / 200 = 10 (NOT 2000 / 100 = 20).
+      // cogs = adoption(1.0) × intensity(2.0) × 10 + opex(0) = 20. With the double-count it would be 40.
+      expect(corridor.points[0].cogs).toBe(20);
+    });
+
     it('should detect a break in pricing corridor', () => {
       const scenario: Scenario = {
         id: 's-corridor-break',

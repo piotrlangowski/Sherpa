@@ -16,6 +16,7 @@ Format: Michael Nygard (kontekst / decyzja / status / konsekwencje).
 | [0008](0008-jedna-waluta-bazowa.md) | Inwariant jednej waluty: czysty silnik=baza, konwersja na granicy, koniec z hardcoded `$` | Proponowany |
 | [0009](0009-strumienie-przychodu-per-archetyp.md) | Strumienie przychodu per archetyp: copilot (seat) + agent (interakcja) jako rozłączne strumienie; cena ≠ labor‑savings; blended margin per strumień | Proponowany |
 | [0010](0010-portfel-kredytow.md) | Wspólny portfel kredytów (Podejście B): tier→pula→konwersja; kredyt hybrydowy (floor kosztowy + narzut wartości); przychód jak subskrypcja (breakage); atrybucja per strumień wg EVC; zakaz mieszania billing modeli | Proponowany |
+| [0011](0011-evc-per-segment.md) | EVC per-segment — różnicowanie sufitu wartości i COGS per cohort | Zaakceptowany |
 
 ## Skrót koncepcji
 

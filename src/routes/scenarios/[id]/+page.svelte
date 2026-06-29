@@ -802,7 +802,9 @@
                 Gross Margin Target: <b>${Math.round(pt.grossMargin * 100)}%</b><br/>
                 <span style="color:#64748b">Ceiling (EVC):</span> <b>${formatCurrency(pt.ceiling, appState.currency, 2)}/mo</b><br/>
                 <span style="color:#3b82f6">Realized Price:</span> <b>${formatCurrency(realized, appState.currency, 2)}/mo</b><br/>
+                ${pt.targetPrice ? `<span style="color:#a855f7">Target Price:</span> <b>${formatCurrency(pt.targetPrice, appState.currency, 2)}/mo</b><br/>` : ''}
                 <span style="color:#f59e0b">Target Floor:</span> <b>${formatCurrency(pt.floorTarget, appState.currency, 2)}/mo</b><br/>
+                ${pt.floorPrice ? `<span style="color:#f97316">Floor (EVC):</span> <b>${formatCurrency(pt.floorPrice, appState.currency, 2)}/mo</b><br/>` : ''}
                 <span style="color:#94a3b8">COGS Floor:</span> <b>${formatCurrency(pt.cogs, appState.currency, 2)}/mo</b><br/>
                 Value headroom: <b>${formatCurrency(gap, appState.currency, 0)}/mo</b><br/>
                 Status: <span style="font-weight: bold; color: ${pt.status === 'loss' ? '#f43f5e' : (pt.status === 'healthy' ? '#10b981' : '#f59e0b')};">${pt.status.toUpperCase().replace('_', ' ')}</span>
