@@ -44,3 +44,48 @@ Parametry (ustalone 2026-07-02):
 - **Q2 — Decyzja 2 wdrażana teraz.** Usługi spoza tabeli burn-rate w scenariuszu `pool` księgują przychód przez `calculateMonetizationRevenue`, tak jak dziś `plan`/`feature`/`pack`. To odblokowuje wzorzec "tylko Fable w puli, Sonnet obok" bez czekania na sublimity (Q4).
 - **Q3 — jawna `overage_price_per_credit` odłożona.** Floor kosztowy + EVC z ADR 0010 Decyzja 1 zostaje jedynym mechanizmem cenowym nadwyżki; z pustym EVC już dziś poprawnie daje pass-through bez marży.
 - **Q4 — sublimity per usługa w puli odłożone (YAGNI).** Do czasu realnego przypadku z >1 usługą w jednej puli i nierównym podziałem limitu.
+
+## Amendment (2026-07) — `fee_basis: 'per_customer'` + `PoolTier.pool_size_basis`
+
+Po wdrożeniu Decyzji 1 (`fee_basis: 'per_member'`) drugi przebieg tego samego żywego scenariusza (Claude Pro + pula Fable, `c6d297d3-…`) ujawnił dwie kolejne luki, obie w tym samym miejscu — założeniu, że "opłata subskrypcyjna" i "wliczony limit" mają tę samą bazę co `aiUsers`:
+
+1. **`per_member` liczy fee po adopterach, nie po całej bazie płacącej.** `aiUsers` (`ai_adoption_rate × current_users`) to populacja **korzystająca z AI**, nie populacja **płacąca abonament**. Dla Claude Pro każdy z 1M subskrybentów płaci $20, niezależnie od tego, czy w danym miesiącu w ogóle użył Fable — `fee_basis: 'per_member'` na scenariuszu z `ai_adoption_rate: 0.3` liczyłby fee od 300k, zaniżając przychód ~3,3×.
+2. **`credit_pool_size` jest absolutne — nie ma sposobu wyrazić "2,5 kredytu wliczone NA UŻYTKOWNIKA".** Realna polityka Anthropic to allowance *per subskrybent*, nie jeden wspólny worek kredytów na całą kohortę. Przy stałym `credit_pool_size` allowance efektywnie znika przy milionowej bazie (limit wyczerpuje się natychmiast, cała konsumpcja Fable księguje się jako nadwyżka pass-through) — więc nie da się odtworzyć podstawowej mechaniki "pierwsze 2,5 kredytu na koszt firmy, reszta pass-through per user".
+
+Root cause dodatkowo pogłębiony przez bug implementacyjny: loader scenariusza w MCP (`mcp-server/src/index.ts`, `getFullScenario`) nie pobierał kolumny `fee_basis` z `pool_tiers` w ogóle — więc nawet ustawiony poprawnie `per_member` był po stronie silnika `undefined` → płaski fee. Naprawiony w tym samym przebiegu (SELECT rozszerzony o `fee_basis, pool_size_basis`).
+
+### Decyzja (amendment)
+
+1. **`PoolTier.fee_basis` zyskuje trzecią wartość `'per_customer'`.** Opłata tieru = `monthly_fee × activeCustomers` tego miesiąca — ta sama zmienna co baza kohorty w projekcji (nie `aiUsers`). Modeluje subskrypcję płaconą przez każdego aktywnego klienta niezależnie od realnego użycia AI. `'per_member'` zostaje bez zmian semantyki (× `aiUsers`) — użyteczne tam, gdzie opłata faktycznie skaluje się z adopcją (np. dodatek per-seat aktywowany na żądanie).
+2. **Nowe pole `PoolTier.pool_size_basis: 'absolute' | 'per_member'`** (domyślnie `'absolute'`, zachowuje dzisiejsze zachowanie). Przy `'per_member'` efektywna pula tego miesiąca = `credit_pool_size × aiUsers` — allowance skalowany per adopter, a nie stały worek. Konsumpcja/nadwyżka/breakage liczą się względem tej efektywnej puli (upper-band, zgodnie z istniejącą konwencją poola).
+3. **Rozdzielenie „kto płaci" (fee_basis) od „ile jest wliczone" (pool_size_basis) jest celowe.** To dwa niezależne wymiary tej samej struktury cenowej — realny przypadek referencyjny łączy `fee_basis: 'per_customer'` (płaci każdy subskrybent) z `pool_size_basis: 'per_member'` (wliczone tylko dla tych, którzy faktycznie korzystają), ale kombinacja jest dowolna (np. B2B org-wide fee + per-seat allowance).
+
+### Ekonomia referencyjna (Claude Pro + pula Fable, zweryfikowana silnikiem)
+
+Dla kohorty 1 000 000 subskrybentów, `ai_adoption_rate: 0.3` (300k adopterów), fee $20/`per_customer`, `credit_pool_size: 2.5`/`per_member`, Fable 9,2 kredytu/user (burn rate w puli), Sonnet 3,68 kredytu/user (poza pulą, PAYG), EVC puste (floor kosztowy $1/kredyt):
+
+| Pozycja | Wzór | Wynik / mies. |
+|---|---|---|
+| Opłata tieru | `$20 × 1 000 000` | `$20 000 000` |
+| Nadwyżka Fable | `(9.2 − 2.5) × 300 000 × $1` | `$2 010 000` |
+| Przychód Sonnet (poza pulą) | `3.68 × 300 000 × $1` | `$1 104 000` (wash, = koszt) |
+| Allowance (COGS bez przychodu) | `2.5 × 300 000 × $1` | `$750 000` |
+| **Kontrybucja** | fee − allowance | **≈ $19 250 000** |
+
+Test regresyjny: `src/lib/shared/financial-math.test.ts`, describe `'ADR 0012 amendment — two knobs'`, `'reproduces the Fable 5 reference economics …'`.
+
+### Konsekwencje (amendment)
+
+Pozytywne:
+- Realny scenariusz Claude Pro + pula Fable koduje się dziś dokładnie (bez obejść, bez zniekształceń rzędu wielkości) — jedyne pozostałe uproszczenie to statyczne `seats` planu (nieużywane w tej ścieżce — `pool` nie potrzebuje planu do przychodu) i miesięczna granulacja silnika (tydzień → miesiąc, drobne).
+- `fee_basis`/`pool_size_basis` to ortogonalne przełączniki — istniejące tiery (`flat`/`absolute`) i tiery z pierwszej Decyzji (`per_member`/`absolute`) działają bez zmian.
+
+Negatywne / koszty:
+- `pool_size_basis` to kolejna kolumna + migracja (Migracja 23), plus UI/MCP/eksport do rozszerzenia — czwarty punkt dotyku po `fee_basis` z Decyzji 1.
+- Cztery kombinacje `fee_basis × pool_size_basis` (rosnące do sześciu przy przyszłych wartościach) zaczynają przypominać osobną strukturę cenową bardziej niż "pulę z dwoma trybami" — jeśli pojawi się piąty wymiar (np. sublimity per usługa, Q4 z sekcji głównej), warto rozważyć, czy `pool` nie powinien zostać rozbity na jawny obiekt konfiguracji zamiast rosnącej listy pól na `PoolTier`.
+
+### Otwarte pytania (nie rozstrzygnięte tym amendmentem)
+
+- Czy `pool_size_basis` powinien też przyjmować `'per_customer'` (allowance dla każdego subskrybenta, nie tylko adoptera)? Dziś niepotrzebne dla żadnego znanego przypadku — realna polityka Anthropic wlicza limit tylko aktywnym userom.
+- Statyczne `seats` planu (luka #5 z analizy pierwotnej) — wciąż nierozwiązane, wciąż poza zakresem `pool`.
+- Jawna cena nadwyżki (Q3 z sekcji głównej) — wciąż odłożona.

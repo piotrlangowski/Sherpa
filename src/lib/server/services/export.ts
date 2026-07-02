@@ -45,7 +45,7 @@ export interface ScenarioExportSnapshot {
     revenue_bridge?: RevenueBridge | null;
     // Credit pool (ADR 0010) — keyed by name (tier) / service name (burn rates) so both
     // survive re-import the same way monetization_overrides/entity_overrides already do.
-    pool_tier?: { name: string; monthly_fee: number; credit_pool_size: number; capture?: number | null; fee_basis?: 'flat' | 'per_member' } | null;
+    pool_tier?: { name: string; monthly_fee: number; credit_pool_size: number; capture?: number | null; fee_basis?: 'flat' | 'per_member' | 'per_customer'; pool_size_basis?: 'absolute' | 'per_member' } | null;
     pool_burn_rates?: { service_name: string; burn_rate: number }[];
   };
 }
@@ -147,12 +147,12 @@ export function exportScenarioToJSON(scenarioId: string): string {
 
   // Credit pool (ADR 0010) — resolve the tier + its burn-rate table by name so a re-import
   // doesn't need to guess IDs, mirroring how monetization/entity overrides key by entity name.
-  let poolTier: { name: string; monthly_fee: number; credit_pool_size: number; capture?: number | null; fee_basis?: 'flat' | 'per_member' } | null = null;
+  let poolTier: { name: string; monthly_fee: number; credit_pool_size: number; capture?: number | null; fee_basis?: 'flat' | 'per_member' | 'per_customer'; pool_size_basis?: 'absolute' | 'per_member' } | null = null;
   let poolBurnRates: { service_name: string; burn_rate: number }[] = [];
   if (scenario.pool_tier_id) {
     const tier = poolTiersRepository.getById(scenario.pool_tier_id);
     if (tier) {
-      poolTier = { name: tier.name, monthly_fee: tier.monthly_fee, credit_pool_size: tier.credit_pool_size, capture: tier.capture ?? null, fee_basis: tier.fee_basis ?? 'flat' };
+      poolTier = { name: tier.name, monthly_fee: tier.monthly_fee, credit_pool_size: tier.credit_pool_size, capture: tier.capture ?? null, fee_basis: tier.fee_basis ?? 'flat', pool_size_basis: tier.pool_size_basis ?? 'absolute' };
       poolBurnRates = poolTiersRepository.getBurnRates(scenario.pool_tier_id)
         .filter((br) => br.service_name)
         .map((br) => ({ service_name: br.service_name!, burn_rate: br.burn_rate }));

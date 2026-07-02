@@ -151,6 +151,19 @@ export function validateScenarioConfig(
     }
   }
 
+  // #3b Plan seats are informational under the pool carrier.
+  if (carrier === 'pool') {
+    const totalSeats = plans.reduce((sum, p) => sum + (p.seats ?? 0), 0);
+    if (totalSeats > 0) {
+      diagnostics.push({
+        code: 'pool_seats_informational',
+        severity: 'info',
+        field: 'plans',
+        message: 'Plan seats are informational under the pool carrier (revenue = tier fee and overage).'
+      });
+    }
+  }
+
   // ── Tier 2: context-less levers ──────────────────────────────────────────
 
   // #4 Uplift levers configured, yet the modeled benefit is structurally zero.
@@ -240,7 +253,7 @@ export function validateScenarioConfig(
 
     if (revenuePerUserMonth + EPS < costPerUserMonth) {
       const detail = config.monetization_type === 'usage' && creditsPerUser > EPS
-        ? `${money(pricePerCredit, 4)}/credit revenue vs ~${money(costPerUserMonth / creditsPerUser, 4)}/credit provider token cost`
+        ? `${money(pricePerCredit, 4)}/credit revenue vs ~${money(costPerUserMonth / creditsPerUser, 4)}/credit provider token cost (per-credit figures use the provider's credit conversion (input_tokens_per_credit/output_tokens_per_credit), not pool burn rates)`
         : `~${money(revenuePerUserMonth, 2)}/user-mo revenue vs ~${money(costPerUserMonth, 2)}/user-mo provider token cost`;
       diagnostics.push({
         code: 'negative_unit_margin',
@@ -2057,9 +2070,13 @@ export function calculateScenario(
     // value hybrid (Decision 1). Stream attribution (Decision 3) happens after the full timeline
     // is built, since it's based on lifetime EVC weight, not this month's consumption alone.
     let monthPoolBreakageUpper = 0;
+    let monthPoolTierFeeUpper = 0;
+    let monthPoolOverageRevenueUpper = 0;
+
     if (carrier === 'pool' && scenario.pool_tier) {
       const tier = scenario.pool_tier;
       const captureForPool = tier.capture ?? scenario.evc_capture_target_pct ?? 0.30;
+      const poolSizeBasis = tier.pool_size_basis ?? 'absolute';
 
       // Blended $/credit: this month's actual token cost of pool-MEMBER services ÷ credits
       // consumed earning it. Since ADR 0012 Decision 2 lets non-pool services share the scenario
@@ -2071,17 +2088,20 @@ export function calculateScenario(
         : 0;
       const creditValueUpper = Math.max(creditFloorUpper, valuePerCreditUpper);
 
+      // Pool allowance (Decision 1 / Amendment 2026-07) - absolute (flat credits) or per_member (credits × aiUsers).
+      const effectivePoolUpper = poolSizeBasis === 'per_member' ? tier.credit_pool_size * activeAiUsersUpper : tier.credit_pool_size;
+
       // Breakage (Decision 2/Parameters): unused credits valued at the cost floor, memo only —
       // no rollover, no cash impact (the full fee is already booked below regardless of usage).
-      monthPoolBreakageUpper = Math.max(0, tier.credit_pool_size - monthPoolConsumedCreditsUpper) * creditFloorUpper;
+      monthPoolBreakageUpper = Math.max(0, effectivePoolUpper - monthPoolConsumedCreditsUpper) * creditFloorUpper;
 
       // Pool exhaustion (Decision 4) — behavior from the pool services' shared monetization_type
       // (homogeneity is enforced by validateRevenueIntegrity, so any one service's type applies).
       const poolService = (scenario.services ?? []).find(s => poolBurnRateMap.has(s.id));
       const poolBillingType = poolService?.monetization?.monetization_type;
       let overageRevenueUpper = 0;
-      if (monthPoolConsumedCreditsUpper > tier.credit_pool_size) {
-        const overageCreditsUpper = monthPoolConsumedCreditsUpper - tier.credit_pool_size;
+      if (monthPoolConsumedCreditsUpper > effectivePoolUpper) {
+        const overageCreditsUpper = monthPoolConsumedCreditsUpper - effectivePoolUpper;
         if (poolBillingType === 'hybrid') {
           overageRevenueUpper = overageCreditsUpper * creditValueUpper * HYBRID_OVERAGE_MARKUP;
         } else if (poolBillingType === 'usage') {
@@ -2091,12 +2111,19 @@ export function calculateScenario(
         // tokenCostsUpper above) becomes a margin hit, modeling real hard-cap risk.
       }
 
-      // Tier fee basis (ADR 0012 Decision 1) — 'flat' (default) books monthly_fee once, unchanged
-      // from ADR 0010; 'per_member' scales it by the same active-AI-user measure monetization
-      // revenue already uses elsewhere in this loop, so a subscription-style tier (e.g. Claude
-      // Pro) tracks the cohort's dynamic adoption curve instead of a frozen headcount.
-      const tierFeeUpper = tier.fee_basis === 'per_member' ? tier.monthly_fee * activeAiUsersUpper : tier.monthly_fee;
-      const tierFeeLower = tier.fee_basis === 'per_member' ? tier.monthly_fee * activeAiUsersLower : tier.monthly_fee;
+      // Tier fee basis (ADR 0012 Decision 1 / Amendment 2026-07)
+      // 'flat' (default) books monthly_fee once;
+      // 'per_member' scales it by the active AI users;
+      // 'per_customer' scales it by total active customers.
+      const tierFeeUpper = tier.fee_basis === 'per_member'
+        ? tier.monthly_fee * activeAiUsersUpper
+        : (tier.fee_basis === 'per_customer' ? tier.monthly_fee * activeCustomers : tier.monthly_fee);
+      const tierFeeLower = tier.fee_basis === 'per_member'
+        ? tier.monthly_fee * activeAiUsersLower
+        : (tier.fee_basis === 'per_customer' ? tier.monthly_fee * activeCustomers : tier.monthly_fee);
+
+      monthPoolTierFeeUpper = tierFeeUpper;
+      monthPoolOverageRevenueUpper = overageRevenueUpper;
 
       // Overage pricing only varies the volume by band in principle; reusing the upper-band
       // credit value for both keeps this in line with how plan/seat figures are also only
@@ -2177,7 +2204,9 @@ export function calculateScenario(
       agentRevenue: parseFloat(agentRevenueUpper.toFixed(2)),
       agentCogs: parseFloat(agentCogs.toFixed(2)),
       // Credit pool (ADR 0010)
-      poolBreakage: parseFloat(monthPoolBreakageUpper.toFixed(2))
+      poolBreakage: parseFloat(monthPoolBreakageUpper.toFixed(2)),
+      poolTierFeeRevenue: parseFloat(monthPoolTierFeeUpper.toFixed(2)),
+      poolOverageRevenue: parseFloat(monthPoolOverageRevenueUpper.toFixed(2))
     });
 
     cashFlowsLower.push(parseFloat(netCashFlowLower.toFixed(2)));
@@ -2259,14 +2288,25 @@ export function calculateScenario(
           agentShare: parseFloat((sumAgentEvcValue / totalEvcValue).toFixed(4)),
           method: 'evc'
         }
-      : { copilotShare: 0.5, agentShare: 0.5, method: 'even_split_fallback' };
+      : (
+          driverProfile === 'seat_only'
+            ? { copilotShare: 1.0, agentShare: 0.0, method: 'profile_fallback' }
+            : (
+                driverProfile === 'interaction_only'
+                  ? { copilotShare: 0.0, agentShare: 1.0, method: 'profile_fallback' }
+                  : { copilotShare: 0.5, agentShare: 0.5, method: 'even_split_fallback' }
+              )
+        );
 
     let totalOverageRevenue = 0;
+    let totalTierFeeRevenue = 0;
     let totalBreakage = 0;
     for (const m of timeline) {
-      m.copilotRevenue = parseFloat(((m.copilotRevenue ?? 0) + m.revenue * attribution.copilotShare).toFixed(2));
-      m.agentRevenue = parseFloat(((m.agentRevenue ?? 0) + m.revenue * attribution.agentShare).toFixed(2));
-      totalOverageRevenue += Math.max(0, m.revenue - scenario.pool_tier.monthly_fee);
+      const poolRevenue = (m.poolTierFeeRevenue ?? 0) + (m.poolOverageRevenue ?? 0);
+      m.copilotRevenue = parseFloat(((m.copilotRevenue ?? 0) + poolRevenue * attribution.copilotShare).toFixed(2));
+      m.agentRevenue = parseFloat(((m.agentRevenue ?? 0) + poolRevenue * attribution.agentShare).toFixed(2));
+      totalOverageRevenue += m.poolOverageRevenue ?? 0;
+      totalTierFeeRevenue += m.poolTierFeeRevenue ?? 0;
       totalBreakage += m.poolBreakage ?? 0;
     }
 
@@ -2276,6 +2316,9 @@ export function calculateScenario(
       totalConsumedCredits: parseFloat(sumPoolConsumedCreditsUpper.toFixed(2)),
       totalBreakage: parseFloat(totalBreakage.toFixed(2)),
       totalOverageRevenue: parseFloat(totalOverageRevenue.toFixed(2)),
+      totalTierFeeRevenue: parseFloat(totalTierFeeRevenue.toFixed(2)),
+      feeBasis: scenario.pool_tier.fee_basis ?? 'flat',
+      poolSizeBasis: scenario.pool_tier.pool_size_basis ?? 'absolute',
       attribution
     };
   }

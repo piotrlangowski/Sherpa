@@ -1,6 +1,7 @@
 import db from '../db';
 import type { Pack, Service } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { scenariosRepository } from './scenarios';
 
 export const packsRepository = {
   getAll(): Pack[] {
@@ -89,9 +90,13 @@ export const packsRepository = {
         }
       }
     })();
+
+    const affected = scenariosRepository.findScenarioIdsByPackId(id);
+    scenariosRepository.invalidateResults(affected);
   },
 
   delete(id: string): void {
+    const affected = scenariosRepository.findScenarioIdsByPackId(id);
     db.transaction(() => {
       db.prepare("DELETE FROM pack_services WHERE pack_id = ?").run(id);
       db.prepare("DELETE FROM plan_packs WHERE pack_id = ?").run(id);
@@ -100,5 +105,6 @@ export const packsRepository = {
       db.prepare("DELETE FROM monetization_configs WHERE entity_type = 'pack' AND entity_id = ?").run(id);
       db.prepare("DELETE FROM packs WHERE id = ?").run(id);
     })();
+    scenariosRepository.invalidateResults(affected);
   }
 };

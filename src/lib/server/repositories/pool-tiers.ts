@@ -1,12 +1,12 @@
 import db from '../db';
-import type { PoolTier, PoolBurnRate, PoolFeeBasis } from '../../types';
+import type { PoolTier, PoolBurnRate, PoolFeeBasis, PoolSizeBasis } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
 import { scenariosRepository } from './scenarios';
 
 export const poolTiersRepository = {
   getAll(): PoolTier[] {
     const rows = db.prepare(`
-      SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, created_at, updated_at
+      SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, pool_size_basis, created_at, updated_at
       FROM pool_tiers
       ORDER BY name ASC
     `).all() as any[];
@@ -18,6 +18,7 @@ export const poolTiersRepository = {
       credit_pool_size: r.credit_pool_size,
       capture: r.capture,
       fee_basis: (r.fee_basis as PoolFeeBasis) || 'flat',
+      pool_size_basis: (r.pool_size_basis as PoolSizeBasis) || 'absolute',
       created_at: r.created_at,
       updated_at: r.updated_at
     }));
@@ -25,7 +26,7 @@ export const poolTiersRepository = {
 
   getById(id: string): PoolTier | null {
     const r = db.prepare(`
-      SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, created_at, updated_at
+      SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, pool_size_basis, created_at, updated_at
       FROM pool_tiers
       WHERE id = ?
     `).get(id) as any;
@@ -38,6 +39,7 @@ export const poolTiersRepository = {
       credit_pool_size: r.credit_pool_size,
       capture: r.capture,
       fee_basis: (r.fee_basis as PoolFeeBasis) || 'flat',
+      pool_size_basis: (r.pool_size_basis as PoolSizeBasis) || 'absolute',
       created_at: r.created_at,
       updated_at: r.updated_at
     };
@@ -61,15 +63,15 @@ export const poolTiersRepository = {
     }));
   },
 
-  create(data: { name: string; monthly_fee: number; credit_pool_size: number; capture?: number | null; fee_basis?: PoolFeeBasis; burn_rates?: Array<{ service_id: string; burn_rate: number }> }): PoolTier {
+  create(data: { name: string; monthly_fee: number; credit_pool_size: number; capture?: number | null; fee_basis?: PoolFeeBasis; pool_size_basis?: PoolSizeBasis; burn_rates?: Array<{ service_id: string; burn_rate: number }> }): PoolTier {
     const id = uuidv4();
     const now = new Date().toISOString();
 
     db.transaction(() => {
       db.prepare(`
-        INSERT INTO pool_tiers (id, name, monthly_fee, credit_pool_size, capture, fee_basis, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, data.name, data.monthly_fee, data.credit_pool_size, data.capture ?? null, data.fee_basis ?? 'flat', now, now);
+        INSERT INTO pool_tiers (id, name, monthly_fee, credit_pool_size, capture, fee_basis, pool_size_basis, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, data.name, data.monthly_fee, data.credit_pool_size, data.capture ?? null, data.fee_basis ?? 'flat', data.pool_size_basis ?? 'absolute', now, now);
 
       if (data.burn_rates && data.burn_rates.length > 0) {
         const insertRate = db.prepare(`
@@ -84,7 +86,7 @@ export const poolTiersRepository = {
     return this.getById(id)!;
   },
 
-  update(id: string, data: Partial<{ name: string; monthly_fee: number; credit_pool_size: number; capture: number | null; fee_basis: PoolFeeBasis; burn_rates: Array<{ service_id: string; burn_rate: number }> }>): void {
+  update(id: string, data: Partial<{ name: string; monthly_fee: number; credit_pool_size: number; capture: number | null; fee_basis: PoolFeeBasis; pool_size_basis: PoolSizeBasis; burn_rates: Array<{ service_id: string; burn_rate: number }> }>): void {
     const current = this.getById(id);
     if (!current) throw new Error(`Pool tier not found: ${id}`);
 
@@ -93,14 +95,15 @@ export const poolTiersRepository = {
     const credit_pool_size = data.credit_pool_size !== undefined ? data.credit_pool_size : current.credit_pool_size;
     const capture = data.capture !== undefined ? data.capture : current.capture;
     const fee_basis = data.fee_basis !== undefined ? data.fee_basis : (current.fee_basis ?? 'flat');
+    const pool_size_basis = data.pool_size_basis !== undefined ? data.pool_size_basis : (current.pool_size_basis ?? 'absolute');
     const now = new Date().toISOString();
 
     db.transaction(() => {
       db.prepare(`
         UPDATE pool_tiers
-        SET name = ?, monthly_fee = ?, credit_pool_size = ?, capture = ?, fee_basis = ?, updated_at = ?
+        SET name = ?, monthly_fee = ?, credit_pool_size = ?, capture = ?, fee_basis = ?, pool_size_basis = ?, updated_at = ?
         WHERE id = ?
-      `).run(name, monthly_fee, credit_pool_size, capture ?? null, fee_basis, now, id);
+      `).run(name, monthly_fee, credit_pool_size, capture ?? null, fee_basis, pool_size_basis, now, id);
 
       if (data.burn_rates !== undefined) {
         db.prepare("DELETE FROM pool_burn_rates WHERE tier_id = ?").run(id);
@@ -119,10 +122,12 @@ export const poolTiersRepository = {
   },
 
   delete(id: string): void {
+    const affectedScenarios = scenariosRepository.findScenarioIdsByPoolTierId(id);
     db.transaction(() => {
       db.prepare("UPDATE scenarios SET pool_tier_id = NULL WHERE pool_tier_id = ?").run(id);
       db.prepare("DELETE FROM pool_burn_rates WHERE tier_id = ?").run(id);
       db.prepare("DELETE FROM pool_tiers WHERE id = ?").run(id);
     })();
+    scenariosRepository.invalidateResults(affectedScenarios);
   }
 };

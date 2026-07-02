@@ -83,6 +83,8 @@ describe('scenario JSON export/import round-trip', () => {
       monthly_fee: 20,
       credit_pool_size: 2.5,
       capture: 0.3,
+      fee_basis: 'per_customer',
+      pool_size_basis: 'per_member',
       burn_rates: [{ service_id: service.id, burn_rate: 1 }]
     });
 
@@ -108,7 +110,9 @@ describe('scenario JSON export/import round-trip', () => {
       name: 'Fable 5 Included Pool',
       monthly_fee: 20,
       credit_pool_size: 2.5,
-      capture: 0.3
+      capture: 0.3,
+      fee_basis: 'per_customer',
+      pool_size_basis: 'per_member'
     });
     expect(snapshot.scenario.pool_burn_rates).toEqual([
       { service_name: 'Fable 5 (Included Pool)', burn_rate: 1 }
@@ -138,12 +142,68 @@ describe('scenario JSON export/import round-trip', () => {
       name: 'Fable 5 Included Pool',
       monthly_fee: 20,
       credit_pool_size: 2.5,
-      capture: 0.3
+      capture: 0.3,
+      fee_basis: 'per_customer',
+      pool_size_basis: 'per_member'
     });
 
     const importedBurnRates = poolTiersRepository.getBurnRates(imported!.pool_tier_id!);
     expect(importedBurnRates).toHaveLength(1);
     expect(importedBurnRates[0].burn_rate).toBe(1);
     expect(importedBurnRates[0].service_name).toBe('Fable 5 (Included Pool)');
+  });
+
+  it('imports a pre-amendment export without pool_size_basis (back-compat)', async () => {
+    // Simulates a JSON exported before the ADR 0012 amendment added pool_size_basis: the field
+    // is simply absent (older `fee_basis` values 'flat'/'per_member' are still valid).
+    const legacySnapshot = {
+      version: '1.0',
+      exportedAt: new Date().toISOString(),
+      scenario: {
+        name: 'Legacy Pool Scenario',
+        description: 'pre-amendment export missing pool_size_basis',
+        projection_months: 6,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        scope_verticals: [],
+        scope_cohorts: [{
+          name: 'Legacy Cohort', current_users: 500, monthly_acquisition: 0,
+          acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0,
+          monthly_expansion_rate: 0, ai_adoption_rate: 0.5, base_arpu: 10
+        }],
+        scope_overrides: [],
+        services: [],
+        packs: [],
+        plans: [],
+        costs: [],
+        monetization_overrides: [],
+        entity_overrides: [],
+        modeling_type: 'appraisal',
+        revenue_carrier: 'pool',
+        pool_tier: {
+          name: 'Legacy Pool Tier',
+          monthly_fee: 15,
+          credit_pool_size: 5000,
+          capture: null,
+          fee_basis: 'flat'
+          // pool_size_basis intentionally omitted — the field didn't exist yet.
+        },
+        pool_burn_rates: []
+      }
+    };
+
+    const importRequest = new Request('http://localhost/api/import', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(legacySnapshot)
+    });
+    const response = await importPOST({ request: importRequest } as Parameters<typeof importPOST>[0]);
+    const importResult = await response.json();
+    expect(importResult.success).toBe(true);
+
+    const imported = scenariosRepository.getById(importResult.scenarioId);
+    const importedTier = poolTiersRepository.getById(imported!.pool_tier_id!);
+    expect(importedTier?.fee_basis).toBe('flat');
+    expect(importedTier?.pool_size_basis).toBe('absolute');
   });
 });
