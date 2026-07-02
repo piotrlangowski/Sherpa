@@ -1,6 +1,7 @@
 import db from '../db';
 import type { Scenario, ScenarioResult, ScopeType, ScopeOverride, RevenueSource, ModelingType, RevenueCarrier, RevenueBridge } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { resolveRevenueModel } from '../../shared/financial-math';
 
 export const scenariosRepository = {
   getAll(): Scenario[] {
@@ -380,10 +381,20 @@ export const scenariosRepository = {
     const id = uuidv4();
     const now = new Date().toISOString();
 
+    const coerced = resolveRevenueModel({
+      modeling_type: data.modeling_type,
+      revenue_carrier: data.revenue_carrier,
+      revenue_bridge: data.revenue_bridge
+    });
+
+    const modeling_type = coerced.modeling_type;
+    const revenue_carrier = coerced.revenue_carrier;
+    const revenue_bridge = data.revenue_bridge || null;
+
     // revenue_source is deprecated (no longer read by the engine). Store a value
     // derived from the authoritative revenue_carrier so the dead column stays
     // internally consistent for any external reader. See resolveRevenueModel().
-    const legacyRevenueSource: RevenueSource = (data.revenue_carrier ?? 'cohort') === 'cohort' ? 'cohort' : 'monetization';
+    const legacyRevenueSource: RevenueSource = (revenue_carrier ?? 'cohort') === 'cohort' ? 'cohort' : 'monetization';
 
     db.transaction(() => {
       db.prepare(`
@@ -400,7 +411,7 @@ export const scenariosRepository = {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, legacyRevenueSource, data.capex_contingency_pct ?? 0,
-        data.modeling_type || 'appraisal', data.revenue_carrier || null, data.revenue_bridge || null,
+        modeling_type, revenue_carrier, revenue_bridge,
         data.expansion_vertical_id || null, data.penetration_baseline_months ?? null, data.ai_acceleration_factor ?? null, data.ai_som_lift_pct ?? null,
         data.evc_nba_annual_value ?? null, data.evc_extra_positive_value ?? null, data.evc_negative_value ?? null,
         data.evc_capture_ceiling_pct ?? null, data.evc_capture_target_pct ?? null, data.evc_capture_floor_pct ?? null,
@@ -481,14 +492,25 @@ export const scenariosRepository = {
     const current = this.getById(id);
     if (!current) throw new Error(`Scenario not found: ${id}`);
 
+    const inputModelingType = data.modeling_type !== undefined ? data.modeling_type : current.modeling_type;
+    const inputRevenueCarrier = data.revenue_carrier !== undefined ? data.revenue_carrier : current.revenue_carrier;
+    const inputRevenueBridge = data.revenue_bridge !== undefined ? data.revenue_bridge : current.revenue_bridge;
+
+    const coerced = resolveRevenueModel({
+      modeling_type: inputModelingType || undefined,
+      revenue_carrier: inputRevenueCarrier || undefined,
+      revenue_bridge: inputRevenueBridge || undefined
+    });
+
+    const modeling_type = coerced.modeling_type;
+    const revenue_carrier = coerced.revenue_carrier;
+    const revenue_bridge = inputRevenueBridge || null;
+
     const name = data.name !== undefined ? data.name : current.name;
     const description = data.description !== undefined ? data.description : current.description;
     const projection_months = data.projection_months !== undefined ? data.projection_months : current.projection_months;
     const discount_rate = data.discount_rate !== undefined ? data.discount_rate : current.discount_rate;
     const scope_type = data.scope_type !== undefined ? data.scope_type : current.scope_type;
-    const modeling_type = data.modeling_type !== undefined ? data.modeling_type : (current.modeling_type || 'appraisal');
-    const revenue_carrier = data.revenue_carrier !== undefined ? data.revenue_carrier : current.revenue_carrier;
-    const revenue_bridge = data.revenue_bridge !== undefined ? data.revenue_bridge : current.revenue_bridge;
     // revenue_source is deprecated (no longer read by the engine); keep it
     // consistent with the authoritative revenue_carrier for external readers.
     const revenue_source: RevenueSource = (revenue_carrier ?? 'cohort') === 'cohort' ? 'cohort' : 'monetization';
@@ -711,8 +733,12 @@ export const scenariosRepository = {
   },
 
   findScenarioIdsByVerticalId(verticalId: string): string[] {
-    return (db.prepare(`SELECT scenario_id FROM scenario_verticals WHERE vertical_id = ?`).all(verticalId) as any[])
-      .map(r => r.scenario_id);
+    const rows = db.prepare(`
+      SELECT scenario_id FROM scenario_verticals WHERE vertical_id = ?
+      UNION
+      SELECT id AS scenario_id FROM scenarios WHERE expansion_vertical_id = ?
+    `).all(verticalId, verticalId) as any[];
+    return rows.map(r => r.scenario_id);
   },
 
   findScenarioIdsByCohortId(cohortId: string): string[] {
@@ -738,5 +764,15 @@ export const scenariosRepository = {
   findScenarioIdsByPoolTierId(tierId: string): string[] {
     return (db.prepare(`SELECT id FROM scenarios WHERE pool_tier_id = ?`).all(tierId) as any[])
       .map(r => r.id);
+  },
+
+  findScenarioIdsByPlanId(planId: string): string[] {
+    return (db.prepare(`SELECT scenario_id FROM scenario_plans WHERE plan_id = ?`).all(planId) as any[])
+      .map(r => r.scenario_id);
+  },
+
+  findScenarioIdsByPackId(packId: string): string[] {
+    return (db.prepare(`SELECT scenario_id FROM scenario_packs WHERE pack_id = ?`).all(packId) as any[])
+      .map(r => r.scenario_id);
   }
 };

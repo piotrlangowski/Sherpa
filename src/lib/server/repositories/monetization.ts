@@ -1,6 +1,7 @@
 import db from '../db';
 import type { MonetizationConfig, MonetizationType, OverchargePolicy, UsageVariant } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { scenariosRepository } from './scenarios';
 
 export type MonetizationEntityType = 'service' | 'pack' | 'plan';
 
@@ -59,6 +60,22 @@ function configValues(config: MonetizationConfig): any[] {
     config.price_per_outcome ?? null,
     config.outcomes_per_user_month ?? null
   ];
+}
+
+function invalidateMonetization(entityType: MonetizationEntityType, entityId: string, scenarioId: string | null): void {
+  if (scenarioId) {
+    scenariosRepository.invalidateResults([scenarioId]);
+  } else {
+    let affected: string[] = [];
+    if (entityType === 'service') {
+      affected = scenariosRepository.findScenarioIdsByServiceId(entityId);
+    } else if (entityType === 'pack') {
+      affected = scenariosRepository.findScenarioIdsByPackId(entityId);
+    } else if (entityType === 'plan') {
+      affected = scenariosRepository.findScenarioIdsByPlanId(entityId);
+    }
+    scenariosRepository.invalidateResults(affected);
+  }
 }
 
 export const monetizationRepository = {
@@ -125,28 +142,32 @@ export const monetizationRepository = {
 
     const values = configValues(config);
 
-    if (existing) {
-      db.prepare(`
-        UPDATE monetization_configs SET
-          monetization_type = ?, addon_monthly_fee = ?, addon_has_usage_limit = ?, addon_usage_limit = ?, addon_overcharge_policy = ?,
-          usage_variant = ?, price_per_credit = ?,
-          hybrid_monthly_fee = ?, hybrid_included_credits = ?, hybrid_overcharge_policy = ?,
-          overcharge_markup = ?, overcharge_user_pct = ?, avg_overcharge_pct = ?,
-          outcome_basis = ?, price_per_outcome = ?, outcomes_per_user_month = ?
-        WHERE id = ?
-      `).run(...values, existing.id);
-    } else {
-      db.prepare(`
-        INSERT INTO monetization_configs (
-          id, entity_type, entity_id, scenario_id, monetization_type,
-          addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
-          usage_variant, price_per_credit,
-          hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
-          overcharge_markup, overcharge_user_pct, avg_overcharge_pct,
-          outcome_basis, price_per_outcome, outcomes_per_user_month
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(uuidv4(), entityType, entityId, scenarioId, ...values);
-    }
+    db.transaction(() => {
+      if (existing) {
+        db.prepare(`
+          UPDATE monetization_configs SET
+            monetization_type = ?, addon_monthly_fee = ?, addon_has_usage_limit = ?, addon_usage_limit = ?, addon_overcharge_policy = ?,
+            usage_variant = ?, price_per_credit = ?,
+            hybrid_monthly_fee = ?, hybrid_included_credits = ?, hybrid_overcharge_policy = ?,
+            overcharge_markup = ?, overcharge_user_pct = ?, avg_overcharge_pct = ?,
+            outcome_basis = ?, price_per_outcome = ?, outcomes_per_user_month = ?
+          WHERE id = ?
+        `).run(...values, existing.id);
+      } else {
+        db.prepare(`
+          INSERT INTO monetization_configs (
+            id, entity_type, entity_id, scenario_id, monetization_type,
+            addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+            usage_variant, price_per_credit,
+            hybrid_monthly_fee, hybrid_included_credits, hybrid_overcharge_policy,
+            overcharge_markup, overcharge_user_pct, avg_overcharge_pct,
+            outcome_basis, price_per_outcome, outcomes_per_user_month
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(uuidv4(), entityType, entityId, scenarioId, ...values);
+      }
+    })();
+
+    invalidateMonetization(entityType, entityId, scenarioId);
   },
 
   delete(
@@ -154,10 +175,13 @@ export const monetizationRepository = {
     entityId: string,
     scenarioId: string | null = null
   ): void {
-    if (scenarioId) {
-      db.prepare(`DELETE FROM monetization_configs WHERE entity_type = ? AND entity_id = ? AND scenario_id = ?`).run(entityType, entityId, scenarioId);
-    } else {
-      db.prepare(`DELETE FROM monetization_configs WHERE entity_type = ? AND entity_id = ? AND scenario_id IS NULL`).run(entityType, entityId);
-    }
+    db.transaction(() => {
+      if (scenarioId) {
+        db.prepare(`DELETE FROM monetization_configs WHERE entity_type = ? AND entity_id = ? AND scenario_id = ?`).run(entityType, entityId, scenarioId);
+      } else {
+        db.prepare(`DELETE FROM monetization_configs WHERE entity_type = ? AND entity_id = ? AND scenario_id IS NULL`).run(entityType, entityId);
+      }
+    })();
+    invalidateMonetization(entityType, entityId, scenarioId);
   }
 };

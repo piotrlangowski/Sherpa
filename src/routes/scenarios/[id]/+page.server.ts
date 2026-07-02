@@ -13,26 +13,20 @@ export const load: PageServerLoad = async ({ params }) => {
     throw error(404, 'Scenario not found');
   }
 
-  let results = scenariosRepository.getResults(params.id);
-  if (!results) {
-    try {
-      // Calculate and save results on the fly if not cached
-      runAndSaveScenario(params.id);
-      results = scenariosRepository.getResults(params.id);
-    } catch (err: any) {
-      results = null;
-    }
-  }
-
-  let timeline: any[] = [];
   let detailedResult: any = null;
   try {
-    const detailed = calculateScenario(scenario);
-    timeline = detailed.timeline;
-    detailedResult = detailed;
+    detailedResult = runAndSaveScenario(params.id);
   } catch (err) {
-    timeline = [];
+    // A broken scenario config (bad linked data, a hard revenue-integrity block, etc.) must
+    // still render — this page has the delete action, so a calc failure can't strand the
+    // scenario behind a hard error. Fall back to whatever was last cached (possibly null on
+    // a scenario that has never calculated successfully), same as before this page had a
+    // single compute path.
+    detailedResult = null;
   }
+
+  const results = scenariosRepository.getResults(params.id);
+  const timeline = detailedResult ? detailedResult.timeline : [];
 
   const resolvedConfigs = resolveScenarioCohorts(scenario);
   const scopeSummary = {

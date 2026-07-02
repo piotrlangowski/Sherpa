@@ -1599,11 +1599,15 @@
           </div>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
-              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Tier Fee (MRR)</span>
+              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">
+                Tier Fee ({poolEconomics.feeBasis === 'per_member' ? 'per member' : (poolEconomics.feeBasis === 'per_customer' ? 'per customer' : 'flat')})
+              </span>
               <span class="text-sm font-bold font-mono block mt-0.5">{formatCurrency(poolEconomics.tierMonthlyFee, appState.currency, 0)}</span>
             </div>
             <div>
-              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Pool Size (per mo.)</span>
+              <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">
+                Pool Size ({poolEconomics.poolSizeBasis === 'per_member' ? 'per member' : 'absolute'})
+              </span>
               <span class="text-sm font-bold font-mono block mt-0.5">{poolEconomics.poolSize.toLocaleString()} credits</span>
             </div>
             <div>
@@ -1615,12 +1619,17 @@
               <span class="text-sm font-bold font-mono block mt-0.5">{formatCurrency(poolEconomics.totalOverageRevenue, appState.currency, 0)}</span>
             </div>
           </div>
-          <div class="flex items-center justify-between pt-2 border-t border-border/40 text-xs">
+          <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between pt-2 border-t border-border/40 text-xs gap-2">
+            <div class="flex flex-wrap gap-x-4 gap-y-1">
+              <span class="text-muted-foreground">
+                Total Fee Revenue: <span class="font-bold text-foreground">{formatCurrency(poolEconomics.totalTierFeeRevenue, appState.currency, 0)}</span>
+              </span>
+              <span class="text-muted-foreground">
+                Breakage, lifetime (memo): <span class="font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(poolEconomics.totalBreakage, appState.currency, 0)}</span>
+              </span>
+            </div>
             <span class="text-muted-foreground">
-              Breakage, lifetime (memo): <span class="font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(poolEconomics.totalBreakage, appState.currency, 0)}</span>
-            </span>
-            <span class="text-muted-foreground">
-              Attribution ({poolEconomics.attribution.method === 'evc' ? 'by EVC' : 'even split — no value_per_outcome set'}):
+              Attribution ({poolEconomics.attribution.method === 'evc' ? 'by EVC' : (poolEconomics.attribution.method === 'profile_fallback' ? 'by profile' : 'even split — no value_per_outcome set')}):
               <span class="font-bold text-foreground">copilot {(poolEconomics.attribution.copilotShare * 100).toFixed(0)}%</span> /
               <span class="font-bold text-foreground">agent {(poolEconomics.attribution.agentShare * 100).toFixed(0)}%</span>
             </span>

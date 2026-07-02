@@ -392,8 +392,9 @@ export interface EntityOverrideRecord extends EntityOverride {
  * `capture` is a nullable per-tier override of the EVC capture rate used in the credit-value
  * hybrid and stream attribution; falls back to the scenario's evc_capture_target_pct when unset.
  */
-/** How `monthly_fee` is charged (ADR 0012): once per tier, or once per active AI user. */
-export type PoolFeeBasis = 'flat' | 'per_member';
+/** How `monthly_fee` is charged (ADR 0012): once per tier, once per active AI user, or once per active customer. */
+export type PoolFeeBasis = 'flat' | 'per_member' | 'per_customer';
+export type PoolSizeBasis = 'absolute' | 'per_member';
 
 export interface PoolTier {
   id: string;
@@ -401,8 +402,10 @@ export interface PoolTier {
   monthly_fee: number;
   credit_pool_size: number;
   capture?: number | null;
-  /** ADR 0012 Decision 1 — 'flat' (default, unchanged) or 'per_member' (monthly_fee × active AI users). */
+  /** ADR 0012 Decision 1 — 'flat' (default, unchanged) or 'per_member' (monthly_fee × active AI users) or 'per_customer'. */
   fee_basis?: PoolFeeBasis;
+  /** ADR 0012 Decision 1 — 'absolute' (default) or 'per_member' (credit_pool_size × active AI users). */
+  pool_size_basis?: PoolSizeBasis;
   created_at?: string;
   updated_at?: string;
 }
@@ -420,8 +423,8 @@ export interface PoolBurnRate {
 export interface PoolAttribution {
   copilotShare: number;
   agentShare: number;
-  /** 'evc' when value_per_outcome was set on at least one pool service; otherwise an even split. */
-  method: 'evc' | 'even_split_fallback';
+  /** 'evc' when value_per_outcome was set on at least one pool service; otherwise even split or profile fallback. */
+  method: 'evc' | 'even_split_fallback' | 'profile_fallback';
 }
 
 /** Scenario-level summary of a pool-carrier scenario's lifetime credit economics. */
@@ -432,6 +435,9 @@ export interface PoolEconomics {
   /** Memo: value of unused credits, valued at the blended cost floor. No cash impact (Decision 2). */
   totalBreakage: number;
   totalOverageRevenue: number;
+  totalTierFeeRevenue: number;
+  feeBasis: PoolFeeBasis;
+  poolSizeBasis: PoolSizeBasis;
   attribution: PoolAttribution;
 }
 
@@ -758,6 +764,8 @@ export interface MonthlyBreakdown {
 
   // Credit pool (ADR 0010) — memo only, no cash impact (Decision 2).
   poolBreakage?: number;
+  poolTierFeeRevenue?: number;
+  poolOverageRevenue?: number;
 }
 
 export type IrrStatus = 'ok' | 'unstable_short_payback' | 'ambiguous_multiple_roots' | 'undefined_no_sign_change' | 'non_converged' | 'blocked_by_integrity';

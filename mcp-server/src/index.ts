@@ -449,7 +449,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
   // Credit pool (ADR 0010) — resolve the selected tier + its burn-rate table, if any.
   if (s.pool_tier_id) {
     const tier = db.prepare(`
-      SELECT id, name, monthly_fee, credit_pool_size, capture, created_at, updated_at
+      SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, pool_size_basis, created_at, updated_at
       FROM pool_tiers WHERE id = ?
     `).get(s.pool_tier_id) as any;
     if (tier) {
@@ -732,7 +732,7 @@ server.tool(
 // 1.5 Providers CRUD
 server.tool(
   "provider_action",
-  "List, create, update, or delete AI model providers (e.g. OpenAI, Anthropic, Google), their pricing per million tokens, and token-to-credit conversion (credit rates). Always specify the 'action' parameter. To prevent accidental data loss, deletions require setting 'confirm' to true. Note that predefined providers cannot be deleted.",
+  "List, create, update, or delete AI model providers (e.g. OpenAI, Anthropic, Google), their pricing per million tokens, and token-to-credit conversion (credit rates). Note: the 'negative_unit_margin' diagnostic's per-credit figures convert tokens to credits via this provider's input_tokens_per_credit/output_tokens_per_credit, not via a pool's burn_rates — the two are independent conversions and can disagree. Always specify the 'action' parameter. To prevent accidental data loss, deletions require setting 'confirm' to true. Note that predefined providers cannot be deleted.",
   {
     action: z.enum(["list", "create", "update", "delete"]).describe("The action to perform: 'list' to view providers, 'create' to add a new provider, 'update' to edit details, 'delete' to remove a provider."),
     id: z.string().optional().describe("Unique UUID of the provider. Required for 'update' and 'delete' actions."),
@@ -795,6 +795,7 @@ server.tool(
           SET name = ?, model_name = ?, input_price = ?, output_price = ?, currency = ?, input_tokens_per_credit = ?, output_tokens_per_credit = ?, updated_at = ?
           WHERE id = ?
         `).run(name, model_name, input_price, output_price, currency, input_tokens, output_tokens, now, args.id);
+        invalidateScenarioResults(getScenariosByProvider(args.id));
         return { content: [{ type: "text", text: `Provider '${name}' updated successfully.` }] };
       }
       if (args.action === "delete") {
@@ -816,8 +817,10 @@ server.tool(
             }]
           };
         }
+        const affected = getScenariosByProvider(args.id);
         db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'provider' AND entity_id = ?").run(args.id);
         db.prepare("DELETE FROM providers WHERE id = ?").run(args.id);
+        invalidateScenarioResults(affected);
         return { content: [{ type: "text", text: `Provider with ID ${args.id} deleted successfully.` }] };
       }
       throw new Error(`Nieobsługiwana akcja: ${args.action}`);
@@ -886,6 +889,7 @@ server.tool(
           SET name = ?, description = ?, tam_users = ?, sam_users = ?, som_users = ?, updated_at = ?
           WHERE id = ?
         `).run(name, description, tam, sam, som, now, args.id);
+        invalidateScenarioResults(getScenariosByVertical(args.id));
         return { content: [{ type: "text", text: `Vertical '${name}' updated successfully.` }] };
       }
       if (args.action === "delete") {
@@ -904,7 +908,9 @@ server.tool(
             }]
           };
         }
+        const affected = getScenariosByVertical(args.id);
         db.prepare("DELETE FROM verticals WHERE id = ?").run(args.id);
+        invalidateScenarioResults(affected);
         return { content: [{ type: "text", text: `Vertical with ID ${args.id} deleted successfully.` }] };
       }
       throw new Error(`Nieobsługiwana akcja: ${args.action}`);
@@ -1017,6 +1023,7 @@ server.tool(
           gross_margin, adoption_ramp_months, usage_intensity,
           now, args.id
         );
+        invalidateScenarioResults(getScenariosByCohort(args.id));
         return { content: [{ type: "text", text: `Cohort '${name}' updated successfully.` }] };
       }
       if (args.action === "delete") {
@@ -1035,7 +1042,9 @@ server.tool(
             }]
           };
         }
+        const affected = getScenariosByCohort(args.id);
         db.prepare("DELETE FROM cohort_configs WHERE id = ?").run(args.id);
+        invalidateScenarioResults(affected);
         return { content: [{ type: "text", text: `Cohort with ID ${args.id} deleted successfully.` }] };
       }
       throw new Error(`Nieobsługiwana akcja: ${args.action}`);
@@ -1110,12 +1119,7 @@ server.tool(
           WHERE id = ?
         `).run(name, category, subcategory, amount, frequency, currency, service_id, now, args.id);
 
-        const affectedScenarios = db.prepare("SELECT scenario_id FROM scenario_costs WHERE cost_item_id = ?").all(args.id) as { scenario_id: string }[];
-        if (affectedScenarios.length > 0) {
-          const placeholders = affectedScenarios.map(() => '?').join(',');
-          const ids = affectedScenarios.map(s => s.scenario_id);
-          db.prepare(`DELETE FROM scenario_results WHERE scenario_id IN (${placeholders})`).run(...ids);
-        }
+        invalidateScenarioResults(getScenariosByCost(args.id));
 
         return { content: [{ type: "text", text: `Cost item '${name}' updated successfully.` }] };
       }
@@ -1135,17 +1139,13 @@ server.tool(
             }]
           };
         }
-        const affectedScenarios = db.prepare("SELECT scenario_id FROM scenario_costs WHERE cost_item_id = ?").all(args.id) as { scenario_id: string }[];
+        const affectedScenarios = getScenariosByCost(args.id);
         db.transaction(() => {
           db.prepare("DELETE FROM scenario_costs WHERE cost_item_id = ?").run(args.id);
           db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'cost' AND entity_id = ?").run(args.id);
           db.prepare("DELETE FROM cost_items WHERE id = ?").run(args.id);
-          if (affectedScenarios.length > 0) {
-            const placeholders = affectedScenarios.map(() => '?').join(',');
-            const ids = affectedScenarios.map(s => s.scenario_id);
-            db.prepare(`DELETE FROM scenario_results WHERE scenario_id IN (${placeholders})`).run(...ids);
-          }
         })();
+        invalidateScenarioResults(affectedScenarios);
         return { content: [{ type: "text", text: `Cost item with ID ${args.id} deleted successfully.` }] };
       }
       throw new Error(`Nieobsługiwana akcja: ${args.action}`);
@@ -1347,6 +1347,7 @@ server.tool(
           escalation_rate, failed_deflection_penalty, churn_rate_uplift, value_per_outcome, now, args.id
         );
 
+        invalidateScenarioResults(getScenariosByService(args.id));
         return {
           content: [{ type: "text", text: `Service '${name}' updated successfully.` }]
         };
@@ -1368,8 +1369,10 @@ server.tool(
             }]
           };
         }
+        const affected = getScenariosByService(args.id);
         db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'service' AND entity_id = ?").run(args.id);
         db.prepare("DELETE FROM services WHERE id = ?").run(args.id);
+        invalidateScenarioResults(affected);
         return {
           content: [{ type: "text", text: `Service '${current.name}' (ID: ${args.id}) deleted successfully.` }]
         };
@@ -1485,6 +1488,7 @@ server.tool(
             }
           }
         })();
+        invalidateScenarioResults(getScenariosByPack(args.id));
         return { content: [{ type: "text", text: `Pack with ID ${args.id} updated successfully.` }] };
       }
 
@@ -1504,7 +1508,9 @@ server.tool(
             }]
           };
         }
+        const affected = getScenariosByPack(args.id);
         db.prepare("DELETE FROM packs WHERE id = ?").run(args.id);
+        invalidateScenarioResults(affected);
         return { content: [{ type: "text", text: `Pack '${current.name}' (ID: ${args.id}) deleted successfully.` }] };
       }
 
@@ -1642,6 +1648,7 @@ server.tool(
             }
           }
         })();
+        invalidateScenarioResults(getScenariosByPlan(args.id));
         return { content: [{ type: "text", text: `Plan with ID ${args.id} updated successfully.` }] };
       }
 
@@ -1661,8 +1668,10 @@ server.tool(
             }]
           };
         }
+        const affected = getScenariosByPlan(args.id);
         db.prepare("DELETE FROM scenario_entity_overrides WHERE entity_type = 'plan' AND entity_id = ?").run(args.id);
         db.prepare("DELETE FROM plans WHERE id = ?").run(args.id);
+        invalidateScenarioResults(affected);
         return { content: [{ type: "text", text: `Plan '${current.name}' (ID: ${args.id}) deleted successfully.` }] };
       }
 
@@ -1768,7 +1777,7 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
 
 server.tool(
   "scenario_action",
-  "List, create, retrieve, update, or delete SaaS ROI scenarios, or execute scenario projections (calculating NPV/IRR, performing sensitivity analysis, comparing scenarios, and parsing natural language descriptions). Scenarios target a scope_type ('all_clients', 'verticals', 'cohorts') resolving parameters via a global->vertical->cohort override cascade. The revenue_source ('cohort', 'monetization', 'both') dictates what revenue is counted. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true.",
+  "List, create, retrieve, update, or delete SaaS ROI scenarios, or execute scenario projections (calculating NPV/IRR, performing sensitivity analysis, comparing scenarios, and parsing natural language descriptions). Scenarios target a scope_type ('all_clients', 'verticals', 'cohorts') resolving parameters via a global->vertical->cohort override cascade. Revenue is carrier-first: modeling_type and revenue_carrier are resolved into a single authoritative pair (resolveRevenueModel) — the deprecated revenue_source field is no longer read by the engine. Coercion matrix: an explicit revenue_carrier always wins and relabels modeling_type via deriveModelingType ('plan'→'gtm'; 'pack'/'feature'/'pool'→'appraisal'; 'cohort'→'incremental', or 'appraisal' if a revenue_bridge is set). Without an explicit carrier, modeling_type drives it instead: 'incremental'→carrier 'cohort'; 'gtm'→carrier 'plan'; 'appraisal'→the given revenue_carrier or 'cohort' by default. If the requested modeling_type/revenue_carrier combination gets coerced, the create/update response includes a '[Revenue Model Coercion]' note showing what was actually stored. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true.",
   {
     action: z.enum(["list", "get", "create", "update", "delete", "calculate", "compare", "sensitivity", "generate", "suggest_evc_multipliers"]).describe("The action to perform: 'list' to view scenarios, 'get' to inspect a scenario, 'create' to add a scenario, 'update' to edit details, 'delete' to remove a scenario, 'calculate' to compute ROI, 'compare' to analyze multiple scenarios, 'sensitivity' for tornado charts, 'generate' to parse natural language descriptions, or 'suggest_evc_multipliers' (ADR 0011 Track A) to get data-derived suggested evc_extra_value_multiplier defaults (Caveat: base_arpu is current pricing — an endogenous ability-to-pay proxy; treat suggestion as starting prior, not evidence of WTP) for every cohort vs. evc_reference_cohort_id."),
     id: z.string().optional().describe("Unique UUID of the scenario. Required for 'get', 'update', 'delete', 'calculate', and 'sensitivity' actions."),
@@ -1904,6 +1913,9 @@ server.tool(
         const scenarioId = crypto.randomUUID();
         const now = new Date().toISOString();
 
+        let modeling_type: string = '';
+        let revenue_carrier: string | null = null;
+
         db.transaction(() => {
           // Insert the parent scenarios row FIRST. The scenario_cohorts / scenario_services /
           // scenario_costs (etc.) junction tables all have FKs to scenarios(id), and the MCP
@@ -1912,12 +1924,14 @@ server.tool(
           // revenue_carrier is the authoritative dial; resolveRevenueModel is the
           // single shared collapse of any legacy modeling_type/revenue_source input
           // into a consistent { modeling_type, revenue_carrier } pair.
-          const { modeling_type, revenue_carrier } = resolveRevenueModel({
+          const coerced = resolveRevenueModel({
             modeling_type: args.modeling_type,
             revenue_carrier: args.revenue_carrier,
             revenue_source: args.revenue_source,
             revenue_bridge: args.revenue_bridge
           });
+          modeling_type = coerced.modeling_type;
+          revenue_carrier = coerced.revenue_carrier;
           const revenue_bridge = args.revenue_bridge;
           const revSource = revenue_carrier === 'cohort' ? 'cohort' : 'monetization';
 
@@ -2011,7 +2025,13 @@ server.tool(
 
         saveScenarioResults(scenarioId, results, resultsId);
 
-        let responseText = `Scenario '${args.name}' created with ID: ${scenarioId}.`;
+        let coercionWarning = '';
+        if ((args.modeling_type !== undefined && args.modeling_type !== modeling_type) ||
+            (args.revenue_carrier !== undefined && args.revenue_carrier !== revenue_carrier)) {
+          coercionWarning = `\n\n[Revenue Model Coercion] Coerced modeling_type '${args.modeling_type}' with revenue_carrier '${args.revenue_carrier}' into authoritative pair '${modeling_type}' / '${revenue_carrier}'.`;
+        }
+
+        let responseText = `Scenario '${args.name}' created with ID: ${scenarioId}.${coercionWarning}`;
         if (integrity.status === 'block') {
           return {
             content: [{
@@ -2038,6 +2058,9 @@ server.tool(
         if (!args.id) {
           throw new z.ZodError([{ code: "custom", path: ["id"], message: "Identyfikator 'id' jest wymagany do modyfikacji scenariusza." }]);
         }
+        let modeling_type: string = '';
+        let revenue_carrier: string | null = null;
+
         db.transaction(() => {
           const current = db.prepare("SELECT * FROM scenarios WHERE id = ?").get(args.id) as any;
           if (!current) {
@@ -2069,8 +2092,8 @@ server.tool(
                 revenue_bridge
               })
             : { modeling_type: current.modeling_type, revenue_carrier: current.revenue_carrier };
-          const modeling_type = resolvedModel.modeling_type;
-          const revenue_carrier = resolvedModel.revenue_carrier;
+          modeling_type = resolvedModel.modeling_type;
+          revenue_carrier = resolvedModel.revenue_carrier;
           const revenue_source = revenue_carrier === 'cohort' ? 'cohort' : 'monetization';
 
           const evc_nba_annual_value = args.evc_nba_annual_value !== undefined ? args.evc_nba_annual_value : current.evc_nba_annual_value;
@@ -2165,7 +2188,13 @@ server.tool(
 
         saveScenarioResults(args.id, results);
 
-        let responseText = `Scenario '${fullScenario.name}' updated successfully.`;
+        let coercionWarning = '';
+        if ((args.modeling_type !== undefined && args.modeling_type !== modeling_type) ||
+            (args.revenue_carrier !== undefined && args.revenue_carrier !== revenue_carrier)) {
+          coercionWarning = `\n\n[Revenue Model Coercion] Coerced modeling_type '${args.modeling_type}' with revenue_carrier '${args.revenue_carrier}' into authoritative pair '${modeling_type}' / '${revenue_carrier}'.`;
+        }
+
+        let responseText = `Scenario '${fullScenario.name}' updated successfully.${coercionWarning}`;
         if (integrity.status === 'block') {
           return {
             content: [{
@@ -2501,15 +2530,16 @@ server.tool(
 
 server.tool(
   "pool_tier_action",
-  "List, create, update, or delete unified credit-pool tiers (ADR 0010 Approach B). Each tier covers a shared credit pool via a monthly fee — either flat (once per tier) or per-member (× the scenario's active AI users that month, ADR 0012 Decision 1); services drawing on the pool each have a burn-rate (credits consumed per activity unit — interaction for agent, request for copilot). A scenario adopts a tier via scenario_action's pool_tier_id with revenue_carrier 'pool'. All pool-MEMBER services (present in this tier's burn_rates) must share the same monetization_type (addon, usage, or hybrid) — enforced at scenario calculation time; services in the same scenario but NOT in the pool book their own monetization revenue independently (ADR 0012 Decision 2) and are exempt from that homogeneity rule. Always specify the 'action' parameter. Deletions require 'confirm: true'.",
+  "List, create, update, or delete unified credit-pool tiers (ADR 0010 Approach B). Each tier covers a shared credit pool via a monthly fee — flat (once per tier), per-member (× the scenario's active AI users that month), or per-customer (× total active customers); the pool size can be absolute or per-member. A scenario adopts a tier via scenario_action's pool_tier_id with revenue_carrier 'pool'. All pool-MEMBER services must share the same monetization_type (addon, usage, or hybrid); services in the same scenario but NOT in the pool book their own monetization revenue independently (ADR 0012 Decision 2). Note: the 'negative_unit_margin' diagnostic's per-credit figures use each service's provider's input_tokens_per_credit/output_tokens_per_credit conversion, not this tier's burn_rates — the two are independent and can disagree. Always specify the 'action' parameter. Deletions require 'confirm: true'.",
   {
     action: z.enum(["list", "get", "create", "update", "delete"]).describe("The action to perform: 'list' to view tiers, 'get' to inspect one tier's burn-rate table, 'create' to add a tier, 'update' to edit it, 'delete' to remove it."),
     id: z.string().optional().describe("Unique UUID of the tier. Required for 'get', 'update', and 'delete' actions."),
     name: z.string().optional().describe("Tier display name (e.g. 'Gold'). Required for 'create' action."),
-    monthly_fee: z.number().optional().describe("Subscription fee, booked in full every month regardless of usage (ADR 0010 Decision 2). Charged once per tier ('flat') or once per active AI user ('per_member') depending on fee_basis."),
-    fee_basis: z.enum(["flat", "per_member"]).optional().describe("How monthly_fee is charged (ADR 0012 Decision 1). 'flat' (default): once per month, independent of subscriber count — fits a B2B org-wide tier (e.g. Copilot Enterprise). 'per_member': monthly_fee × the scenario's active AI users that month — fits a B2C per-subscriber plan (e.g. Claude Pro)."),
-    credit_pool_size: z.number().optional().describe("Credits included per month. Unused credits are breakage (extra margin, no rollover); usage beyond this triggers overage per each service's monetization_type."),
-    capture: nullableNumberInput({ min: 0, max: 1 }).describe("Override of the EVC capture rate used in the credit-value hybrid (max(token cost, capture × value_per_outcome)) and in copilot/agent stream attribution. Defaults to the scenario's evc_capture_target_pct (or 0.30) when unset."),
+    monthly_fee: z.number().optional().describe("Subscription fee, booked in full every month regardless of usage. Charged once per tier ('flat'), once per active AI user ('per_member'), or once per active customer ('per_customer') depending on fee_basis."),
+    fee_basis: z.enum(["flat", "per_member", "per_customer"]).optional().describe("How monthly_fee is charged (ADR 0012 Decision 1 / Amendment 2026-07). 'flat' (default): once per month. 'per_member': monthly_fee × the scenario's active AI users. 'per_customer': monthly_fee × total active customers."),
+    credit_pool_size: z.number().optional().describe("Credits included per month. Can be absolute (total credits) or per-member depending on pool_size_basis."),
+    pool_size_basis: z.enum(["absolute", "per_member"]).optional().describe("How the pool size is defined (ADR 0012 Decision 1 / Amendment 2026-07). 'absolute' (default): a flat credit pool. 'per_member': credit_pool_size × active AI users."),
+    capture: nullableNumberInput({ min: 0, max: 1 }).describe("Override of the EVC capture rate used in the credit-value hybrid and in copilot/agent stream attribution. Defaults to the scenario's evc_capture_target_pct (or 0.30) when unset."),
     burn_rates: z.array(z.object({
       service_id: z.string().describe("Service UUID drawing on this tier's pool."),
       burn_rate: z.number().describe("Credits consumed per activity unit for this service (e.g. 10 for a copilot summary, 300 for an agent resolution).")
@@ -2520,7 +2550,7 @@ server.tool(
     try {
       if (args.action === "list") {
         const tiers = db.prepare(`
-          SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, created_at, updated_at
+          SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, pool_size_basis, created_at, updated_at
           FROM pool_tiers ORDER BY name ASC
         `).all();
         return { content: [{ type: "text", text: JSON.stringify(tiers, null, 2) }] };
@@ -2531,7 +2561,7 @@ server.tool(
           throw new z.ZodError([{ code: "custom", path: ["id"], message: "Identyfikator 'id' jest wymagany dla akcji 'get'." }]);
         }
         const tier = db.prepare(`
-          SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, created_at, updated_at
+          SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, pool_size_basis, created_at, updated_at
           FROM pool_tiers WHERE id = ?
         `).get(args.id) as any;
         if (!tier) {
@@ -2553,9 +2583,9 @@ server.tool(
         const now = new Date().toISOString();
         db.transaction(() => {
           db.prepare(`
-            INSERT INTO pool_tiers (id, name, monthly_fee, credit_pool_size, capture, fee_basis, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(id, args.name, args.monthly_fee ?? 0, args.credit_pool_size ?? 0, args.capture ?? null, args.fee_basis ?? 'flat', now, now);
+            INSERT INTO pool_tiers (id, name, monthly_fee, credit_pool_size, capture, fee_basis, pool_size_basis, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(id, args.name, args.monthly_fee ?? 0, args.credit_pool_size ?? 0, args.capture ?? null, args.fee_basis ?? 'flat', args.pool_size_basis ?? 'absolute', now, now);
 
           if (args.burn_rates && args.burn_rates.length > 0) {
             const insertRate = db.prepare("INSERT INTO pool_burn_rates (id, tier_id, service_id, burn_rate) VALUES (?, ?, ?, ?)");
@@ -2580,13 +2610,14 @@ server.tool(
         const credit_pool_size = args.credit_pool_size !== undefined ? args.credit_pool_size : current.credit_pool_size;
         const capture = args.capture !== undefined ? args.capture : current.capture;
         const fee_basis = args.fee_basis !== undefined ? args.fee_basis : (current.fee_basis ?? 'flat');
+        const pool_size_basis = args.pool_size_basis !== undefined ? args.pool_size_basis : (current.pool_size_basis ?? 'absolute');
         const now = new Date().toISOString();
 
         db.transaction(() => {
           db.prepare(`
-            UPDATE pool_tiers SET name = ?, monthly_fee = ?, credit_pool_size = ?, capture = ?, fee_basis = ?, updated_at = ?
+            UPDATE pool_tiers SET name = ?, monthly_fee = ?, credit_pool_size = ?, capture = ?, fee_basis = ?, pool_size_basis = ?, updated_at = ?
             WHERE id = ?
-          `).run(name, monthly_fee, credit_pool_size, capture ?? null, fee_basis, now, args.id);
+          `).run(name, monthly_fee, credit_pool_size, capture ?? null, fee_basis, pool_size_basis, now, args.id);
 
           if (args.burn_rates !== undefined) {
             db.prepare("DELETE FROM pool_burn_rates WHERE tier_id = ?").run(args.id);
@@ -2622,11 +2653,13 @@ server.tool(
             }]
           };
         }
+        const affected = (db.prepare("SELECT id FROM scenarios WHERE pool_tier_id = ?").all(args.id) as any[]).map(r => r.id);
         db.transaction(() => {
           db.prepare("UPDATE scenarios SET pool_tier_id = NULL WHERE pool_tier_id = ?").run(args.id);
           db.prepare("DELETE FROM pool_burn_rates WHERE tier_id = ?").run(args.id);
           db.prepare("DELETE FROM pool_tiers WHERE id = ?").run(args.id);
         })();
+        invalidateScenarioResults(affected);
         return { content: [{ type: "text", text: `Pool tier '${current.name}' (ID: ${args.id}) deleted successfully.` }] };
       }
 
@@ -2945,6 +2978,7 @@ server.tool(
       }
 
       if (args.action === "delete") {
+        const affected = scenarioId ? [scenarioId] : getScenariosByMonetization(entityType, entityId);
         db.transaction(() => {
           if (scenarioId) {
             db.prepare(`
@@ -2957,9 +2991,8 @@ server.tool(
               WHERE entity_type = ? AND entity_id = ? AND scenario_id IS NULL
             `).run(entityType, entityId);
           }
-          // Invalidate cache
-          db.prepare("DELETE FROM scenario_results").run();
         })();
+        invalidateScenarioResults(affected);
         return { content: [{ type: "text", text: `Monetization configuration for ${entityType} '${entityId}' deleted successfully.` }] };
       }
 
@@ -2983,6 +3016,7 @@ server.tool(
           }
         }
         if (monType === 'none') {
+          const affected = scenarioId ? [scenarioId] : getScenariosByMonetization(entityType, entityId);
           db.transaction(() => {
             if (scenarioId) {
               db.prepare(`
@@ -2995,11 +3029,12 @@ server.tool(
                 WHERE entity_type = ? AND entity_id = ? AND scenario_id IS NULL
               `).run(entityType, entityId);
             }
-            db.prepare("DELETE FROM scenario_results").run();
           })();
+          invalidateScenarioResults(affected);
           return { content: [{ type: "text", text: `Monetization configuration for ${entityType} '${entityId}' set to 'none' (deleted).` }] };
         }
 
+        const affected = scenarioId ? [scenarioId] : getScenariosByMonetization(entityType, entityId);
         db.transaction(() => {
           const existing = scenarioId
             ? db.prepare(`SELECT id FROM monetization_configs WHERE entity_type = ? AND entity_id = ? AND scenario_id = ?`).get(entityType, entityId, scenarioId) as { id: string } | undefined
@@ -3046,8 +3081,8 @@ server.tool(
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(crypto.randomUUID(), entityType, entityId, scenarioId, ...values);
           }
-          db.prepare("DELETE FROM scenario_results").run();
         })();
+        invalidateScenarioResults(affected);
 
         return { content: [{ type: "text", text: `Monetization configuration for ${entityType} '${entityId}' saved successfully.` }] };
       }
@@ -3343,8 +3378,8 @@ server.tool(
             const values = FIELDS.map((f) => ((args as any)[f] !== undefined ? (args as any)[f] : null));
             db.prepare(`INSERT INTO scenario_entity_overrides (id, scenario_id, entity_type, entity_id, cohort_id, ${cols}) VALUES (?, ?, ?, ?, ?, ${placeholders})`).run(newId, scenarioId, entityType, entityId, cohortId, ...values);
           }
-          db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(scenarioId);
         })();
+        invalidateScenarioResults([scenarioId]);
         return { content: [{ type: "text", text: allEmpty ? `No override fields provided — cleared any override for ${entityType} ${entityId}${cohortId ? ` (cohort ${cohortId})` : ''}.` : `Entity override saved successfully for ${entityType} ${entityId}${cohortId ? ` (cohort ${cohortId})` : ''}.` }] };
       }
 
@@ -3354,6 +3389,54 @@ server.tool(
     }
   }
 );
+
+function invalidateScenarioResults(scenarioIds: string[]) {
+  if (scenarioIds.length === 0) return;
+  const placeholders = scenarioIds.map(() => '?').join(',');
+  db.prepare(`DELETE FROM scenario_results WHERE scenario_id IN (${placeholders})`).run(...scenarioIds);
+}
+
+function getScenariosByService(serviceId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT scenario_id FROM scenario_services WHERE service_id = ?").all(serviceId) as any[];
+  return rows.map(r => r.scenario_id);
+}
+
+function getScenariosByPack(packId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT scenario_id FROM scenario_packs WHERE pack_id = ?").all(packId) as any[];
+  return rows.map(r => r.scenario_id);
+}
+
+function getScenariosByPlan(planId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT scenario_id FROM scenario_plans WHERE plan_id = ?").all(planId) as any[];
+  return rows.map(r => r.scenario_id);
+}
+
+function getScenariosByCohort(cohortId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT scenario_id FROM scenario_cohorts WHERE cohort_config_id = ?").all(cohortId) as any[];
+  return rows.map(r => r.scenario_id);
+}
+
+function getScenariosByVertical(verticalId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT scenario_id FROM scenario_verticals WHERE vertical_id = ? UNION SELECT id AS scenario_id FROM scenarios WHERE expansion_vertical_id = ?").all(verticalId, verticalId) as any[];
+  return rows.map(r => r.scenario_id);
+}
+
+function getScenariosByProvider(providerId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT ss.scenario_id FROM scenario_services ss JOIN services s ON ss.service_id = s.id WHERE s.provider_id = ?").all(providerId) as any[];
+  return rows.map(r => r.scenario_id);
+}
+
+function getScenariosByCost(costId: string): string[] {
+  const rows = db.prepare("SELECT DISTINCT scenario_id FROM scenario_costs WHERE cost_item_id = ?").all(costId) as any[];
+  return rows.map(r => r.scenario_id);
+}
+
+function getScenariosByMonetization(entityType: string, entityId: string): string[] {
+  if (entityType === 'service') return getScenariosByService(entityId);
+  if (entityType === 'pack') return getScenariosByPack(entityId);
+  if (entityType === 'plan') return getScenariosByPlan(entityId);
+  return [];
+}
 
 // Run the server using Stdio transport
 async function main() {

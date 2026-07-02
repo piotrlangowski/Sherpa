@@ -33,7 +33,7 @@ import {
   suggestEvcMultipliers,
   buildAgentDeflectionCorridor
 } from './financial-math.js';
-import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings, Plan, EvcResult } from './types.js';
+import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings, Plan, EvcResult, CreditSettings } from './types.js';
 
 describe('Financial Math Module Tests', () => {
   describe('calculateNPV', () => {
@@ -1563,6 +1563,12 @@ describe('ADR 0009 — per-archetype revenue streams (Foundation)', () => {
       // revenue is purely the tier fee. Cohort fixture (`cohort` above) is 1000 fully-adopted users.
       expect(flatResult.timeline[0].revenue).toBeCloseTo(2000, 1);
       expect(perMemberResult.timeline[0].revenue).toBeCloseTo(2000 * 1000, 1);
+
+      // Regression pin (D2): with no overage, poolEconomics.totalOverageRevenue must be exactly 0.
+      // Before the ADR 0012 amendment, deriving it as `max(0, revenue - monthly_fee)` summed over
+      // 3 months would have wrongly reported max(0, 2_000_000 - 2000) * 3 ≈ $5.994M of "overage".
+      expect(perMemberResult.poolEconomics?.totalOverageRevenue).toBe(0);
+      expect(perMemberResult.poolEconomics?.totalTierFeeRevenue).toBeCloseTo(2000 * 1000 * 3, 1);
     });
 
     it('books revenue from a non-pool-member service alongside the pool tier (ADR 0012 Decision 2)', () => {
@@ -1579,6 +1585,21 @@ describe('ADR 0009 — per-archetype revenue streams (Foundation)', () => {
       // it books its own usage revenue: 1 credit/user (1M input tokens / 1M tokens-per-credit) *
       // 1000 users * $5/credit = $5,000, additive on top of the pool's tier fee + overage.
       expect(withExtra.timeline[0].revenue).toBeCloseTo(baseline.timeline[0].revenue + 5000, 1);
+
+      // Regression pin: poolEconomics must total the pool's OWN tier-fee + overage figures
+      // (accumulated per-month via poolTierFeeRevenue/poolOverageRevenue), not derived from
+      // `m.revenue - monthly_fee` as before the ADR 0012 amendment — that formula would have
+      // absorbed nonPoolService's $5,000/mo (×3 = $15,000) into "overage", mislabeling nearly
+      // all of its revenue. baseline and withExtra must report IDENTICAL pool totals.
+      expect(withExtra.poolEconomics?.totalOverageRevenue).toBeCloseTo(baseline.poolEconomics!.totalOverageRevenue, 2);
+      expect(withExtra.poolEconomics?.totalTierFeeRevenue).toBeCloseTo(baseline.poolEconomics!.totalTierFeeRevenue, 2);
+      expect(baseline.poolEconomics?.totalOverageRevenue).toBeCloseTo(173.08 * 3, 1);
+      expect(baseline.poolEconomics?.totalTierFeeRevenue).toBeCloseTo(2000 * 3, 1);
+
+      // Stream attribution must also stay pool-only: copilot/agent revenue is unchanged by the
+      // non-pool service's $5,000 (it carries no pool EVC weight — it's not a pool member).
+      expect(withExtra.timeline[0].copilotRevenue).toBeCloseTo(baseline.timeline[0].copilotRevenue!, 1);
+      expect(withExtra.timeline[0].agentRevenue).toBeCloseTo(baseline.timeline[0].agentRevenue!, 1);
     });
 
     it('exempts a non-pool-member service from the pool billing-homogeneity check (ADR 0012 Decision 2)', () => {
@@ -3210,4 +3231,271 @@ describe('ADR 0009 Track B — per-cohort agent bucketing', () => {
     });
   });
 });
+
+describe('ADR 0012 amendment — two knobs', () => {
+  const mockProvider: Provider = {
+    id: 'p1', name: 'OpenAI', model_name: 'gpt-4',
+    input_price: 10, output_price: 30, is_predefined: false,
+    input_tokens_per_credit: 1000000, output_tokens_per_credit: 333333,
+    currency: 'USD', updated_at: '2026-07-02T00:00:00Z'
+  };
+
+  const mockCohort: CohortConfig = {
+    id: 'c1', name: 'Test Cohort', vertical_id: 'v1',
+    current_users: 1000, monthly_acquisition: 0, acquisition_growth_rate: 0,
+    monthly_churn_rate: 0, retention_floor: 0, monthly_expansion_rate: 0,
+    ai_adoption_rate: 0.5, base_arpu: 0, gross_margin: 1.0, adoption_ramp_months: 0
+  };
+
+  const mockServiceCopilot: Service & { rollout_month: number } = {
+    id: 's_copilot', name: 'Copilot', status: 'existing', provider_id: 'p1',
+    avg_input_tokens: 100, avg_output_tokens: 200, avg_requests_per_user_month: 10,
+    fixed_cost_per_month: 0, service_type: 'copilot',
+    monetization: { monetization_type: 'usage', price_per_credit: 1.0 },
+    rollout_month: 0
+  };
+
+  const mockServiceAgent: Service & { rollout_month: number } = {
+    id: 's_agent', name: 'Agent', status: 'existing', provider_id: 'p1',
+    avg_input_tokens: 100, avg_output_tokens: 200, avg_requests_per_user_month: 10,
+    fixed_cost_per_month: 0, service_type: 'agent',
+    monetization: { monetization_type: 'usage', price_per_credit: 1.0 },
+    rollout_month: 0
+  };
+
+  const mockCreditSettings: CreditSettings = {
+    defaultPricePerCredit: 1.0,
+    defaultInputTokensPerCredit: 1000000,
+    defaultOutputTokensPerCredit: 333333,
+    defaultOverchargeMarkup: 0,
+    defaultOverchargeUserPct: 0,
+    defaultAvgOverchargePct: 0
+  };
+
+  const mockSettings: Settings = {
+    company_name: 'Test Co',
+    currency: 'USD',
+    default_discount_rate: 0.1,
+    setup_completed: true,
+    projection_horizon_months: 12,
+    exchange_rates: { USD: 1.0, EUR: 1.0, PLN: 1.0, GBP: 1.0 },
+    exchange_rates_as_of: '2026-07-02T00:00:00Z',
+    default_price_per_credit: 1.0,
+    default_input_tokens_per_credit: 1000000,
+    default_output_tokens_per_credit: 333333,
+    default_overcharge_markup: 0,
+    default_overcharge_user_pct: 0,
+    default_avg_overcharge_pct: 0
+  };
+
+  it('correctly calculates monthly fee with per_customer basis', () => {
+    const scenario: Scenario = {
+      id: 'sc1', name: 'Per Customer Scenario', projection_months: 12, discount_rate: 0.1, scope_type: 'cohorts',
+      modeling_type: 'appraisal', revenue_carrier: 'pool',
+      services: [mockServiceCopilot],
+      scope_cohorts: [mockCohort],
+      pool_tier_id: 't1',
+      pool_tier: {
+        id: 't1', name: 'Premium Pool', monthly_fee: 10, credit_pool_size: 100,
+        fee_basis: 'per_customer'
+      },
+      pool_burn_rates: [{ id: 'br1', tier_id: 't1', service_id: 's_copilot', burn_rate: 1.0 }]
+    };
+
+    const results = calculateScenario(scenario, [mockProvider], mockCreditSettings);
+    // Cohort has current_users = 1000, churn/acquisition = 0, so active customers = 1000 every month.
+    // Monthly fee is 10 * 1000 = 10000.
+    // In timeline month 0: poolTierFeeRevenue = 10000.
+    expect(results.timeline[0].poolTierFeeRevenue).toBe(10000);
+    expect(results.poolEconomics?.feeBasis).toBe('per_customer');
+    expect(results.poolEconomics?.totalTierFeeRevenue).toBe(10000 * 12);
+  });
+
+  it('scales credit pool size dynamically with per_member pool_size_basis', () => {
+    // 50% AI adoption rate on 1000 users = 500 active AI users.
+    // pool_size_basis = 'per_member' and credit_pool_size = 2.5 means effective pool = 2.5 * 500 = 1250 credits.
+    // Consumed credits: 10 reqs * 500 users * 1.0 burn rate = 5000 credits.
+    // Consumed (5000) > effective pool (1250) -> Overage is 5000 - 1250 = 3750 credits.
+    // With usage variant overage revenue is overage * creditValue.
+    const scenario: Scenario = {
+      id: 'sc2', name: 'Per Member Pool Scenario', projection_months: 1, discount_rate: 0.1, scope_type: 'cohorts',
+      modeling_type: 'appraisal', revenue_carrier: 'pool',
+      services: [mockServiceCopilot],
+      scope_cohorts: [mockCohort],
+      pool_tier_id: 't1',
+      pool_tier: {
+        id: 't1', name: 'Premium Pool', monthly_fee: 20, credit_pool_size: 2.5,
+        fee_basis: 'per_member', pool_size_basis: 'per_member'
+      },
+      pool_burn_rates: [{ id: 'br1', tier_id: 't1', service_id: 's_copilot', burn_rate: 1.0 }]
+    };
+
+    const results = calculateScenario(scenario, [mockProvider], mockCreditSettings);
+    expect(results.poolEconomics?.poolSizeBasis).toBe('per_member');
+
+    // Exact figures: token cost/user = 10 reqs * (100*$10/1e6 + 200*$30/1e6) = $0.07 -> $35 for
+    // 500 AI users; credit floor = $35 / 5000 consumed = $0.007/credit (no value_per_outcome set,
+    // so the EVC component is 0 and the floor wins). Overage = 3750 credits * $0.007 = $26.25.
+    expect(results.timeline[0].poolTierFeeRevenue).toBeCloseTo(10000, 2);
+    expect(results.timeline[0].poolOverageRevenue).toBeCloseTo(26.25, 2);
+    expect(results.timeline[0].revenue).toBeCloseTo(10026.25, 2);
+  });
+
+  it('implements profile_fallback attribution when EVC value is 0', () => {
+    const baseScenario: Scenario = {
+      id: 'sc3', name: 'Attribution Fallback', projection_months: 1, discount_rate: 0.1, scope_type: 'cohorts',
+      modeling_type: 'appraisal', revenue_carrier: 'pool',
+      services: [mockServiceCopilot, mockServiceAgent],
+      scope_cohorts: [mockCohort],
+      pool_tier_id: 't1',
+      pool_tier: { id: 't1', name: 'Premium Pool', monthly_fee: 10, credit_pool_size: 100, fee_basis: 'flat' },
+      pool_burn_rates: [
+        { id: 'br1', tier_id: 't1', service_id: 's_copilot', burn_rate: 1.0 },
+        { id: 'br2', tier_id: 't1', service_id: 's_agent', burn_rate: 1.0 }
+      ]
+    };
+
+    // Case 1: driverProfile = seat_only -> 100% copilot / 0% agent
+    const resSeat = calculateScenario({
+      ...baseScenario,
+      services: [
+        { ...mockServiceCopilot, service_type: 'copilot' },
+        { ...mockServiceAgent, service_type: 'agent' }
+      ]
+    }, [mockProvider], mockCreditSettings);
+    // Note: with both copilot and agent present, the helper driver profile resolves to even split fallback if both driver types exist.
+    // Let's force only copilot to check profile fallback.
+    const resSeatOnly = calculateScenario({
+      ...baseScenario,
+      services: [{ ...mockServiceCopilot, service_type: 'copilot' }]
+    }, [mockProvider], mockCreditSettings);
+    expect(resSeatOnly.poolEconomics?.attribution.method).toBe('profile_fallback');
+    expect(resSeatOnly.poolEconomics?.attribution.copilotShare).toBe(1.0);
+    expect(resSeatOnly.poolEconomics?.attribution.agentShare).toBe(0.0);
+
+    // Case 2: driverProfile = interaction_only -> 0% copilot / 100% agent
+    const resAgentOnly = calculateScenario({
+      ...baseScenario,
+      services: [{ ...mockServiceAgent, service_type: 'agent' }]
+    }, [mockProvider], mockCreditSettings);
+    expect(resAgentOnly.poolEconomics?.attribution.method).toBe('profile_fallback');
+    expect(resAgentOnly.poolEconomics?.attribution.copilotShare).toBe(0.0);
+    expect(resAgentOnly.poolEconomics?.attribution.agentShare).toBe(1.0);
+  });
+
+  it('adds pool_seats_informational advisory diagnostic when plan has seats under pool carrier', () => {
+    const scenario: Scenario = {
+      id: 'sc4', name: 'Plan Seats Diagnostic', projection_months: 1, discount_rate: 0.1, scope_type: 'cohorts',
+      modeling_type: 'appraisal', revenue_carrier: 'pool',
+      services: [mockServiceCopilot],
+      plans: [{ id: 'pl1', name: 'Pro Plan', base_price: 100, seats: 5, rollout_month: 0 }],
+      scope_cohorts: [mockCohort],
+      pool_tier_id: 't1',
+      pool_tier: { id: 't1', name: 'Premium Pool', monthly_fee: 10, credit_pool_size: 100, fee_basis: 'flat' },
+      pool_burn_rates: [{ id: 'br1', tier_id: 't1', service_id: 's_copilot', burn_rate: 1.0 }]
+    };
+
+    const diagnostics = validateScenarioConfig(scenario, mockSettings, [mockProvider]);
+    const d = diagnostics.find(x => x.code === 'pool_seats_informational');
+    expect(d).toBeDefined();
+    expect(d?.severity).toBe('info');
+  });
+
+  it('clarifies negative_unit_margin token cost warning text', () => {
+    const scenario: Scenario = {
+      id: 'sc5', name: 'Negative Margin Warning', projection_months: 1, discount_rate: 0.1, scope_type: 'cohorts',
+      modeling_type: 'appraisal', revenue_carrier: 'feature',
+      // Service cost = 10 reqs * (100 * 10 / 1e6 + 200 * 30 / 1e6) = 10 * (0.001 + 0.006) = $0.07.
+      // Price per credit = 0.001, avg req uses credits based on tokens. Let's make it lose money.
+      services: [{
+        ...mockServiceCopilot,
+        monetization: { monetization_type: 'usage', price_per_credit: 0.00001 }
+      }],
+      scope_cohorts: [mockCohort]
+    };
+
+    const diagnostics = validateScenarioConfig(scenario, mockSettings, [mockProvider]);
+    const d = diagnostics.find(x => x.code === 'negative_unit_margin');
+    expect(d).toBeDefined();
+    expect(d?.message).toContain("provider's credit conversion");
+  });
+
+  it('reproduces the Fable 5 reference economics (per-customer fee + per-member allowance + pass-through overage)', () => {
+    // The real-world scenario this amendment was built for: Claude Pro ($20/mo, paid by every
+    // subscriber) includes Fable 5 up to a 2.5-credit/mo allowance per active AI user; everything
+    // beyond that (Fable overage + all Sonnet usage) is billed pass-through at cost ($1/credit,
+    // achieved by leaving EVC unset so the cost floor wins per ADR 0010 Decision 1).
+    const provFable: Provider = {
+      id: 'pF', name: 'Anthropic (Fable)', model_name: 'fable-5', input_price: 10, output_price: 50,
+      input_tokens_per_credit: 100000, output_tokens_per_credit: 20000, is_predefined: false,
+      currency: 'USD', updated_at: '2026-07-02T00:00:00Z'
+    };
+    const provSonnet: Provider = {
+      id: 'pS', name: 'Anthropic (Sonnet)', model_name: 'sonnet-5', input_price: 2, output_price: 10,
+      input_tokens_per_credit: 500000, output_tokens_per_credit: 100000, is_predefined: false,
+      currency: 'USD', updated_at: '2026-07-02T00:00:00Z'
+    };
+    const proCohort: CohortConfig = {
+      id: 'c-pro', name: 'Claude Pro subs', vertical_id: 'v1',
+      current_users: 1_000_000, monthly_acquisition: 0, acquisition_growth_rate: 0,
+      monthly_churn_rate: 0, retention_floor: 0, monthly_expansion_rate: 0,
+      ai_adoption_rate: 0.3, base_arpu: 20, gross_margin: 1.0, adoption_ramp_months: 0, usage_intensity: 1.0
+    };
+    // 40 req/user/mo * (8000 in / 100k in-per-credit + 3000 out / 20k out-per-credit) = 9.2 credits/user.
+    const fableSvc: Service & { rollout_month: number } = {
+      id: 'sF', name: 'Fable 5 (pool)', status: 'planned', provider_id: 'pF',
+      avg_input_tokens: 8000, avg_output_tokens: 3000, avg_requests_per_user_month: 40,
+      service_type: 'copilot',
+      monetization: { monetization_type: 'usage', usage_variant: 'payg', price_per_credit: 1.0, overcharge_markup: 1.0 },
+      rollout_month: 0
+    };
+    // 80 req/user/mo * (8000/500k + 3000/100k) = 3.68 credits/user — outside the pool, PAYG.
+    const sonnetSvc: Service & { rollout_month: number } = {
+      id: 'sS', name: 'Rest of Work (Sonnet, PAYG)', status: 'planned', provider_id: 'pS',
+      avg_input_tokens: 8000, avg_output_tokens: 3000, avg_requests_per_user_month: 80,
+      service_type: 'copilot',
+      monetization: { monetization_type: 'usage', usage_variant: 'payg', price_per_credit: 1.0, overcharge_markup: 1.0 },
+      rollout_month: 0
+    };
+    const scenario: Scenario = {
+      id: 'sc-fable5-ref', name: 'Fable 5 reference', projection_months: 3, discount_rate: 0.1,
+      scope_type: 'cohorts', modeling_type: 'appraisal', revenue_carrier: 'pool',
+      services: [fableSvc, sonnetSvc], scope_cohorts: [proCohort],
+      pool_tier_id: 't1',
+      pool_tier: { id: 't1', name: 'Claude Pro pool', monthly_fee: 20, credit_pool_size: 2.5, capture: null, fee_basis: 'per_customer', pool_size_basis: 'per_member' },
+      pool_burn_rates: [{ id: 'br1', tier_id: 't1', service_id: 'sF', burn_rate: 0.23 }]
+    };
+    const creditSettings: CreditSettings = {
+      defaultPricePerCredit: 1.0, defaultInputTokensPerCredit: 1000000, defaultOutputTokensPerCredit: 333333,
+      defaultOverchargeMarkup: 1.5, defaultOverchargeUserPct: 0.2, defaultAvgOverchargePct: 0.5
+    };
+
+    const results = calculateScenario(scenario, [provFable, provSonnet], creditSettings);
+    const m0 = results.timeline[0];
+
+    // Fee: $20 * 1,000,000 active customers (per_customer — everyone pays, not just adopters).
+    expect(m0.poolTierFeeRevenue).toBeCloseTo(20_000_000, 0);
+    // Consumed: (9.2 Fable + 3.68 Sonnet-equivalent-in-pool... only Fable burns pool credits) —
+    // effective pool = 2.5 * 300,000 adopters = 750,000; Fable alone consumes 9.2 * 300,000 =
+    // 2,760,000 -> overage 2,010,000 credits, priced at the cost floor ($1/credit, EVC unset).
+    expect(m0.poolOverageRevenue).toBeCloseTo(2_010_000, 0);
+    // Sonnet is a non-pool-member service (ADR 0012 Decision 2): books its own usage revenue,
+    // 3.68 credits/user * 300,000 adopters * $1/credit = $1,104,000, wash against its own cost.
+    expect(m0.revenue).toBeCloseTo(23_114_000, 0);
+    expect(m0.totalCosts).toBeCloseTo(3_864_000, 0);
+    // The 2.5-credit allowance (750,000 credits) is absorbed as vendor COGS with no matching
+    // revenue — exactly the "included in the subscription" economics this amendment targets.
+    expect(m0.netCashFlow).toBeCloseTo(19_250_000, 0);
+
+    expect(results.poolEconomics?.feeBasis).toBe('per_customer');
+    expect(results.poolEconomics?.poolSizeBasis).toBe('per_member');
+    expect(results.poolEconomics?.totalTierFeeRevenue).toBeCloseTo(60_000_000, 0);
+    expect(results.poolEconomics?.totalOverageRevenue).toBeCloseTo(6_030_000, 0);
+    // Both services are copilots and neither is an agent -> seat_only profile, no EVC weights set
+    // (value_per_outcome unset on both) -> profile fallback attributes 100% to copilot.
+    expect(results.driverProfile).toBe('seat_only');
+    expect(results.poolEconomics?.attribution).toEqual({ copilotShare: 1, agentShare: 0, method: 'profile_fallback' });
+  });
+});
+
 

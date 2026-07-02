@@ -96,7 +96,8 @@ const PoolTierSchema = z.object({
   monthly_fee: z.number(),
   credit_pool_size: z.number(),
   capture: z.number().nullable().optional(),
-  fee_basis: z.enum(['flat', 'per_member']).optional()
+  fee_basis: z.enum(['flat', 'per_member', 'per_customer']).optional(),
+  pool_size_basis: z.enum(['absolute', 'per_member']).optional()
 });
 
 const PoolBurnRateEntrySchema = z.object({
@@ -524,6 +525,7 @@ export const POST: RequestHandler = async ({ request }) => {
             credit_pool_size: scenario.pool_tier.credit_pool_size,
             capture: scenario.pool_tier.capture ?? null,
             fee_basis: scenario.pool_tier.fee_basis ?? 'flat',
+            pool_size_basis: scenario.pool_tier.pool_size_basis ?? 'absolute',
             burn_rates: burnRates
           });
           poolTierId = createdTier.id;

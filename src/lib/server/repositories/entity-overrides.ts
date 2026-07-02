@@ -1,6 +1,7 @@
 import db from '../db';
 import type { EntityOverride, EntityOverrideRecord, EntityOverrideType, CostFrequency } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { scenariosRepository } from './scenarios';
 
 /**
  * Per-scenario overrides of a catalog entity's financial parameters
@@ -161,27 +162,34 @@ export const entityOverridesRepository = {
 
     const values = overrideValues(override);
 
-    if (existing) {
-      const setClause = VALUE_COLUMNS.map(c => `${c} = ?`).join(', ');
-      db.prepare(`UPDATE scenario_entity_overrides SET ${setClause} WHERE id = ?`).run(...values, existing.id);
-    } else {
-      const cols = VALUE_COLUMNS.join(', ');
-      const placeholders = VALUE_COLUMNS.map(() => '?').join(', ');
-      db.prepare(`
-        INSERT INTO scenario_entity_overrides (id, scenario_id, entity_type, entity_id, cohort_id, ${cols})
-        VALUES (?, ?, ?, ?, ?, ${placeholders})
-      `).run(uuidv4(), scenarioId, entityType, entityId, cohortId ?? null, ...values);
-    }
+    db.transaction(() => {
+      if (existing) {
+        const setClause = VALUE_COLUMNS.map(c => `${c} = ?`).join(', ');
+        db.prepare(`UPDATE scenario_entity_overrides SET ${setClause} WHERE id = ?`).run(...values, existing.id);
+      } else {
+        const cols = VALUE_COLUMNS.join(', ');
+        const placeholders = VALUE_COLUMNS.map(() => '?').join(', ');
+        db.prepare(`
+          INSERT INTO scenario_entity_overrides (id, scenario_id, entity_type, entity_id, cohort_id, ${cols})
+          VALUES (?, ?, ?, ?, ?, ${placeholders})
+        `).run(uuidv4(), scenarioId, entityType, entityId, cohortId ?? null, ...values);
+      }
+    })();
+
+    scenariosRepository.invalidateResults([scenarioId]);
   },
 
   delete(scenarioId: string, entityType: EntityOverrideType, entityId: string, cohortId?: string | null): void {
     db.prepare(`DELETE FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ? AND cohort_id IS ?`)
       .run(scenarioId, entityType, entityId, cohortId ?? null);
+    scenariosRepository.invalidateResults([scenarioId]);
   },
 
   /** Remove every override pointing at a catalog entity (call when that entity is deleted). */
   deleteByEntity(entityType: EntityOverrideType, entityId: string): void {
+    const affected = (db.prepare("SELECT DISTINCT scenario_id FROM scenario_entity_overrides WHERE entity_type = ? AND entity_id = ?").all(entityType, entityId) as any[]).map(r => r.scenario_id);
     db.prepare(`DELETE FROM scenario_entity_overrides WHERE entity_type = ? AND entity_id = ?`)
       .run(entityType, entityId);
+    scenariosRepository.invalidateResults(affected);
   }
 };

@@ -1,6 +1,7 @@
 import db from '../db';
 import type { Vertical } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { scenariosRepository } from './scenarios';
 
 export const verticalsRepository = {
   getAll(): Vertical[] {
@@ -136,9 +137,13 @@ export const verticalsRepository = {
         }
       }
     })();
+
+    const affected = scenariosRepository.findScenarioIdsByVerticalId(id);
+    scenariosRepository.invalidateResults(affected);
   },
 
   delete(id: string): void {
+    const affected = scenariosRepository.findScenarioIdsByVerticalId(id);
     db.transaction(() => {
       db.prepare("DELETE FROM vertical_plans WHERE vertical_id = ?").run(id);
       db.prepare("DELETE FROM vertical_packs WHERE vertical_id = ?").run(id);
@@ -147,5 +152,6 @@ export const verticalsRepository = {
       db.prepare("DELETE FROM scenario_scope_overrides WHERE target_type = 'vertical' AND target_id = ?").run(id);
       db.prepare("DELETE FROM verticals WHERE id = ?").run(id);
     })();
+    scenariosRepository.invalidateResults(affected);
   }
 };

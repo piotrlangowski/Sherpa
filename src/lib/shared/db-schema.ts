@@ -1071,4 +1071,11 @@ function runDataMigrations(db: DatabaseConnection): void {
   if (!poolTierCols22.includes('fee_basis')) {
     db.prepare("ALTER TABLE pool_tiers ADD COLUMN fee_basis TEXT NOT NULL DEFAULT 'flat'").run();
   }
+
+  // Migration 23: ADR 0012 — pool size basis (absolute vs per-member) + invalidate pool scenario results.
+  const poolTierCols23 = (db.prepare("PRAGMA table_info(pool_tiers)").all() as any[]).map(c => c.name);
+  if (!poolTierCols23.includes('pool_size_basis')) {
+    db.prepare("ALTER TABLE pool_tiers ADD COLUMN pool_size_basis TEXT NOT NULL DEFAULT 'absolute'").run();
+    db.prepare("DELETE FROM scenario_results WHERE scenario_id IN (SELECT id FROM scenarios WHERE pool_tier_id IS NOT NULL)").run();
+  }
 }

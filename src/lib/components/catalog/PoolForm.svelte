@@ -24,7 +24,10 @@
   let monthlyFee = $state(pool.monthly_fee || 0);
   let creditPoolSize = $state(pool.credit_pool_size || 0);
   let capturePercent = $state(pool.capture !== undefined && pool.capture !== null ? Math.round(pool.capture * 100) : '');
-  let feeBasis = $state<'flat' | 'per_member'>(pool.fee_basis === 'per_member' ? 'per_member' : 'flat');
+  let feeBasis = $state<'flat' | 'per_member' | 'per_customer'>(
+    pool.fee_basis === 'per_member' ? 'per_member' : (pool.fee_basis === 'per_customer' ? 'per_customer' : 'flat')
+  );
+  let poolSizeBasis = $state<'absolute' | 'per_member'>(pool.pool_size_basis === 'per_member' ? 'per_member' : 'absolute');
 
   // Burn rates list: [{ service_id, burn_rate, service_name }]
   let burnRates = $state<Array<{ service_id: string; burn_rate: number; service_name: string }>>(
@@ -106,7 +109,7 @@
           </div>
         </div>
 
-        <!-- Fee Basis (ADR 0012 Decision 1) -->
+        <!-- Fee Basis (ADR 0012 Decision 1 / Amendment 2026-07) -->
         <div class="space-y-1.5 max-w-xs">
           <Label for="feeBasis">Fee Basis</Label>
           <select
@@ -117,9 +120,27 @@
           >
             <option value="flat">Flat — once per tier</option>
             <option value="per_member">Per Member — × active AI users</option>
+            <option value="per_customer">Per Customer — × active customers</option>
           </select>
           <p class="text-[10px] text-muted-foreground">
-            Flat fits a B2B org-wide tier (e.g. Copilot Enterprise). Per Member fits a B2C per-subscriber plan (e.g. Claude Pro) — the fee scales with the scenario's active AI users each month.
+            Flat fits a B2B org-wide tier. Per Member fits a B2C per-subscriber plan (scales with active AI users). Per Customer scales the fee with all active customers in the cohort.
+          </p>
+        </div>
+
+        <!-- Pool Size Basis (ADR 0012 Decision 1 / Amendment 2026-07) -->
+        <div class="space-y-1.5 max-w-xs">
+          <Label for="poolSizeBasis">Pool Size Basis</Label>
+          <select
+            id="poolSizeBasis"
+            name="poolSizeBasis"
+            bind:value={poolSizeBasis}
+            class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
+          >
+            <option value="absolute">Absolute — credits per pool</option>
+            <option value="per_member">Per Member — credits × active AI users</option>
+          </select>
+          <p class="text-[10px] text-muted-foreground">
+            Absolute is a fixed monthly credit pool for the entire cohort. Per Member scales the pool size dynamically by multiplying it by active AI users (e.g. 2.5 credits per active user).
           </p>
         </div>
 

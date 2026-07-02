@@ -155,7 +155,7 @@
                   <div class="space-y-1">
                     <CardTitle class="text-lg font-bold group-hover:text-primary transition-colors">{pool.name}</CardTitle>
                     <CardDescription class="text-xs">
-                      {pool.credit_pool_size.toLocaleString()} credits / mo
+                      {pool.credit_pool_size.toLocaleString()} credits / mo {pool.pool_size_basis === 'per_member' ? ' / member' : ''}
                     </CardDescription>
                   </div>
                   <div class="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
@@ -168,7 +168,7 @@
                 <div class="flex justify-between items-baseline border-b border-border/20 pb-2">
                   <span class="text-xs text-muted-foreground">Monthly Fee</span>
                   <span class="text-lg font-bold font-mono text-foreground">
-                    {formatCurrency(pool.monthly_fee, appState.currency, 2)}{pool.fee_basis === 'per_member' ? ' / member' : ''}
+                    {formatCurrency(pool.monthly_fee, appState.currency, 2)}{pool.fee_basis === 'per_member' ? ' / member' : (pool.fee_basis === 'per_customer' ? ' / customer' : '')}
                   </span>
                 </div>
 
@@ -239,10 +239,10 @@
                 <TableRow class="hover:bg-muted/10 transition-colors">
                   <TableCell class="font-semibold text-foreground">{pool.name}</TableCell>
                   <TableCell class="text-right font-mono font-bold">
-                    {formatCurrency(pool.monthly_fee, appState.currency, 2)}{pool.fee_basis === 'per_member' ? ' / member' : ''}
+                    {formatCurrency(pool.monthly_fee, appState.currency, 2)}{pool.fee_basis === 'per_member' ? ' / member' : (pool.fee_basis === 'per_customer' ? ' / customer' : '')}
                   </TableCell>
                   <TableCell class="text-right font-mono">
-                    {pool.credit_pool_size.toLocaleString()} credits
+                    {pool.credit_pool_size.toLocaleString()} credits {pool.pool_size_basis === 'per_member' ? '/ member' : ''}
                   </TableCell>
                   <TableCell class="text-center">
                     <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-muted text-muted-foreground border">

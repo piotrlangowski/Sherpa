@@ -1,5 +1,6 @@
 import db from '../db';
 import type { ClientBase } from '../../types';
+import { scenariosRepository } from './scenarios';
 
 export const clientBaseRepository = {
   get(): ClientBase {
@@ -58,6 +59,7 @@ export const clientBaseRepository = {
       default_copilot_margin_threshold, default_agent_margin_threshold, now
     );
     
+    scenariosRepository.invalidateAllResults();
     return this.get();
   }
 };
