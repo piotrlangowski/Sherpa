@@ -18,6 +18,7 @@ export const actions: Actions = {
     const creditPoolSize = parseInt(formData.get('creditPoolSize') as string || '0', 10);
     const captureVal = formData.get('capture') as string;
     const capture = captureVal !== '' && captureVal !== null ? parseFloat(captureVal) / 100 : null;
+    const feeBasis = (formData.get('feeBasis') as string) === 'per_member' ? 'per_member' : 'flat';
 
     const burnRatesJSON = formData.get('burn_rates_json') as string;
     let burnRates = [];
@@ -37,6 +38,7 @@ export const actions: Actions = {
         monthly_fee: monthlyFee,
         credit_pool_size: creditPoolSize,
         capture,
+        fee_basis: feeBasis,
         burn_rates: burnRates
       });
     } catch (err: any) {

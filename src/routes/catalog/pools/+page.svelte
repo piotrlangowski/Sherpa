@@ -168,7 +168,7 @@
                 <div class="flex justify-between items-baseline border-b border-border/20 pb-2">
                   <span class="text-xs text-muted-foreground">Monthly Fee</span>
                   <span class="text-lg font-bold font-mono text-foreground">
-                    {formatCurrency(pool.monthly_fee, appState.currency, 2)}
+                    {formatCurrency(pool.monthly_fee, appState.currency, 2)}{pool.fee_basis === 'per_member' ? ' / member' : ''}
                   </span>
                 </div>
 
@@ -239,7 +239,7 @@
                 <TableRow class="hover:bg-muted/10 transition-colors">
                   <TableCell class="font-semibold text-foreground">{pool.name}</TableCell>
                   <TableCell class="text-right font-mono font-bold">
-                    {formatCurrency(pool.monthly_fee, appState.currency, 2)}
+                    {formatCurrency(pool.monthly_fee, appState.currency, 2)}{pool.fee_basis === 'per_member' ? ' / member' : ''}
                   </TableCell>
                   <TableCell class="text-right font-mono">
                     {pool.credit_pool_size.toLocaleString()} credits

@@ -14,6 +14,7 @@ import { scenariosRepository } from '$lib/server/repositories/scenarios';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
 import { monetizationRepository } from '$lib/server/repositories/monetization';
 import { entityOverridesRepository } from '$lib/server/repositories/entity-overrides';
+import { poolTiersRepository } from '$lib/server/repositories/pool-tiers';
 import { MonetizationConfigSchema } from '$lib/types/schemas';
 import type { MonetizationConfig, EntityOverride } from '$lib/types';
 
@@ -83,6 +84,24 @@ const EntityOverrideEntrySchema = z.object({
     output_price: z.number().nullable().optional(),
     base_price: z.number().nullable().optional()
   })
+});
+
+// Revenue modeling (ADR 0001–0004) + credit pool (ADR 0010) — round-trip fields.
+const ModelingTypeSchema = z.enum(['incremental', 'gtm', 'appraisal']);
+const RevenueCarrierSchema = z.enum(['cohort', 'plan', 'pack', 'feature', 'pool']);
+const RevenueBridgeSchema = z.enum(['upsell_on_cohort', 'separate_market']);
+
+const PoolTierSchema = z.object({
+  name: z.string(),
+  monthly_fee: z.number(),
+  credit_pool_size: z.number(),
+  capture: z.number().nullable().optional(),
+  fee_basis: z.enum(['flat', 'per_member']).optional()
+});
+
+const PoolBurnRateEntrySchema = z.object({
+  service_name: z.string(),
+  burn_rate: z.number()
 });
 
 const CostItemSchema = z.object({
@@ -159,7 +178,12 @@ const ScenarioSchema = z.object({
   evc_negative_value: z.number().nullable().optional(),
   evc_capture_ceiling_pct: z.number().nullable().optional(),
   evc_capture_target_pct: z.number().nullable().optional(),
-  evc_capture_floor_pct: z.number().nullable().optional()
+  evc_capture_floor_pct: z.number().nullable().optional(),
+  modeling_type: ModelingTypeSchema.optional(),
+  revenue_carrier: RevenueCarrierSchema.nullable().optional(),
+  revenue_bridge: RevenueBridgeSchema.nullable().optional(),
+  pool_tier: PoolTierSchema.nullable().optional(),
+  pool_burn_rates: z.array(PoolBurnRateEntrySchema).optional()
 });
 
 const SnapshotSchema = z.object({
@@ -481,6 +505,31 @@ export const POST: RequestHandler = async ({ request }) => {
         }
       }
 
+      // 7.5 Import Pool Tier (ADR 0010) — after services, so burn rates can map service_name -> id.
+      let poolTierId: string | null = null;
+      if (scenario.pool_tier) {
+        const burnRates = (scenario.pool_burn_rates ?? [])
+          .map((br) => ({ service_id: serviceIdMap.get(br.service_name), burn_rate: br.burn_rate }))
+          .filter((br): br is { service_id: string; burn_rate: number } => !!br.service_id);
+
+        const existingTier = db.prepare('SELECT id FROM pool_tiers WHERE name = ?')
+          .get(scenario.pool_tier.name) as { id: string } | undefined;
+
+        if (existingTier) {
+          poolTierId = existingTier.id;
+        } else {
+          const createdTier = poolTiersRepository.create({
+            name: scenario.pool_tier.name,
+            monthly_fee: scenario.pool_tier.monthly_fee,
+            credit_pool_size: scenario.pool_tier.credit_pool_size,
+            capture: scenario.pool_tier.capture ?? null,
+            fee_basis: scenario.pool_tier.fee_basis ?? 'flat',
+            burn_rates: burnRates
+          });
+          poolTierId = createdTier.id;
+        }
+      }
+
       // 8. Find Unique Name for Scenario
       let baseName = scenario.name;
       if (db.prepare('SELECT id FROM scenarios WHERE name = ?').get(baseName)) {
@@ -541,7 +590,11 @@ export const POST: RequestHandler = async ({ request }) => {
         evc_negative_value: scenario.evc_negative_value ?? null,
         evc_capture_ceiling_pct: scenario.evc_capture_ceiling_pct ?? null,
         evc_capture_target_pct: scenario.evc_capture_target_pct ?? null,
-        evc_capture_floor_pct: scenario.evc_capture_floor_pct ?? null
+        evc_capture_floor_pct: scenario.evc_capture_floor_pct ?? null,
+        modeling_type: scenario.modeling_type,
+        revenue_carrier: scenario.revenue_carrier ?? null,
+        revenue_bridge: scenario.revenue_bridge ?? null,
+        pool_tier_id: poolTierId
       });
 
       newScenarioId = createdScenario.id;

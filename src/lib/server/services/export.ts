@@ -9,8 +9,9 @@ import { providersRepository } from '../repositories/providers';
 import { calculateScenario } from './financial-engine';
 import { monetizationRepository } from '../repositories/monetization';
 import { entityOverridesRepository } from '../repositories/entity-overrides';
+import { poolTiersRepository } from '../repositories/pool-tiers';
 
-import type { Vertical, CohortConfig, ScopeOverride, Service, Pack, Plan, CostItem, Provider, MonetizationConfig, EntityOverride } from '$lib/types';
+import type { Vertical, CohortConfig, ScopeOverride, Service, Pack, Plan, CostItem, Provider, MonetizationConfig, EntityOverride, ModelingType, RevenueCarrier, RevenueBridge } from '$lib/types';
 
 export interface ScenarioExportSnapshot {
   version: string;
@@ -37,6 +38,15 @@ export interface ScenarioExportSnapshot {
     evc_capture_ceiling_pct?: number | null;
     evc_capture_target_pct?: number | null;
     evc_capture_floor_pct?: number | null;
+    // Revenue modeling (ADR 0001–0004) — dropped from earlier exports, causing a scenario
+    // re-imported from JSON to silently fall back to the appraisal/cohort default carrier.
+    modeling_type?: ModelingType;
+    revenue_carrier?: RevenueCarrier | null;
+    revenue_bridge?: RevenueBridge | null;
+    // Credit pool (ADR 0010) — keyed by name (tier) / service name (burn rates) so both
+    // survive re-import the same way monetization_overrides/entity_overrides already do.
+    pool_tier?: { name: string; monthly_fee: number; credit_pool_size: number; capture?: number | null; fee_basis?: 'flat' | 'per_member' } | null;
+    pool_burn_rates?: { service_name: string; burn_rate: number }[];
   };
 }
 
@@ -116,8 +126,11 @@ export function exportScenarioToJSON(scenarioId: string): string {
 
   // Scenario-level entity overrides, keyed by entity NAME (+ provider model) so they survive re-import.
   const entity_overrides = entityOverridesRepository.getScenarioOverrides(scenarioId)
+    // Cohort-scoped overrides (ADR 0009 Track B) reference a cohort_id from this scenario's DB;
+    // import doesn't remap cohort IDs across scenarios, so only scenario-wide rows round-trip safely.
+    .filter((r) => !r.cohort_id)
     .map((r) => {
-      const { entity_type, entity_id, ...override } = r;
+      const { entity_type, entity_id, cohort_id, ...override } = r;
       let entity_name = '';
       let entity_model_name: string | undefined;
       if (entity_type === 'service') entity_name = servicesRepository.getById(entity_id)?.name ?? '';
@@ -131,6 +144,20 @@ export function exportScenarioToJSON(scenarioId: string): string {
       return { entity_type, entity_name, entity_model_name, override: override as EntityOverride };
     })
     .filter((o) => o.entity_name);
+
+  // Credit pool (ADR 0010) — resolve the tier + its burn-rate table by name so a re-import
+  // doesn't need to guess IDs, mirroring how monetization/entity overrides key by entity name.
+  let poolTier: { name: string; monthly_fee: number; credit_pool_size: number; capture?: number | null; fee_basis?: 'flat' | 'per_member' } | null = null;
+  let poolBurnRates: { service_name: string; burn_rate: number }[] = [];
+  if (scenario.pool_tier_id) {
+    const tier = poolTiersRepository.getById(scenario.pool_tier_id);
+    if (tier) {
+      poolTier = { name: tier.name, monthly_fee: tier.monthly_fee, credit_pool_size: tier.credit_pool_size, capture: tier.capture ?? null, fee_basis: tier.fee_basis ?? 'flat' };
+      poolBurnRates = poolTiersRepository.getBurnRates(scenario.pool_tier_id)
+        .filter((br) => br.service_name)
+        .map((br) => ({ service_name: br.service_name!, burn_rate: br.burn_rate }));
+    }
+  }
 
   const snapshot: ScenarioExportSnapshot = {
     version: '1.0',
@@ -156,7 +183,12 @@ export function exportScenarioToJSON(scenarioId: string): string {
       evc_negative_value: scenario.evc_negative_value,
       evc_capture_ceiling_pct: scenario.evc_capture_ceiling_pct,
       evc_capture_target_pct: scenario.evc_capture_target_pct,
-      evc_capture_floor_pct: scenario.evc_capture_floor_pct
+      evc_capture_floor_pct: scenario.evc_capture_floor_pct,
+      modeling_type: scenario.modeling_type,
+      revenue_carrier: scenario.revenue_carrier,
+      revenue_bridge: scenario.revenue_bridge,
+      pool_tier: poolTier,
+      pool_burn_rates: poolBurnRates
     }
   };
 
