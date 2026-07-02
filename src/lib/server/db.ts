@@ -18,8 +18,11 @@ fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 let db: SherpaDatabase;
 try {
   db = new SherpaDatabase(dbPath);
+  // busy_timeout must be set BEFORE journal_mode: switching to WAL takes a brief exclusive
+  // lock, and without a timeout a concurrent opener (dashboard + MCP write the same file,
+  // parallel test workers too) fails immediately with "database is locked".
+  db.pragma('busy_timeout = 5000');
   db.pragma('journal_mode = WAL');
-  db.pragma('busy_timeout = 5000');   // dashboard + MCP write the same WAL file
   db.pragma('foreign_keys = ON');
   runMigrations(db);
   seedDatabase(db);

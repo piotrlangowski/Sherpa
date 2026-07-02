@@ -133,7 +133,7 @@ export const scenariosRepository = {
              s.evc_nba_annual_value, s.evc_extra_positive_value, s.evc_negative_value,
              s.evc_capture_ceiling_pct, s.evc_capture_target_pct, s.evc_capture_floor_pct,
              s.price_from_evc, s.adoption_elasticity, s.copilot_margin_threshold, s.agent_margin_threshold,
-             s.pool_tier_id,
+             s.pool_tier_id, s.evc_reference_cohort_id,
              s.created_at, s.updated_at
       FROM scenarios s
       WHERE s.id = ?
@@ -171,7 +171,8 @@ export const scenariosRepository = {
         o.acquisition_growth_rate, o.ai_adoption_rate, o.retention_floor, o.expansion_rate, o.arpu_override,
         o.arpu_uplift, o.arpu_uplift_percent, o.churn_reduction, o.acquisition_uplift,
         o.gross_margin, o.adoption_ramp_months,
-        CASE 
+        o.evc_extra_value_multiplier, o.evc_negative_value_multiplier, o.evc_nba_multiplier,
+        CASE
           WHEN o.target_type = 'cohort' THEN c.name 
           WHEN o.target_type = 'vertical' THEN v.name
           ELSE 'Global Client Base'
@@ -225,7 +226,11 @@ export const scenariosRepository = {
           churn_reduction: row.cohort_base_churn_reduction,
           acquisition_uplift: row.cohort_base_acquisition_uplift,
           gross_margin: row.cohort_base_gross_margin,
-          adoption_ramp_months: row.cohort_base_adoption_ramp_months
+          adoption_ramp_months: row.cohort_base_adoption_ramp_months,
+          // EVC multipliers have no catalog column to cascade from — 1.0 is the base (no differentiation).
+          evc_extra_value_multiplier: 1.0,
+          evc_negative_value_multiplier: 1.0,
+          evc_nba_multiplier: 1.0
         };
       } else if (row.target_type === 'all_clients') {
         base_values = {
@@ -241,7 +246,10 @@ export const scenariosRepository = {
           churn_reduction: row.global_base_churn_reduction,
           acquisition_uplift: row.global_base_acquisition_uplift,
           gross_margin: row.global_base_gross_margin,
-          adoption_ramp_months: row.global_base_adoption_ramp_months
+          adoption_ramp_months: row.global_base_adoption_ramp_months,
+          evc_extra_value_multiplier: 1.0,
+          evc_negative_value_multiplier: 1.0,
+          evc_nba_multiplier: 1.0
         };
       }
 
@@ -263,6 +271,9 @@ export const scenariosRepository = {
         acquisition_uplift: row.acquisition_uplift,
         gross_margin: row.gross_margin,
         adoption_ramp_months: row.adoption_ramp_months,
+        evc_extra_value_multiplier: row.evc_extra_value_multiplier,
+        evc_negative_value_multiplier: row.evc_negative_value_multiplier,
+        evc_nba_multiplier: row.evc_nba_multiplier,
         target_name: row.target_name || (row.target_type === 'all_clients' ? 'Global Client Base' : row.target_id),
         base_values
       };
@@ -343,6 +354,7 @@ export const scenariosRepository = {
       copilot_margin_threshold: r.copilot_margin_threshold,
       agent_margin_threshold: r.agent_margin_threshold,
       pool_tier_id: r.pool_tier_id,
+      evc_reference_cohort_id: r.evc_reference_cohort_id,
       created_at: r.created_at,
       updated_at: r.updated_at,
       scope_verticals: verticalRows,
@@ -382,10 +394,10 @@ export const scenariosRepository = {
           evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
           evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
           price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold,
-          pool_tier_id,
+          pool_tier_id, evc_reference_cohort_id,
           created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, legacyRevenueSource, data.capex_contingency_pct ?? 0,
         data.modeling_type || 'appraisal', data.revenue_carrier || null, data.revenue_bridge || null,
@@ -394,7 +406,7 @@ export const scenariosRepository = {
         data.evc_capture_ceiling_pct ?? null, data.evc_capture_target_pct ?? null, data.evc_capture_floor_pct ?? null,
         data.price_from_evc ? 1 : 0, data.adoption_elasticity ?? 0,
         data.copilot_margin_threshold ?? null, data.agent_margin_threshold ?? null,
-        data.pool_tier_id ?? null,
+        data.pool_tier_id ?? null, data.evc_reference_cohort_id ?? null,
         now, now
       );
 
@@ -414,18 +426,20 @@ export const scenariosRepository = {
             id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
             acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
             arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
-            gross_margin, adoption_ramp_months
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            gross_margin, adoption_ramp_months,
+            evc_extra_value_multiplier, evc_negative_value_multiplier, evc_nba_multiplier
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const ov of data.scope_overrides) {
           insertOverride.run(
-            uuidv4(), id, ov.target_type, ov.target_id || null, 
+            uuidv4(), id, ov.target_type, ov.target_id || null,
             ov.monthly_churn_rate ?? null, ov.monthly_acquisition ?? null,
             ov.acquisition_growth_rate ?? null, ov.ai_adoption_rate ?? null,
             ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null,
             ov.arpu_uplift ?? null, ov.arpu_uplift_percent ?? null,
             ov.churn_reduction ?? null, ov.acquisition_uplift ?? null,
-            ov.gross_margin ?? null, ov.adoption_ramp_months ?? null
+            ov.gross_margin ?? null, ov.adoption_ramp_months ?? null,
+            ov.evc_extra_value_multiplier ?? null, ov.evc_negative_value_multiplier ?? null, ov.evc_nba_multiplier ?? null
           );
         }
       }
@@ -494,13 +508,14 @@ export const scenariosRepository = {
     const copilot_margin_threshold = data.copilot_margin_threshold !== undefined ? data.copilot_margin_threshold : current.copilot_margin_threshold;
     const agent_margin_threshold = data.agent_margin_threshold !== undefined ? data.agent_margin_threshold : current.agent_margin_threshold;
     const pool_tier_id = data.pool_tier_id !== undefined ? data.pool_tier_id : current.pool_tier_id;
+    const evc_reference_cohort_id = data.evc_reference_cohort_id !== undefined ? data.evc_reference_cohort_id : current.evc_reference_cohort_id;
     const now = new Date().toISOString();
 
     db.transaction(() => {
       const capex_contingency_pct = data.capex_contingency_pct !== undefined ? data.capex_contingency_pct : current.capex_contingency_pct;
       db.prepare(`
         UPDATE scenarios
-        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?, evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?, price_from_evc = ?, adoption_elasticity = ?, copilot_margin_threshold = ?, agent_margin_threshold = ?, pool_tier_id = ?, updated_at = ?
+        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?, evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?, price_from_evc = ?, adoption_elasticity = ?, copilot_margin_threshold = ?, agent_margin_threshold = ?, pool_tier_id = ?, evc_reference_cohort_id = ?, updated_at = ?
         WHERE id = ?
       `).run(
         name, description || null, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier || null, revenue_bridge || null,
@@ -508,7 +523,7 @@ export const scenariosRepository = {
         evc_nba_annual_value ?? null, evc_extra_positive_value ?? null, evc_negative_value ?? null,
         evc_capture_ceiling_pct ?? null, evc_capture_target_pct ?? null, evc_capture_floor_pct ?? null,
         price_from_evc ? 1 : 0, adoption_elasticity ?? 0,
-        copilot_margin_threshold ?? null, agent_margin_threshold ?? null, pool_tier_id ?? null,
+        copilot_margin_threshold ?? null, agent_margin_threshold ?? null, pool_tier_id ?? null, evc_reference_cohort_id ?? null,
         now, id
       );
 
@@ -531,18 +546,20 @@ export const scenariosRepository = {
             id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
             acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
             arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
-            gross_margin, adoption_ramp_months
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            gross_margin, adoption_ramp_months,
+            evc_extra_value_multiplier, evc_negative_value_multiplier, evc_nba_multiplier
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const ov of data.scope_overrides) {
           insertOverride.run(
-            uuidv4(), id, ov.target_type, ov.target_id || null, 
+            uuidv4(), id, ov.target_type, ov.target_id || null,
             ov.monthly_churn_rate ?? null, ov.monthly_acquisition ?? null,
             ov.acquisition_growth_rate ?? null, ov.ai_adoption_rate ?? null,
             ov.retention_floor ?? null, ov.expansion_rate ?? null, ov.arpu_override ?? null,
             ov.arpu_uplift ?? null, ov.arpu_uplift_percent ?? null,
             ov.churn_reduction ?? null, ov.acquisition_uplift ?? null,
-            ov.gross_margin ?? null, ov.adoption_ramp_months ?? null
+            ov.gross_margin ?? null, ov.adoption_ramp_months ?? null,
+            ov.evc_extra_value_multiplier ?? null, ov.evc_negative_value_multiplier ?? null, ov.evc_nba_multiplier ?? null
           );
         }
       }
@@ -597,7 +614,7 @@ export const scenariosRepository = {
              payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
              revenue_integrity_status, revenue_integrity_message,
              evc, evc_price_floor, evc_price_target, evc_price_ceiling,
-             driver_profile, stream_margins, pool_economics
+             driver_profile, stream_margins, pool_economics, agent_deflection_corridor
       FROM scenario_results
       WHERE scenario_id = ?
     `).get(scenarioId) as any;
@@ -629,7 +646,8 @@ export const scenariosRepository = {
       evc_price_ceiling: r.evc_price_ceiling,
       driver_profile: r.driver_profile || null,
       stream_margins: r.stream_margins ? JSON.parse(r.stream_margins) : null,
-      pool_economics: r.pool_economics ? JSON.parse(r.pool_economics) : null
+      pool_economics: r.pool_economics ? JSON.parse(r.pool_economics) : null,
+      agent_deflection_corridor: r.agent_deflection_corridor ? JSON.parse(r.agent_deflection_corridor) : null
     };
   },
 
@@ -644,8 +662,8 @@ export const scenariosRepository = {
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
         revenue_integrity_status, revenue_integrity_message,
         evc, evc_price_floor, evc_price_target, evc_price_ceiling,
-        driver_profile, stream_margins, pool_economics
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        driver_profile, stream_margins, pool_economics, agent_deflection_corridor
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       results.scenario_id,
@@ -672,7 +690,8 @@ export const scenariosRepository = {
       results.evc_price_ceiling ?? null,
       results.driver_profile || null,
       results.stream_margins ? JSON.stringify(results.stream_margins) : null,
-      results.pool_economics ? JSON.stringify(results.pool_economics) : null
+      results.pool_economics ? JSON.stringify(results.pool_economics) : null,
+      results.agent_deflection_corridor ? JSON.stringify(results.agent_deflection_corridor) : null
     );
   },
 

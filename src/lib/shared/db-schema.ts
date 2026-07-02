@@ -249,6 +249,7 @@ export function runMigrations(db: DatabaseConnection): void {
         evc_capture_floor_pct       REAL,
         price_from_evc              INTEGER DEFAULT 0,
         adoption_elasticity         REAL DEFAULT 0,
+        evc_reference_cohort_id     TEXT,
         created_at                  TEXT NOT NULL,
         updated_at                  TEXT NOT NULL
       )
@@ -292,7 +293,10 @@ export function runMigrations(db: DatabaseConnection): void {
         churn_reduction         REAL,
         acquisition_uplift      REAL,
         gross_margin            REAL,
-        adoption_ramp_months    INTEGER
+        adoption_ramp_months    INTEGER,
+        evc_extra_value_multiplier    REAL, -- ADR 0011 Track A
+        evc_negative_value_multiplier REAL, -- ADR 0011 Track A
+        evc_nba_multiplier             REAL -- ADR 0011 Track A
       )
     `).run();
 
@@ -424,14 +428,16 @@ export function runMigrations(db: DatabaseConnection): void {
         average_handle_time_seconds INTEGER,  -- service (agent)
         fully_loaded_cost_per_fte_month REAL, -- service (agent)
         baseline_fte                REAL,     -- service (agent)
-        churn_rate_uplift           REAL      -- service (agent)
+        churn_rate_uplift           REAL,     -- service (agent)
+        cohort_id    TEXT     -- ADR 0009 Track B: NULL = scenario-wide (unchanged); set = applies to one cohort's consumption of the entity only
       )
     `).run();
 
-    // scenario_id is NOT NULL here, so no COALESCE needed (unlike monetization_configs).
+    // scenario_id is NOT NULL, but cohort_id is nullable (NULL = scenario-wide), so it needs
+    // COALESCE in the unique index — mirrors scenario_scope_overrides' target_id handling.
     db.prepare(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_scenario_entity_overrides_unique
-      ON scenario_entity_overrides(scenario_id, entity_type, entity_id)
+      ON scenario_entity_overrides(scenario_id, entity_type, entity_id, COALESCE(cohort_id, ''))
     `).run();
   })();
 
@@ -1017,5 +1023,52 @@ function runDataMigrations(db: DatabaseConnection): void {
   if (!cohortCols20.includes('usage_intensity')) {
     db.prepare("ALTER TABLE cohort_configs ADD COLUMN usage_intensity REAL DEFAULT 1.0").run();
     db.prepare("DELETE FROM scenario_results").run();
+  }
+
+  // Migration 21: Per-cohort value differentiation (ADR 0011 Track A EVC multipliers +
+  // reference cohort; ADR 0009 Track B cohort-scoped entity overrides + agent deflection corridor).
+  let migration21Applied = false;
+
+  const scenarioCols21 = (db.prepare("PRAGMA table_info(scenarios)").all() as any[]).map(c => c.name);
+  if (!scenarioCols21.includes('evc_reference_cohort_id')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN evc_reference_cohort_id TEXT").run();
+    migration21Applied = true;
+  }
+
+  const overrideCols21 = (db.prepare("PRAGMA table_info(scenario_scope_overrides)").all() as any[]).map(c => c.name);
+  if (!overrideCols21.includes('evc_extra_value_multiplier')) {
+    db.prepare("ALTER TABLE scenario_scope_overrides ADD COLUMN evc_extra_value_multiplier REAL").run();
+    db.prepare("ALTER TABLE scenario_scope_overrides ADD COLUMN evc_negative_value_multiplier REAL").run();
+    db.prepare("ALTER TABLE scenario_scope_overrides ADD COLUMN evc_nba_multiplier REAL").run();
+    migration21Applied = true;
+  }
+
+  const entityOverrideCols21 = (db.prepare("PRAGMA table_info(scenario_entity_overrides)").all() as any[]).map(c => c.name);
+  if (!entityOverrideCols21.includes('cohort_id')) {
+    db.prepare("ALTER TABLE scenario_entity_overrides ADD COLUMN cohort_id TEXT").run();
+    // Rebuild the unique index to include cohort_id (NULL = scenario-wide, unchanged behavior).
+    db.prepare("DROP INDEX IF EXISTS idx_scenario_entity_overrides_unique").run();
+    db.prepare(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_scenario_entity_overrides_unique
+      ON scenario_entity_overrides(scenario_id, entity_type, entity_id, COALESCE(cohort_id, ''))
+    `).run();
+    migration21Applied = true;
+  }
+
+  const resultsCols21 = (db.prepare("PRAGMA table_info(scenario_results)").all() as any[]).map(c => c.name);
+  if (!resultsCols21.includes('agent_deflection_corridor')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN agent_deflection_corridor TEXT").run();
+    migration21Applied = true;
+  }
+
+  if (migration21Applied) {
+    db.prepare("DELETE FROM scenario_results").run();
+  }
+
+  // Migration 22: ADR 0012 — pool tier fee basis (flat per-tier vs per-member). Existing tiers
+  // default to 'flat', reproducing today's only behavior, so no result invalidation is needed.
+  const poolTierCols22 = (db.prepare("PRAGMA table_info(pool_tiers)").all() as any[]).map(c => c.name);
+  if (!poolTierCols22.includes('fee_basis')) {
+    db.prepare("ALTER TABLE pool_tiers ADD COLUMN fee_basis TEXT NOT NULL DEFAULT 'flat'").run();
   }
 }

@@ -17,6 +17,7 @@ Format: Michael Nygard (kontekst / decyzja / status / konsekwencje).
 | [0009](0009-strumienie-przychodu-per-archetyp.md) | Strumienie przychodu per archetyp: copilot (seat) + agent (interakcja) jako rozłączne strumienie; cena ≠ labor‑savings; blended margin per strumień | Proponowany |
 | [0010](0010-portfel-kredytow.md) | Wspólny portfel kredytów (Podejście B): tier→pula→konwersja; kredyt hybrydowy (floor kosztowy + narzut wartości); przychód jak subskrypcja (breakage); atrybucja per strumień wg EVC; zakaz mieszania billing modeli | Proponowany |
 | [0011](0011-evc-per-segment.md) | EVC per-segment — różnicowanie sufitu wartości i COGS per cohort | Zaakceptowany |
+| [0012](0012-abonament-z-limitem-w-puli.md) | Parametryzacja `pool`: opłata per-member (`fee_basis`, dynamiczna baza `aiUsers`) + przychód usług spoza puli; jawna nadwyżka i sublimity odłożone | Zaakceptowany |
 
 ## Skrót koncepcji
 

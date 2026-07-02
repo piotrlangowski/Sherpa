@@ -24,6 +24,7 @@
   let monthlyFee = $state(pool.monthly_fee || 0);
   let creditPoolSize = $state(pool.credit_pool_size || 0);
   let capturePercent = $state(pool.capture !== undefined && pool.capture !== null ? Math.round(pool.capture * 100) : '');
+  let feeBasis = $state<'flat' | 'per_member'>(pool.fee_basis === 'per_member' ? 'per_member' : 'flat');
 
   // Burn rates list: [{ service_id, burn_rate, service_name }]
   let burnRates = $state<Array<{ service_id: string; burn_rate: number; service_name: string }>>(
@@ -103,6 +104,23 @@
             <Label for="creditPoolSize">Credit Pool Size (Credits / month)</Label>
             <NumberField id="creditPoolSize" name="creditPoolSize" min="0" step="1" bind:value={creditPoolSize} required raw={true} grouped={true} decimals={0} class="text-right" />
           </div>
+        </div>
+
+        <!-- Fee Basis (ADR 0012 Decision 1) -->
+        <div class="space-y-1.5 max-w-xs">
+          <Label for="feeBasis">Fee Basis</Label>
+          <select
+            id="feeBasis"
+            name="feeBasis"
+            bind:value={feeBasis}
+            class="w-full bg-background border border-input rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground"
+          >
+            <option value="flat">Flat — once per tier</option>
+            <option value="per_member">Per Member — × active AI users</option>
+          </select>
+          <p class="text-[10px] text-muted-foreground">
+            Flat fits a B2B org-wide tier (e.g. Copilot Enterprise). Per Member fits a B2C per-subscriber plan (e.g. Claude Pro) — the fee scales with the scenario's active AI users each month.
+          </p>
         </div>
 
         <!-- EVC Capture Rate override -->

@@ -76,23 +76,26 @@
   });
 
   // Chart state
-  let activeTab = $state<'cashflow' | 'cumulative' | 'users' | 'value_split' | 'pricing_corridor' | 'margin_waterfall'>('cashflow');
+  let activeTab = $state<'cashflow' | 'cumulative' | 'users' | 'value_split' | 'pricing_corridor' | 'margin_waterfall' | 'cost_to_serve'>('cashflow');
   let chartElement: HTMLDivElement | undefined = $state();
   let valuePieElement: HTMLDivElement | undefined = $state();
   let captureCurveElement: HTMLDivElement | undefined = $state();
   let pricingCorridorElement: HTMLDivElement | undefined = $state();
   let marginWaterfallElement: HTMLDivElement | undefined = $state();
-  
+  let costToServeElement: HTMLDivElement | undefined = $state();
+
   let chartInstance: any = null;
   let valuePieInstance: any = null;
   let captureCurveInstance: any = null;
   let pricingCorridorInstance: any = null;
   let marginWaterfallInstance: any = null;
-  
+  let costToServeInstance: any = null;
+
   let resizeListener: (() => void) | null = null;
   let splitResizeListener: (() => void) | null = null;
   let corridorResizeListener: (() => void) | null = null;
   let waterfallResizeListener: (() => void) | null = null;
+  let costToServeResizeListener: (() => void) | null = null;
   let isMounted = false;
   let isExplainerOpen = $state(false);
 
@@ -117,6 +120,10 @@
       marginWaterfallInstance.dispose();
       marginWaterfallInstance = null;
     }
+    if (costToServeInstance) {
+      costToServeInstance.dispose();
+      costToServeInstance = null;
+    }
     if (resizeListener) {
       window.removeEventListener('resize', resizeListener);
       resizeListener = null;
@@ -132,6 +139,10 @@
     if (waterfallResizeListener) {
       window.removeEventListener('resize', waterfallResizeListener);
       waterfallResizeListener = null;
+    }
+    if (costToServeResizeListener) {
+      window.removeEventListener('resize', costToServeResizeListener);
+      costToServeResizeListener = null;
     }
   }
 
@@ -737,36 +748,39 @@
         const points = corridor.points;
 
         const xAxisData = points.map((p: any, index: number) => {
+          const refSuffix = p.isReference ? ' ★ (reference)' : '';
           if (points.length === 1) {
-            return `${p.cohortName}\n(Single Profile)`;
+            return `${p.cohortName}\n(Single Profile)${refSuffix}`;
           }
           if (index === 0) {
-            return `Light: ${p.cohortName}`;
+            return `Light: ${p.cohortName}${refSuffix}`;
           }
           if (index === points.length - 1) {
-            return `Heavy: ${p.cohortName}`;
+            return `Heavy: ${p.cohortName}${refSuffix}`;
           }
-          return p.cohortName;
+          return `${p.cohortName}${refSuffix}`;
         });
 
         // Conceptual ladder (mirrors the reference diagrams): fixed semantic tiers top->bottom
         // — Ceiling (EVC) / Realized Price / Target Floor / COGS Floor. The tier (y) encodes
-        // role; each rung's actual € value is its label, so values never collide. Not to scale:
+        // role; each rung's actual value is its label, so values never collide. Not to scale:
         // a break (COGS > Price) is annotated rather than drawn by inverting the order.
+        const isCohortBasis = corridor.points[0]?.priceBasis === 'cohort';
         const tierNames: Record<number, string> = {
           4: 'Ceiling (EVC)',
-          3: 'Realized Price',
+          3: isCohortBasis ? 'Cohort-Attributable Price' : 'Blended realized price (scenario-wide)',
           2: 'Target Floor',
           1: 'COGS Floor'
         };
         const realized = corridor.actualPrice;
 
         const rungData = points.flatMap((p: any, i: number) => {
+          const pointPrice = p.pricePerCustomer ?? realized;
           const realizedColor = p.status === 'loss' ? '#f43f5e' : (p.status === 'over_ceiling' ? '#f59e0b' : '#3b82f6');
           const cogsColor = p.status === 'loss' ? '#f43f5e' : '#94a3b8';
           return [
             { value: [i, 4], _ci: i, itemStyle: { color: '#64748b' }, _lbl: formatCurrency(p.ceiling, appState.currency, 0) },
-            { value: [i, 3], _ci: i, itemStyle: { color: realizedColor }, _lbl: formatCurrency(realized, appState.currency, 0) },
+            { value: [i, 3], _ci: i, itemStyle: { color: realizedColor }, _lbl: formatCurrency(pointPrice, appState.currency, 0) },
             { value: [i, 2], _ci: i, itemStyle: { color: '#f59e0b' }, _lbl: formatCurrency(p.floorTarget, appState.currency, 0) },
             { value: [i, 1], _ci: i, itemStyle: { color: cogsColor }, _lbl: formatCurrency(p.cogs, appState.currency, 0) }
           ];
@@ -781,7 +795,7 @@
         const corridorOption = {
           title: {
             text: 'Pricing Corridor: COGS Floor → Price → EVC Ceiling',
-            subtext: 'Conceptual ladder — rungs ordered by role (not to scale); € values shown per rung',
+            subtext: 'Conceptual ladder — rungs ordered by role (not to scale); values shown per rung',
             left: 'center',
             textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' },
             subtextStyle: { color: axisColor, fontSize: 9 }
@@ -795,13 +809,24 @@
             formatter: (params: any) => {
               const pt = points[params.data?._ci ?? 0];
               if (!pt) return '';
-              const gap = pt.ceiling - realized;
-              return `
+              const pointPrice = pt.pricePerCustomer ?? realized;
+              const gap = pt.ceiling - pointPrice;
+              const priceLabel = pt.priceBasis === 'cohort' ? 'Cohort Realized Price' : 'Blended Realized Price (scenario-wide)';
+              let tooltipHtml = `
                 <div style="font-weight: bold; margin-bottom: 4px;">${pt.cohortName}</div>
                 Adoption Rate: <b>${Math.round(pt.adoptionRate * 100)}%</b><br/>
                 Gross Margin Target: <b>${Math.round(pt.grossMargin * 100)}%</b><br/>
                 <span style="color:#64748b">Ceiling (EVC):</span> <b>${formatCurrency(pt.ceiling, appState.currency, 2)}/mo</b><br/>
-                <span style="color:#3b82f6">Realized Price:</span> <b>${formatCurrency(realized, appState.currency, 2)}/mo</b><br/>
+                <span style="color:#3b82f6">${priceLabel}:</span> <b>${formatCurrency(pointPrice, appState.currency, 2)}/mo</b>`;
+
+              if (pt.priceBasis === 'cohort') {
+                const hasPlanBridge = scenario.revenue_bridge === 'upsell_on_cohort' || scenario.revenue_bridge === 'separate_market';
+                if (hasPlanBridge) {
+                  tooltipHtml += `<br/><span style="font-size: 9px; color: #94a3b8;">* cohort-attributable price; excludes plan subscription revenue</span>`;
+                }
+              }
+
+              tooltipHtml += `<br/>
                 ${pt.targetPrice ? `<span style="color:#a855f7">Target Price:</span> <b>${formatCurrency(pt.targetPrice, appState.currency, 2)}/mo</b><br/>` : ''}
                 <span style="color:#f59e0b">Target Floor:</span> <b>${formatCurrency(pt.floorTarget, appState.currency, 2)}/mo</b><br/>
                 ${pt.floorPrice ? `<span style="color:#f97316">Floor (EVC):</span> <b>${formatCurrency(pt.floorPrice, appState.currency, 2)}/mo</b><br/>` : ''}
@@ -809,6 +834,7 @@
                 Value headroom: <b>${formatCurrency(gap, appState.currency, 0)}/mo</b><br/>
                 Status: <span style="font-weight: bold; color: ${pt.status === 'loss' ? '#f43f5e' : (pt.status === 'healthy' ? '#10b981' : '#f59e0b')};">${pt.status.toUpperCase().replace('_', ' ')}</span>
               `;
+              return tooltipHtml;
             }
           },
           grid: { left: '3%', right: '8%', top: '24%', bottom: '12%', containLabel: true },
@@ -853,7 +879,10 @@
                 symbol: ['none', 'none'],
                 lineStyle: { color: axisColor, width: 1, opacity: 0.25 },
                 label: { show: false },
-                data: points.map((_p: any, i: number) => [{ coord: [i, 1] }, { coord: [i, 4] }])
+                data: points.map((p: any, i: number) => [
+                  { coord: [i, 1], lineStyle: p.isReference ? { color: '#a855f7', width: 2, opacity: 0.7, type: 'dashed' } : undefined },
+                  { coord: [i, 4] }
+                ])
               },
               markPoint: {
                 symbol: 'pin',
@@ -876,6 +905,190 @@
             pricingCorridorInstance?.resize();
           };
           window.addEventListener('resize', corridorResizeListener);
+        }
+      });
+    });
+  }
+
+  function renderCostToServeChart(currentRunId: number) {
+    if (!costToServeElement) return;
+
+    tick().then(() => {
+      if (currentRunId !== activeEffectId) return;
+      import('echarts').then((echarts) => {
+        if (currentRunId !== activeEffectId) return;
+        if (!isMounted || activeTab !== 'cost_to_serve' || !costToServeElement) return;
+
+        const isDark = mode.current === 'dark';
+        const textColor = isDark ? '#cbd5e1' : '#475569';
+        const axisColor = isDark ? '#94a3b8' : '#64748b';
+        const lineColor = isDark ? '#475569' : '#e2e8f0';
+        const splitLineColor = isDark ? 'rgba(71, 85, 105, 0.2)' : 'rgba(226, 232, 240, 0.6)';
+        const tooltipBg = isDark ? '#1e293b' : '#ffffff';
+        const tooltipBorder = isDark ? '#475569' : '#e2e8f0';
+        const tooltipText = isDark ? '#f8fafc' : '#0f172a';
+
+        const corridor = data.agentDeflectionCorridor;
+        if (!corridor) return;
+        const points = corridor.points;
+
+        const xAxisData = points.map((p: any) => p.cohortName);
+
+        // 2-tier ladder (Avoided Value ceiling / Cost-to-Serve floor) — the Agent-archetype
+        // analogue of the Copilot Pricing Corridor, but framed as displaced-labor economics
+        // rather than a willingness-to-pay ceiling (ADR 0009 Track B).
+        const tierNames: Record<number, string> = {
+          2: 'Avoided Value',
+          1: 'Cost to Serve'
+        };
+
+        const rungData = points.flatMap((p: any, i: number) => {
+          const avoidedColor = p.status === 'loss' ? '#f43f5e' : '#10b981';
+          const costColor = p.status === 'loss' ? '#f43f5e' : '#94a3b8';
+          return [
+            { value: [i, 2], _ci: i, itemStyle: { color: avoidedColor }, _lbl: formatCurrency(p.avoidedValue, appState.currency, 0) },
+            { value: [i, 1], _ci: i, itemStyle: { color: costColor }, _lbl: formatCurrency(p.costToServe, appState.currency, 0) }
+          ];
+        });
+
+        const breakMarks = points.flatMap((p: any, i: number) =>
+          p.status === 'loss'
+            ? [{ coord: [i, 1.5], itemStyle: { color: '#f43f5e' }, label: { show: true, formatter: '⚠ COST > VALUE', color: '#fff', fontSize: 9, fontWeight: 'bold' } }]
+            : []
+        );
+
+        const corridorOption = {
+          title: {
+            text: 'Cost-to-Serve Corridor: Displaced-Labor Value vs. Deflection Cost',
+            subtext: 'Conceptual ladder — rungs ordered by role (not to scale); values shown per rung, per customer/month\n(value created, capacity basis; cash marker = after baseline-FTE cap)',
+            left: 'center',
+            textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' },
+            subtextStyle: { color: axisColor, fontSize: 9 }
+          },
+          tooltip: {
+            trigger: 'item',
+            backgroundColor: tooltipBg,
+            borderColor: tooltipBorder,
+            borderWidth: 1,
+            textStyle: { color: tooltipText },
+            formatter: (params: any) => {
+              const pt = points[params.data?._ci ?? 0];
+              if (!pt) return '';
+              let tooltipHtml = `
+                <div style="font-weight: bold; margin-bottom: 4px;">${pt.cohortName}</div>
+                Interactions/customer/mo: <b>${pt.interactions.toFixed(2)}</b><br/>
+                Containment Rate: <b>${Math.round(pt.containmentRate * 100)}%</b><br/>
+                <span style="color:#10b981">Avoided Value:</span> <b>${formatCurrency(pt.avoidedValue, appState.currency, 2)}/mo</b> (Capacity Basis)<br/>
+              `;
+              if (pt.realizationRatio < 1) {
+                tooltipHtml += `
+                <span style="color:#f59e0b">Realizable as cash:</span> <b>${formatCurrency(pt.realizableAvoidedValue, appState.currency, 2)}/mo</b> (${Math.round(pt.realizationRatio * 100)}% — FTE cap)<br/>
+                `;
+              }
+              tooltipHtml += `
+                <span style="color:#94a3b8">Cost to Serve:</span> <b>${formatCurrency(pt.costToServe, appState.currency, 2)}/mo</b><br/>
+                &nbsp;&nbsp;• Tokens: <b>${formatCurrency(pt.costDecomposition.tokens, appState.currency, 2)}/mo</b><br/>
+                &nbsp;&nbsp;• Fixed Allocation: <b>${formatCurrency(pt.costDecomposition.fixedAlloc, appState.currency, 2)}/mo</b><br/>
+                &nbsp;&nbsp;• Failed Deflection: <b>${formatCurrency(pt.costDecomposition.failedDeflection, appState.currency, 2)}/mo</b><br/>
+                Net Deflection Value: <b>${formatCurrency(pt.netDeflectionValue, appState.currency, 2)}/mo</b><br/>
+                Status: <span style="font-weight: bold; color: ${pt.status === 'loss' ? '#f43f5e' : (pt.status === 'healthy' ? '#10b981' : '#f59e0b')};">${pt.status.toUpperCase().replace('_', ' ')}</span>
+              `;
+              return tooltipHtml;
+            }
+          },
+          grid: { left: '3%', right: '8%', top: '24%', bottom: '12%', containLabel: true },
+          xAxis: {
+            type: 'category',
+            data: xAxisData,
+            axisLabel: { color: axisColor, fontSize: 9 },
+            axisLine: { lineStyle: { color: lineColor } }
+          },
+          yAxis: {
+            type: 'value',
+            min: 0.5,
+            max: 2.5,
+            interval: 1,
+            axisLabel: { color: axisColor, fontSize: 10, formatter: (v: number) => tierNames[v] ?? '' },
+            axisTick: { show: false },
+            axisLine: { show: false },
+            splitLine: { lineStyle: { color: splitLineColor, type: 'dashed' } }
+          },
+          series: [
+            {
+              name: 'Rungs',
+              type: 'scatter',
+              symbol: 'rect',
+              symbolSize: [54, 8],
+              data: rungData,
+              label: {
+                show: true,
+                position: 'top',
+                formatter: (params: any) => params.data?._lbl ?? '',
+                color: textColor,
+                fontSize: 9,
+                fontWeight: 'bold'
+              },
+              markArea: {
+                silent: true,
+                itemStyle: { color: isDark ? 'rgba(16,185,129,0.08)' : 'rgba(16,185,129,0.10)' },
+                data: [[{ yAxis: 1 }, { yAxis: 2 }]]
+              },
+              markLine: {
+                silent: true,
+                symbol: ['none', 'none'],
+                lineStyle: { color: axisColor, width: 1, opacity: 0.25 },
+                label: { show: false },
+                data: points.map((_p: any, i: number) => [{ coord: [i, 1] }, { coord: [i, 2] }])
+              },
+              markPoint: {
+                symbol: 'pin',
+                symbolSize: 46,
+                data: breakMarks
+              }
+            },
+            {
+              name: 'Realizable Cash Marker',
+              type: 'scatter',
+              symbol: 'circle',
+              symbolSize: 10,
+              itemStyle: {
+                color: '#f59e0b',
+                borderColor: '#fff',
+                borderWidth: 1
+              },
+              data: points.flatMap((p: any, i: number) => {
+                if (p.realizationRatio < 1) {
+                  return [{
+                    value: [i, 2],
+                    _ci: i,
+                    label: {
+                      show: true,
+                      position: 'bottom',
+                      formatter: () => formatCurrency(p.realizableAvoidedValue, appState.currency, 0),
+                      color: textColor,
+                      fontSize: 8,
+                      fontWeight: 'bold'
+                    }
+                  }];
+                }
+                return [];
+              })
+            }
+          ]
+        };
+
+        if (costToServeInstance) {
+          costToServeInstance.setOption(corridorOption, true);
+        } else {
+          costToServeInstance = echarts.init(costToServeElement);
+          costToServeInstance.setOption(corridorOption, true);
+        }
+
+        if (!costToServeResizeListener) {
+          costToServeResizeListener = () => {
+            costToServeInstance?.resize();
+          };
+          window.addEventListener('resize', costToServeResizeListener);
         }
       });
     });
@@ -1086,6 +1299,9 @@
     } else if (activeTab === 'margin_waterfall') {
       cleanupChart();
       renderWaterfallChart(currentRunId);
+    } else if (activeTab === 'cost_to_serve') {
+      cleanupChart();
+      renderCostToServeChart(currentRunId);
     } else if (activeTab || timeline || mode.current) {
       cleanupChart();
       renderChart(currentRunId);
@@ -1460,6 +1676,14 @@
             >
               Margin Waterfall
             </button>
+            {#if (driverProfile === 'interaction_only' || driverProfile === 'mixed') && data.agentDeflectionCorridor && data.agentDeflectionCorridor.points.length > 0}
+              <button
+                class="px-2 py-1 rounded transition {activeTab === 'cost_to_serve' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
+                onclick={() => activeTab = 'cost_to_serve'}
+              >
+                Cost-to-Serve
+              </button>
+            {/if}
           </div>
         </CardHeader>
 
@@ -1559,6 +1783,11 @@
                     </div>
                   {:else}
                     <div bind:this={pricingCorridorElement} class="h-[360px] w-full"></div>
+                    {#if data.pricingCorridor.points.some((p: any) => p.isReference)}
+                      <p class="text-[11px] text-muted-foreground italic text-center -mt-2">
+                        ★ marks the EVC reference cohort — other cohorts' ceilings are scaled from it via per-cohort multipliers (ADR 0011).
+                      </p>
+                    {/if}
                     {#if data.pricingCorridor && data.pricingCorridor.hasBreak}
                       <div class="p-3.5 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive flex items-start space-x-2">
                         <AlertTriangle class="h-4 w-4 mt-0.5 flex-shrink-0" />
@@ -1587,6 +1816,26 @@
                     </div>
                   {:else}
                     <div bind:this={marginWaterfallElement} class="h-[360px] w-full"></div>
+                  {/if}
+                {/if}
+              </div>
+            {:else if activeTab === 'cost_to_serve'}
+              <div class="space-y-6">
+                {#if !data.agentDeflectionCorridor || data.agentDeflectionCorridor.points.length === 0}
+                  <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
+                    <Info class="h-10 w-10 text-muted-foreground/50" />
+                    <span>Cost-to-Serve Corridor requires an agent-archetype service with a per-customer interaction driver.</span>
+                  </div>
+                {:else}
+                  <div bind:this={costToServeElement} class="h-[360px] w-full"></div>
+                  {#if data.agentDeflectionCorridor.hasBreak}
+                    <div class="p-3.5 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive flex items-start space-x-2">
+                      <AlertTriangle class="h-4 w-4 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <span class="font-bold block">Cost-to-Serve Break Detected!</span>
+                        <span class="text-muted-foreground">For at least one cohort, AI cost-to-serve plus failed-deflection cost exceeds the displaced-labor value avoided, leading to a negative deflection margin.</span>
+                      </div>
+                    </div>
                   {/if}
                 {/if}
               </div>

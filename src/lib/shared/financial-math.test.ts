@@ -29,7 +29,9 @@ import {
   detectDriverProfile,
   DEFAULT_COPILOT_MARGIN_THRESHOLD,
   DEFAULT_AGENT_MARGIN_THRESHOLD,
-  HYBRID_OVERAGE_MARKUP
+  HYBRID_OVERAGE_MARKUP,
+  suggestEvcMultipliers,
+  buildAgentDeflectionCorridor
 } from './financial-math.js';
 import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings, Plan, EvcResult } from './types.js';
 
@@ -727,7 +729,13 @@ describe('Financial Math Module Tests', () => {
 
     it('should return cohorts unchanged when no overrides', () => {
       const result = applyScopeOverrides([baseCohort], []);
-      expect(result[0]).toEqual(baseCohort);
+      // EVC multipliers (ADR 0011 Track A) always resolve to 1.0 (no differentiation) absent an override.
+      expect(result[0]).toEqual({
+        ...baseCohort,
+        evc_extra_value_multiplier: 1.0,
+        evc_negative_value_multiplier: 1.0,
+        evc_nba_multiplier: 1.0
+      });
     });
 
     it('should return empty array when cohorts empty', () => {
@@ -1541,6 +1549,45 @@ describe('ADR 0009 — per-archetype revenue streams (Foundation)', () => {
 
     it('does not block a homogeneous pool scenario', () => {
       const res = validateRevenueIntegrity(makePoolScenario([poolAgentSvc, poolCopilotSvc]));
+      expect(res.status).not.toBe('block');
+    });
+
+    it('scales the tier fee by active AI users under fee_basis "per_member" (ADR 0012 Decision 1)', () => {
+      const roomyPool = (feeBasis: 'flat' | 'per_member') => makePoolScenario([poolAgentSvc, poolCopilotSvc], {
+        pool_tier: { id: 'tier1', name: 'Gold', monthly_fee: 2000, credit_pool_size: 1_000_000, fee_basis: feeBasis }
+      });
+      const flatResult = calculateScenario(roomyPool('flat'), [poolProvider]);
+      const perMemberResult = calculateScenario(roomyPool('per_member'), [poolProvider]);
+
+      // credit_pool_size raised well above the 13,000 consumed -> no overage in either run, so
+      // revenue is purely the tier fee. Cohort fixture (`cohort` above) is 1000 fully-adopted users.
+      expect(flatResult.timeline[0].revenue).toBeCloseTo(2000, 1);
+      expect(perMemberResult.timeline[0].revenue).toBeCloseTo(2000 * 1000, 1);
+    });
+
+    it('books revenue from a non-pool-member service alongside the pool tier (ADR 0012 Decision 2)', () => {
+      const nonPoolService: Service & { rollout_month: number } = {
+        id: 's_extra', name: 'Extra (outside pool)', status: 'planned', service_type: 'copilot',
+        rollout_month: 0, provider_id: 'p3', avg_input_tokens: 1_000_000, avg_output_tokens: 0,
+        avg_requests_per_user_month: 1,
+        monetization: { monetization_type: 'usage', usage_variant: 'payg', price_per_credit: 5 }
+      };
+      const baseline = calculateScenario(makePoolScenario([poolAgentSvc, poolCopilotSvc]), [poolProvider]);
+      const withExtra = calculateScenario(makePoolScenario([poolAgentSvc, poolCopilotSvc, nonPoolService]), [poolProvider]);
+
+      // nonPoolService isn't in pool_burn_rates, so it doesn't touch pool consumption/overage —
+      // it books its own usage revenue: 1 credit/user (1M input tokens / 1M tokens-per-credit) *
+      // 1000 users * $5/credit = $5,000, additive on top of the pool's tier fee + overage.
+      expect(withExtra.timeline[0].revenue).toBeCloseTo(baseline.timeline[0].revenue + 5000, 1);
+    });
+
+    it('exempts a non-pool-member service from the pool billing-homogeneity check (ADR 0012 Decision 2)', () => {
+      const differingTypeService: Service & { rollout_month: number } = {
+        ...poolCopilotSvc, id: 's_extra2', monetization: { monetization_type: 'hybrid', hybrid_monthly_fee: 3, hybrid_included_credits: 0 }
+      };
+      // Pool members (s_pa, s_pc) are both 'usage' — homogeneous. The extra service is 'hybrid'
+      // but not a pool member, so it must not trip the check that scopes to pool_burn_rates only.
+      const res = validateRevenueIntegrity(makePoolScenario([poolAgentSvc, poolCopilotSvc, differingTypeService]));
       expect(res.status).not.toBe('block');
     });
   });
@@ -2630,6 +2677,150 @@ describe('S-Curve Market Expansion (Phase 3)', () => {
       expect(corridor.points[0].status).toBe('loss');
       expect(corridor.hasBreak).toBe(true);
     });
+
+    it('ADR 0011 Track A: differentiates the EVC ceiling per cohort via multipliers and marks the reference cohort', () => {
+      const scenario: Scenario = {
+        id: 's-evc-multiplier',
+        name: 'EVC Multiplier Scenario',
+        projection_months: 12,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        evc_nba_annual_value: 0,
+        evc_extra_positive_value: 400,
+        evc_negative_value: 0,
+        evc_capture_ceiling_pct: 0.5,
+        evc_capture_target_pct: 0.3,
+        evc_capture_floor_pct: 0.15,
+        evc_reference_cohort_id: 'c-ref',
+        scope_cohorts: [
+          {
+            id: 'c-ref', name: 'Reference', current_users: 100, monthly_acquisition: 0,
+            acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0,
+            monthly_expansion_rate: 0, ai_adoption_rate: 0, gross_margin: 1.0, base_arpu: 80
+            // no evc_*_multiplier set -> resolves to 1.0 (applyScopeOverrides default)
+          },
+          {
+            id: 'c-ent', name: 'Enterprise', current_users: 100, monthly_acquisition: 0,
+            acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0,
+            monthly_expansion_rate: 0, ai_adoption_rate: 0, gross_margin: 1.0, base_arpu: 250,
+            evc_extra_value_multiplier: 2.6
+          }
+        ]
+      };
+
+      const timeline = [
+        {
+          month: 12, revenue: 0, customers: 200, aiUsers: 0, opex: 0, tokenCosts: 0,
+          grossRevenue: 0, baselineRevenue: 0, baselineCustomers: 200,
+          monetizationRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0,
+          overchargeRevenue: 0, outcomeRevenue: 0, totalCosts: 0, capex: 0,
+          netCashFlow: 0, cumulativeCashFlow: 0
+        }
+      ];
+
+      const evc: EvcResult = {
+        evc: 0, referenceValue: 0, positiveValueTotal: 0, negativeValueTotal: 0,
+        netCreatedValue: 0, priceFloor: 0, priceTarget: 0, priceCeiling: 0,
+        laborSavings: 0, extraPositiveValue: 0, unitNetValue: 0,
+        targetCapturePerUserMonth: 0, customerSurplusPerUserMonth: 0,
+        vendorGrossProfitPerUserMonth: 0, cogsPerUserMonth: 0
+      };
+
+      const corridor = buildPricingCorridor(scenario, timeline, evc);
+      const ref = corridor.points.find(p => p.cohortId === 'c-ref')!;
+      const ent = corridor.points.find(p => p.cohortId === 'c-ent')!;
+
+      // netCreated_ref = (400*1.0 + 0 - 0) / 12 = 33.333; ceiling = 0.5 * 33.333 = 16.667
+      expect(ref.ceiling).toBeCloseTo((400 / 12) * 0.5, 4);
+      expect(ref.isReference).toBe(true);
+
+      // netCreated_ent = (400*2.6 + 0 - 0) / 12 = 86.667; ceiling = 0.5 * 86.667 = 43.333 -> exactly 2.6x the reference
+      expect(ent.ceiling).toBeCloseTo(ref.ceiling * 2.6, 4);
+      expect(ent.isReference).toBeFalsy();
+    });
+
+    it('ADR 0011 Track A: flat scenario-scalar fallback still applies with no multipliers and no reference cohort', () => {
+      const scenario: Scenario = {
+        id: 's-evc-flat',
+        name: 'Flat EVC Scenario',
+        projection_months: 12,
+        discount_rate: 0.1,
+        scope_type: 'cohorts',
+        scope_cohorts: [
+          { id: 'c1', name: 'A', current_users: 100, monthly_acquisition: 0, acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0, monthly_expansion_rate: 0, ai_adoption_rate: 0, base_arpu: 80 },
+          { id: 'c2', name: 'B', current_users: 100, monthly_acquisition: 0, acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0, monthly_expansion_rate: 0, ai_adoption_rate: 0, base_arpu: 250 }
+        ]
+      };
+      const timeline = [{ month: 12, revenue: 0, customers: 200, aiUsers: 0, opex: 0, tokenCosts: 0, grossRevenue: 0, baselineRevenue: 0, baselineCustomers: 200, monetizationRevenue: 0, addonRevenue: 0, usageRevenue: 0, hybridBaseRevenue: 0, overchargeRevenue: 0, outcomeRevenue: 0, totalCosts: 0, capex: 0, netCashFlow: 0, cumulativeCashFlow: 0 }];
+      const evc: EvcResult = { evc: 0, referenceValue: 0, positiveValueTotal: 0, negativeValueTotal: 0, netCreatedValue: 0, priceFloor: 10, priceTarget: 20, priceCeiling: 30, laborSavings: 0, extraPositiveValue: 0, unitNetValue: 0, targetCapturePerUserMonth: 0, customerSurplusPerUserMonth: 0, vendorGrossProfitPerUserMonth: 0, cogsPerUserMonth: 0 };
+
+      const corridor = buildPricingCorridor(scenario, timeline, evc);
+      expect(corridor.points[0].ceiling).toBe(30);
+      expect(corridor.points[1].ceiling).toBe(30);
+    });
+  });
+
+  describe('suggestEvcMultipliers (ADR 0011 Track A)', () => {
+    it('derives sqrt(arpu ratio x usage_intensity ratio) relative to the reference cohort', () => {
+      const scenario: Scenario = {
+        id: 's1', name: 'S', projection_months: 12, discount_rate: 0.1, scope_type: 'cohorts',
+        evc_reference_cohort_id: 'ref',
+        scope_cohorts: [
+          { id: 'ref', name: 'Individual Pro', current_users: 100, monthly_acquisition: 0, acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0, monthly_expansion_rate: 0, ai_adoption_rate: 0, base_arpu: 80, usage_intensity: 0.7 },
+          { id: 'ent', name: 'Enterprise', current_users: 100, monthly_acquisition: 0, acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0, monthly_expansion_rate: 0, ai_adoption_rate: 0, base_arpu: 250, usage_intensity: 1.5 }
+        ]
+      };
+      const suggestions = suggestEvcMultipliers(scenario);
+      expect(suggestions).toHaveLength(1);
+      expect(suggestions[0].cohortId).toBe('ent');
+      expect(suggestions[0].suggestedExtraValueMultiplier).toBeCloseTo(Math.sqrt((250 / 80) * (1.5 / 0.7)), 4);
+    });
+
+    it('returns an empty array when no reference cohort is set', () => {
+      const scenario: Scenario = {
+        id: 's1', name: 'S', projection_months: 12, discount_rate: 0.1, scope_type: 'cohorts',
+        scope_cohorts: [{ id: 'a', name: 'A', current_users: 100, monthly_acquisition: 0, acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0, monthly_expansion_rate: 0, ai_adoption_rate: 0, base_arpu: 80 }]
+      };
+      expect(suggestEvcMultipliers(scenario)).toEqual([]);
+    });
+  });
+
+  describe('validateScenarioConfig — EVC multiplier guardrails (ADR 0011 Track A)', () => {
+    const baseCohort: CohortConfig = {
+      id: 'c1', name: 'C1', current_users: 100, monthly_acquisition: 0, acquisition_growth_rate: 0,
+      monthly_churn_rate: 0.05, retention_floor: 0.6, monthly_expansion_rate: 0, ai_adoption_rate: 0.3, base_arpu: 100
+    };
+    const settings: Settings = { currency: 'USD' } as Settings;
+
+    it('warns when the reference cohort itself carries a non-1.0 multiplier', () => {
+      const scenario: Scenario = {
+        id: 's1', name: 'S', projection_months: 12, discount_rate: 0.1, scope_type: 'cohorts',
+        evc_reference_cohort_id: 'c1',
+        scope_cohorts: [{ ...baseCohort, evc_extra_value_multiplier: 1.5 }]
+      };
+      const diagnostics = validateScenarioConfig(scenario, settings, []);
+      expect(diagnostics.map(d => d.code)).toContain('evc_reference_cohort_self_multiplier');
+    });
+
+    it('warns when a multiplier is set without a reference cohort', () => {
+      const scenario: Scenario = {
+        id: 's1', name: 'S', projection_months: 12, discount_rate: 0.1, scope_type: 'cohorts',
+        scope_cohorts: [{ ...baseCohort, evc_extra_value_multiplier: 1.5 }]
+      };
+      const diagnostics = validateScenarioConfig(scenario, settings, []);
+      expect(diagnostics.map(d => d.code)).toContain('evc_multiplier_no_reference');
+    });
+
+    it('does not warn for a well-formed reference cohort + multiplier setup', () => {
+      const scenario: Scenario = {
+        id: 's1', name: 'S', projection_months: 12, discount_rate: 0.1, scope_type: 'cohorts',
+        evc_reference_cohort_id: 'c1',
+        scope_cohorts: [baseCohort, { ...baseCohort, id: 'c2', evc_extra_value_multiplier: 1.5 }]
+      };
+      const diagnostics = validateScenarioConfig(scenario, settings, []);
+      expect(diagnostics.map(d => d.code)).not.toContain('evc_reference_cohort_self_multiplier');
+      expect(diagnostics.map(d => d.code)).not.toContain('evc_multiplier_no_reference');
+    });
   });
 
   describe('buildPocketMarginWaterfall', () => {
@@ -2697,6 +2888,325 @@ describe('S-Curve Market Expansion (Phase 3)', () => {
       expect(waterfall.steps[3]).toEqual({ name: 'AI COGS', value: -10, type: 'delta' });
       expect(waterfall.steps[4]).toEqual({ name: 'Cost-to-Serve', value: -10, type: 'delta' });
       expect(waterfall.steps[5]).toEqual({ name: 'Pocket Margin', value: 44, type: 'total' });
+    });
+  });
+});
+
+describe('ADR 0009 Track B — per-cohort agent bucketing', () => {
+  const provider: Provider = {
+    id: 'p1', name: 'Prov', model_name: 'm', input_price: 0, output_price: 0,
+    is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000000, output_tokens_per_credit: 333333, updated_at: ''
+  };
+
+  const cohortA: CohortConfig = {
+    id: 'cA', name: 'SMB', current_users: 1000, monthly_acquisition: 0, acquisition_growth_rate: 0,
+    monthly_churn_rate: 0, retention_floor: 0, monthly_expansion_rate: 0, ai_adoption_rate: 1.0, base_arpu: 0
+  };
+  const cohortB: CohortConfig = {
+    id: 'cB', name: 'Enterprise', current_users: 3000, monthly_acquisition: 0, acquisition_growth_rate: 0,
+    monthly_churn_rate: 0, retention_floor: 0, monthly_expansion_rate: 0, ai_adoption_rate: 1.0, base_arpu: 0
+  };
+
+  function makePerCustomerAgentService(overrides: Partial<Service> = {}): Service & { rollout_month: number } {
+    return {
+      id: 'svc1', name: 'Support Agent', status: 'planned', service_type: 'agent',
+      interaction_driver_type: 'per_customer', monthly_volume: 0, volume_growth_rate: 0,
+      interactions_per_customer_month: 1, fully_loaded_cost_per_fte_month: 5000,
+      productive_hours_per_fte_month: 100, average_handle_time_seconds: 600,
+      baseline_fte: 0, staffing_realization_lag_months: 0,
+      containment_rate: 0.9, containment_start_rate: 0.9, containment_ramp_months: 0,
+      escalation_rate: 0, failed_deflection_penalty: 0, churn_rate_uplift: 0,
+      rollout_month: 0, provider_id: 'p1',
+      avg_input_tokens: 0, avg_output_tokens: 0, avg_requests_per_user_month: 0,
+      ...overrides
+    };
+  }
+
+  function makeScenario(service: Service & { rollout_month: number }, overrides: Partial<Scenario> = {}): Scenario {
+    return {
+      id: 'scen-trackb', name: 'S', projection_months: 1, discount_rate: 0.10, scope_type: 'cohorts',
+      modeling_type: 'incremental', revenue_carrier: 'cohort',
+      scope_cohorts: [cohortA, cohortB], services: [service], costs: [],
+      ...overrides
+    };
+  }
+
+  it('sums back to the scenario-wide aggregate exactly when no cohort overrides are set (regression guard)', () => {
+    const result = calculateScenario(makeScenario(makePerCustomerAgentService()), [provider]);
+    const month0 = result.timeline[0];
+
+    // 4000 total customers x 1 interaction/customer = 4000; deflected = 4000*0.9 = 3600.
+    // hoursSaved = 3600*600/3600 = 600; fteSaved = 600/100 = 6; uncapped -> realizable = 6.
+    // lag=0 -> src=6 this same month -> laborSavingsCash = floor(6)*5000 = 30000.
+    expect(month0.totalInteractions).toBeCloseTo(4000, 4);
+    expect(month0.deflectedInteractions).toBeCloseTo(3600, 4);
+    expect(month0.laborSavingsCash).toBeCloseTo(30000, 2);
+    expect(month0.laborSavingsCapacity).toBeCloseTo(0, 2);
+  });
+
+  it('differentiates deflected interactions when a cohort-scoped containment_rate override is set', () => {
+    const scenario = makeScenario(makePerCustomerAgentService(), {
+      cohort_entity_overrides: { 'service:svc1:cB': { containment_rate: 0.5 } }
+    });
+    const result = calculateScenario(scenario, [provider]);
+    const month0 = result.timeline[0];
+
+    // cohortA (unoverridden): 1000*1*0.9 = 900. cohortB (overridden): 3000*1*0.5 = 1500. Total = 2400.
+    expect(month0.deflectedInteractions).toBeCloseTo(2400, 4);
+    // Strictly less than the uniform-containment baseline (3600) proven above.
+    expect(month0.deflectedInteractions).toBeLessThan(3600);
+  });
+
+  it('leaves the flat driver untouched by cohort_entity_overrides', () => {
+    const flatService = makePerCustomerAgentService({ interaction_driver_type: 'flat', monthly_volume: 4000, interactions_per_customer_month: 0 });
+    const scenario = makeScenario(flatService, {
+      cohort_entity_overrides: { 'service:svc1:cB': { containment_rate: 0.1 } }
+    });
+    const result = calculateScenario(scenario, [provider]);
+    // flat driver ignores per-cohort overrides -> same as the uniform 0.9 containment case.
+    expect(result.timeline[0].deflectedInteractions).toBeCloseTo(3600, 4);
+  });
+
+  describe('buildAgentDeflectionCorridor', () => {
+    it('produces a differentiated cost-to-serve/avoided-value point per cohort', () => {
+      const scenario = makeScenario(makePerCustomerAgentService(), {
+        cohort_entity_overrides: {
+          'service:svc1:cB': { fully_loaded_cost_per_fte_month: 8000, containment_rate: 0.95 }
+        }
+      });
+      const result = calculateScenario(scenario, [provider]);
+      expect(result.agentDeflectionCorridor).toBeTruthy();
+      const points = result.agentDeflectionCorridor!.points;
+      expect(points).toHaveLength(2);
+
+      const a = points.find(p => p.cohortId === 'cA')!;
+      const b = points.find(p => p.cohortId === 'cB')!;
+      expect(a).toBeTruthy();
+      expect(b).toBeTruthy();
+
+      // cohortB's higher fully_loaded_cost_per_fte_month drives a higher per-customer avoided value.
+      expect(b.avoidedValue).toBeGreaterThan(a.avoidedValue);
+      // Both cohorts' avoided value must exceed their (zero-COGS, zero-provider-price) cost-to-serve.
+      expect(a.status).not.toBe('loss');
+      expect(b.status).not.toBe('loss');
+    });
+
+    it('returns null on CalculationResult when no per_customer agent service is present', () => {
+      const flatService = makePerCustomerAgentService({ interaction_driver_type: 'flat', monthly_volume: 4000, interactions_per_customer_month: 0 });
+      const result = calculateScenario(makeScenario(flatService), [provider]);
+      expect(result.agentDeflectionCorridor).toBeNull();
+    });
+  });
+
+  describe('Corridor Precision Pass (2026-07-02)', () => {
+    it('verifies FTE-cost symmetry affects cash NPV', () => {
+      const baseScenario = makeScenario(makePerCustomerAgentService());
+      const baseResult = calculateScenario(baseScenario, [provider]);
+
+      const overriddenScenario = makeScenario(makePerCustomerAgentService(), {
+        cohort_entity_overrides: {
+          'service:svc1:cB': { fully_loaded_cost_per_fte_month: 12000 }
+        }
+      });
+      const overriddenResult = calculateScenario(overriddenScenario, [provider]);
+
+      // Higher fully loaded cost per FTE should result in greater labor savings, thus higher cash NPV.
+      expect(overriddenResult.npvUpper).toBeGreaterThan(baseResult.npvUpper);
+
+      // Exact blended-rate math (fteSaved-weighted):
+      // cA: 1000 cust × 1 int × 0.9 = 900 deflected → 150h → 1.5 FTE @ 5000 = 7500
+      // cB: 3000 cust × 1 int × 0.9 = 2700 deflected → 450h → 4.5 FTE @ 12000 = 54000
+      // fteSaved = 6, effRate = 61500/6 = 10250, lag 0 & uncapped → cash = floor(6) × 10250 = 61500.
+      expect(overriddenResult.timeline[0].laborSavingsCash).toBeCloseTo(61500, 2);
+      expect(baseResult.timeline[0].laborSavingsCash).toBeCloseTo(30000, 2);
+    });
+
+    it('verifies cohort-scoped churn_rate_uplift shifts only the targeted cohort retention', () => {
+      const scenario = makeScenario(makePerCustomerAgentService(), {
+        projection_months: 12,
+        cohort_entity_overrides: {
+          'service:svc1:cB': { churn_rate_uplift: 0.05 }
+        }
+      });
+      const result = calculateScenario(scenario, [provider]);
+      const month0 = result.timeline[0];
+
+      // Since cB has churn_rate_uplift set to 0.05, its active customers after month 0 should decrease faster than without uplift.
+      // Let's verify by comparing it with a case where churn_rate_uplift is 0.
+      const baseScenario = makeScenario(makePerCustomerAgentService(), { projection_months: 12 });
+      const baseResult = calculateScenario(baseScenario, [provider]);
+
+      // At month 11, the total customers should be lower due to cohort B's churn uplift
+      expect(result.timeline[11].customers).toBeLessThan(baseResult.timeline[11].customers);
+
+      // Isolation: the same uplift applied service-wide (both cohorts) must shrink the base
+      // strictly more than the cB-scoped override — proving cA's retention was untouched.
+      const serviceWideScenario = makeScenario(makePerCustomerAgentService({ churn_rate_uplift: 0.05 }), { projection_months: 12 });
+      const serviceWideResult = calculateScenario(serviceWideScenario, [provider]);
+      expect(result.timeline[11].customers).toBeGreaterThan(serviceWideResult.timeline[11].customers);
+
+      // Exact probe: with only cohort A in scope, a cB-keyed override must be a no-op —
+      // cA has zero churn and zero acquisition, so its 1000 customers must not decay.
+      const aOnlyScenario = makeScenario(makePerCustomerAgentService(), {
+        projection_months: 12,
+        scope_cohorts: [cohortA],
+        cohort_entity_overrides: { 'service:svc1:cB': { churn_rate_uplift: 0.05 } }
+      });
+      const aOnlyResult = calculateScenario(aOnlyScenario, [provider]);
+      expect(aOnlyResult.timeline[11].customers).toBeCloseTo(1000, 4);
+    });
+
+    it('verifies pro-rata fixed cost allocation matches interaction volume share', () => {
+      const service = makePerCustomerAgentService({ fixed_cost_per_month: 3000 });
+      const scenario = makeScenario(service);
+      const result = calculateScenario(scenario, [provider]);
+
+      expect(result.agentDeflectionCorridor).toBeTruthy();
+      const points = result.agentDeflectionCorridor!.points;
+      const cA = points.find(p => p.cohortId === 'cA')!;
+      const cB = points.find(p => p.cohortId === 'cB')!;
+
+      // cA base customers: 1000, interactions/cust/mo: 1 -> total interactions = 1000
+      // cB base customers: 3000, interactions/cust/mo: 1 -> total interactions = 3000
+      // Total interactions = 4000
+      // Allocation: cA should get 1000/4000 = 25% of fixed cost (3000) per month -> 750 total monthly fixed cost.
+      // But we report points as "per customer/month".
+      // cA fixedCostAlloc: 750 / 1000 = 0.75
+      // cB fixedCostAlloc: 2250 / 3000 = 0.75
+      expect(cA.costDecomposition.fixedAlloc).toBeCloseTo(0.75, 4);
+      expect(cB.costDecomposition.fixedAlloc).toBeCloseTo(0.75, 4);
+    });
+
+    it('verifies avoided value scales down according to realizationRatio under staffing cap', () => {
+      const service = makePerCustomerAgentService({ baseline_fte: 1.0 }); // very small cap to force scaling
+      const scenario = makeScenario(service);
+      const result = calculateScenario(scenario, [provider]);
+
+      expect(result.agentDeflectionCorridor).toBeTruthy();
+      const points = result.agentDeflectionCorridor!.points;
+      const cA = points.find(p => p.cohortId === 'cA')!;
+      const cB = points.find(p => p.cohortId === 'cB')!;
+
+      // Under a tiny baseline_fte cap, realizationRatio should be less than 1.
+      expect(cA.realizationRatio).toBeLessThan(1);
+      expect(cB.realizationRatio).toBeLessThan(1);
+      // Exact pro-rata cap: fteSaved = 6 (4000 cust → 3600 deflected → 600h / 100h-per-FTE),
+      // baseline_fte = 1 → r_s = 1/6 for every cohort of this service.
+      expect(cA.realizationRatio).toBeCloseTo(1 / 6, 4);
+      expect(cB.realizationRatio).toBeCloseTo(1 / 6, 4);
+      // avoidedValue is the capacity-theoretical value.
+      // realizableAvoidedValue is avoidedValue * realizationRatio.
+      expect(cA.realizableAvoidedValue).toBeCloseTo(cA.avoidedValue * cA.realizationRatio, 4);
+      expect(cB.realizableAvoidedValue).toBeCloseTo(cB.avoidedValue * cB.realizationRatio, 4);
+    });
+
+    it('blends corridor containment across services as deflected/interactions, not last-service-wins', () => {
+      const svc1 = makePerCustomerAgentService(); // containment 0.9
+      const svc2 = makePerCustomerAgentService({ id: 'svc2', containment_rate: 0.5, containment_start_rate: 0.5 });
+      const scenario = makeScenario(svc1, { services: [svc1, svc2] });
+      const result = calculateScenario(scenario, [provider]);
+
+      const points = result.agentDeflectionCorridor!.points;
+      const cA = points.find(p => p.cohortId === 'cA')!;
+      const cB = points.find(p => p.cohortId === 'cB')!;
+
+      // Per cohort: 1 int/cust on each service → blended containment = (0.9 + 0.5) / 2 = 0.7.
+      // Last-service-wins would report 0.5.
+      expect(cA.containmentRate).toBeCloseTo(0.7, 4);
+      expect(cB.containmentRate).toBeCloseTo(0.7, 4);
+    });
+
+    it('verifies pricing corridor maps per-cohort price rung when revenue_carrier is cohort', () => {
+      const cohort1 = { ...cohortA, base_arpu: 100, arpu_uplift: 50 };
+      const cohort2 = { ...cohortB, base_arpu: 100, arpu_uplift: 20 };
+      const scenario = makeScenario(makePerCustomerAgentService(), {
+        revenue_carrier: 'cohort',
+        evc_nba_annual_value: 12000,
+        scope_cohorts: [cohort1, cohort2]
+      });
+      const result = calculateScenario(scenario, [provider]);
+
+      expect(result.evc?.pricingCorridor).toBeTruthy();
+      const points = result.evc!.pricingCorridor!.points;
+      const cA = points.find(p => p.cohortId === 'cA')!;
+      const cB = points.find(p => p.cohortId === 'cB')!;
+      expect(cA.priceBasis).toBe('cohort');
+      expect(cB.priceBasis).toBe('cohort');
+
+      // Zero churn/acquisition, full adoption, gm=1 → the per-cohort price is exactly the
+      // cohort's incremental ARPU, distinct per cohort (the blended figure would show one value).
+      expect(cA.pricePerCustomer).toBeCloseTo(50, 4);
+      expect(cB.pricePerCustomer).toBeCloseTo(20, 4);
+
+      // Reconciliation: Σ price_c × customers_c reconstructs the cohort-uplift revenue component
+      // (1000 × 50 + 3000 × 20 = 110000). The timeline's `revenue` is total inflows — for this
+      // fixture that's the uplift component plus the unmonetized agent's labor-savings cash —
+      // so subtract laborSavingsCash to isolate the price-like component.
+      const lastMonth = result.timeline[result.timeline.length - 1];
+      expect(cA.pricePerCustomer! * 1000 + cB.pricePerCustomer! * 3000)
+        .toBeCloseTo(lastMonth.revenue - (lastMonth.laborSavingsCash ?? 0), 2);
+    });
+
+    it('keeps the blended price basis for non-cohort revenue carriers', () => {
+      const cohort1 = { ...cohortA, base_arpu: 100, arpu_uplift: 50 };
+      const cohort2 = { ...cohortB, base_arpu: 100, arpu_uplift: 20 };
+      const scenario = makeScenario(makePerCustomerAgentService(), {
+        modeling_type: 'appraisal',
+        revenue_carrier: 'pack',
+        evc_nba_annual_value: 12000,
+        scope_cohorts: [cohort1, cohort2]
+      });
+      const result = calculateScenario(scenario, [provider]);
+
+      const points = result.evc!.pricingCorridor!.points;
+      expect(points.every(p => p.priceBasis === 'blended')).toBe(true);
+      // Blended: one identical price rung across cohorts.
+      expect(points[0].pricePerCustomer).toBeCloseTo(points[1].pricePerCustomer!, 6);
+    });
+
+    it('verifies suggestEvcMultipliers returns arpuRatio and intensityRatio', () => {
+      const cohortA: CohortConfig = {
+        id: 'cA',
+        name: 'Cohort A',
+        current_users: 1000,
+        monthly_acquisition: 100,
+        acquisition_growth_rate: 0.02,
+        monthly_churn_rate: 0.05,
+        retention_floor: 0.50,
+        monthly_expansion_rate: 0.02,
+        ai_adoption_rate: 0.30,
+        base_arpu: 100,
+        usage_intensity: 1.0
+      };
+      const cohortB: CohortConfig = {
+        id: 'cB',
+        name: 'Cohort B',
+        current_users: 3000,
+        monthly_acquisition: 200,
+        acquisition_growth_rate: 0.01,
+        monthly_churn_rate: 0.04,
+        retention_floor: 0.40,
+        monthly_expansion_rate: 0.01,
+        ai_adoption_rate: 0.50,
+        base_arpu: 200,
+        usage_intensity: 2.0
+      };
+      const scenario: Scenario = {
+        id: 'sc_test',
+        name: 'Test Scenario',
+        projection_months: 12,
+        discount_rate: 0.10,
+        scope_type: 'cohorts',
+        scope_cohorts: [cohortA, cohortB],
+        evc_reference_cohort_id: 'cA'
+      };
+
+      const suggestions = suggestEvcMultipliers(scenario);
+      expect(suggestions).toHaveLength(1);
+      expect(suggestions[0].cohortId).toBe('cB');
+      expect(suggestions[0].arpuRatio).toBe(2.0); // 200 / 100
+      expect(suggestions[0].intensityRatio).toBe(2.0); // 2.0 / 1.0
+      expect(suggestions[0].suggestedExtraValueMultiplier).toBeCloseTo(2.0, 4); // sqrt(2 * 2) = 2
     });
   });
 });

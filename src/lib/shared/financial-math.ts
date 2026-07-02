@@ -43,7 +43,11 @@ import type {
   DriverProfile,
   StreamMargins,
   PoolAttribution,
-  PoolEconomics
+  PoolEconomics,
+  EvcMultiplierSuggestion,
+  AgentDeflectionCorridorPoint,
+  AgentDeflectionCorridorResult,
+  EntityOverride
 } from './types.js';
 
 /**
@@ -328,6 +332,39 @@ export function validateScenarioConfig(
     }
   }
 
+  // ── Per-cohort EVC multiplier guardrails (ADR 0011 Track A) ─────────────────
+  const referenceCohortId = scenario.evc_reference_cohort_id;
+  const referenceCohort = referenceCohortId ? cohorts.find(c => c.id === referenceCohortId) : undefined;
+  if (referenceCohort) {
+    const selfMultiplierSet =
+      (referenceCohort.evc_extra_value_multiplier !== undefined && referenceCohort.evc_extra_value_multiplier !== 1.0) ||
+      (referenceCohort.evc_negative_value_multiplier !== undefined && referenceCohort.evc_negative_value_multiplier !== 1.0) ||
+      (referenceCohort.evc_nba_multiplier !== undefined && referenceCohort.evc_nba_multiplier !== 1.0);
+    if (selfMultiplierSet) {
+      diagnostics.push({
+        code: 'evc_reference_cohort_self_multiplier',
+        severity: 'warn',
+        field: `cohort:${referenceCohort.id}`,
+        message: `Cohort "${referenceCohort.name}" is the EVC reference cohort but carries a non-1.0 multiplier override — it is 1.0 relative to itself by definition. Remove the override or pick a different reference cohort.`
+      });
+    }
+  } else {
+    for (const c of cohorts) {
+      const hasMultiplier =
+        (c.evc_extra_value_multiplier !== undefined && c.evc_extra_value_multiplier !== 1.0) ||
+        (c.evc_negative_value_multiplier !== undefined && c.evc_negative_value_multiplier !== 1.0) ||
+        (c.evc_nba_multiplier !== undefined && c.evc_nba_multiplier !== 1.0);
+      if (hasMultiplier) {
+        diagnostics.push({
+          code: 'evc_multiplier_no_reference',
+          severity: 'warn',
+          field: `cohort:${c.id}`,
+          message: `Cohort "${c.name}" has an EVC multiplier override set, but the scenario has no evc_reference_cohort_id — the multiplier is relative to an undefined baseline. Set a reference cohort.`
+        });
+      }
+    }
+  }
+
   return diagnostics;
 }
 
@@ -562,9 +599,14 @@ export function validateRevenueIntegrity(scenario: Scenario): RevenueIntegrityRe
   // ADR 0010 Decision 4 — billing-homogeneity invariant. A shared credit pool only makes sense
   // when every service drawing on it bills the same way; outcome pricing is Approach A and is
   // never compatible with the pool (Approach B unifies billing into one tier fee instead).
+  // ADR 0012 Decision 2 — scoped to pool MEMBERS only (present in pool_burn_rates); a service in
+  // the same scenario but outside the pool books its own revenue independently and is free to use
+  // any monetization_type, so it must not trip this check.
   if (carrier === 'pool') {
+    const poolServiceIds = new Set((scenario.pool_burn_rates ?? []).map(br => br.service_id));
     const types = new Set(
       (scenario.services ?? [])
+        .filter(s => poolServiceIds.has(s.id))
         .map(s => s.monetization?.monetization_type)
         .filter((t): t is MonetizationType => !!t && t !== 'none')
     );
@@ -674,6 +716,10 @@ export function applyScopeOverrides(cohorts: CohortConfig[], overrides: ScopeOve
     if (override.gross_margin !== null && override.gross_margin !== undefined) c.gross_margin = override.gross_margin;
     if (override.adoption_ramp_months !== null && override.adoption_ramp_months !== undefined) c.adoption_ramp_months = override.adoption_ramp_months;
     if (override.usage_intensity !== null && override.usage_intensity !== undefined) c.usage_intensity = override.usage_intensity;
+    // ADR 0011 Track A — EVC multipliers, relative to scenario.evc_reference_cohort_id.
+    if (override.evc_extra_value_multiplier !== null && override.evc_extra_value_multiplier !== undefined) c.evc_extra_value_multiplier = override.evc_extra_value_multiplier;
+    if (override.evc_negative_value_multiplier !== null && override.evc_negative_value_multiplier !== undefined) c.evc_negative_value_multiplier = override.evc_negative_value_multiplier;
+    if (override.evc_nba_multiplier !== null && override.evc_nba_multiplier !== undefined) c.evc_nba_multiplier = override.evc_nba_multiplier;
     return c;
   };
 
@@ -686,8 +732,43 @@ export function applyScopeOverrides(cohorts: CohortConfig[], overrides: ScopeOve
     c = applyOverride(c, globalOverride);
     if (c.vertical_id) c = applyOverride(c, verticalOverrides.get(c.vertical_id));
     c = applyOverride(c, cohortOverrides.get(c.id));
+    // Default EVC multipliers to 1.0 (no differentiation) when nothing in the cascade set them.
+    if (c.evc_extra_value_multiplier === undefined) c.evc_extra_value_multiplier = 1.0;
+    if (c.evc_negative_value_multiplier === undefined) c.evc_negative_value_multiplier = 1.0;
+    if (c.evc_nba_multiplier === undefined) c.evc_nba_multiplier = 1.0;
     return c;
   });
+}
+
+/**
+ * Data-derived suggested defaults for the Track A EVC extra-value multiplier (ADR 0011),
+ * so the input isn't a blind guess. Relative to `scenario.evc_reference_cohort_id`; the
+ * negative-value and NBA multipliers have no reliable auto-derivation and default to 1.0.
+ * Pure — operates on already-resolved `scenario.scope_cohorts`.
+ */
+export function suggestEvcMultipliers(scenario: Scenario): EvcMultiplierSuggestion[] {
+  const cohorts = scenario.scope_cohorts ?? [];
+  const referenceId = scenario.evc_reference_cohort_id;
+  const reference = referenceId ? cohorts.find(c => c.id === referenceId) : undefined;
+  if (!reference) return [];
+
+  const refArpu = reference.base_arpu || 0;
+  const refIntensity = reference.usage_intensity ?? 1.0;
+
+  return cohorts
+    .filter(c => c.id !== reference.id)
+    .map(c => {
+      const arpuRatio = refArpu > 0 ? (c.base_arpu || 0) / refArpu : 1;
+      const intensityRatio = refIntensity > 0 ? (c.usage_intensity ?? 1.0) / refIntensity : 1;
+      const product = arpuRatio * intensityRatio;
+      return {
+        cohortId: c.id,
+        cohortName: c.name,
+        suggestedExtraValueMultiplier: product > 0 ? Math.sqrt(product) : 1.0,
+        arpuRatio,
+        intensityRatio
+      };
+    });
 }
 
 /**
@@ -1202,6 +1283,18 @@ export function calculateAnalyticalLaborSavings(
   return totalMonthlySavings * 12; // Annualized
 }
 
+/** Per-cohort aggregate powering the Agent Cost-to-Serve / Deflection Value corridor (ADR 0009 Track B). */
+export interface CohortAgentAggregate {
+  customers: number;
+  interactions: number;
+  deflected: number;
+  avoidedValue: number;
+  realizableAvoidedValue: number;
+  agentCogs: number;
+  fixedCostAlloc: number;
+  failedCost: number;
+}
+
 /**
  * Runs the full financial engine calculations for a Scenario.
  * This is a pure function – it requires providers to be passed in
@@ -1322,7 +1415,7 @@ export function calculateScenario(
     const finalResult = calculateScenario(overlaidScenario, allProviders, creditSettings, sweepParams);
     finalResult.evc = calculateEVC(finalResult.timeline, evcInputs);
     if (finalResult.evc) {
-      finalResult.evc.pricingCorridor = buildPricingCorridor(scenario, finalResult.timeline, finalResult.evc);
+      finalResult.evc.pricingCorridor = buildPricingCorridor(scenario, finalResult.timeline, finalResult.evc, finalResult.cohortPriceMap);
       finalResult.evc.pocketMarginWaterfall = buildPocketMarginWaterfall(scenario, finalResult.timeline, finalResult.evc);
     }
     return finalResult;
@@ -1331,16 +1424,28 @@ export function calculateScenario(
   const projectionMonths = scenario.projection_months ?? 36;
   const annualDiscountRate = scenario.discount_rate ?? 0.10;
 
+  /** Resolves a cohort-scoped entity override for one agent service field, falling back to the service's own value. */
+  const resolveCohortOverride = (
+    serviceId: string,
+    cohortId: string,
+    field: 'interactions_per_customer_month' | 'containment_rate' | 'average_handle_time_seconds' | 'fully_loaded_cost_per_fte_month' | 'churn_rate_uplift',
+    fallback: number
+  ): number => {
+    const ov = scenario.cohort_entity_overrides?.[`service:${serviceId}:${cohortId}`];
+    const v = ov?.[field];
+    return (v !== null && v !== undefined) ? v : fallback;
+  };
+
   if (!scenario.scope_cohorts || scenario.scope_cohorts.length === 0) {
     throw new Error(`Scenario '${scenario.name}' has no cohort configurations.`);
   }
 
-  const sumAgentChurnUplift = (scenario.services ?? [])
-    .filter(s => s.service_type === 'agent')
-    .reduce((acc, s) => acc + (s.churn_rate_uplift || 0), 0);
-
   // 1. Generate baseline, full-adoption, and uplift-only cohort timelines
   const cohortProjections = scenario.scope_cohorts.map(cc => {
+    const sumAgentChurnUplift_c = (scenario.services ?? [])
+      .filter(s => s.service_type === 'agent')
+      .reduce((acc, s) => acc + resolveCohortOverride(s.id, cc.id, 'churn_rate_uplift', s.churn_rate_uplift || 0), 0);
+
     const baselineModel = buildCohortModel({
       ...cc,
       ai_adoption_rate: 0,
@@ -1354,14 +1459,14 @@ export function calculateScenario(
       ...cc,
       ai_adoption_rate: 1.0,
       monthly_acquisition: cc.monthly_acquisition * (1 + (cc.acquisition_uplift || 0)),
-      monthly_churn_rate: Math.max(0, cc.monthly_churn_rate * (1 - (cc.churn_reduction || 0)) + sumAgentChurnUplift),
+      monthly_churn_rate: Math.max(0, cc.monthly_churn_rate * (1 - (cc.churn_reduction || 0)) + sumAgentChurnUplift_c),
       base_arpu: cc.base_arpu * (1 + (cc.arpu_uplift_percent || 0)) + (cc.arpu_uplift || 0)
     }, projectionMonths);
 
     const upliftOnlyModel = buildCohortModel({
       ...cc,
       ai_adoption_rate: 1.0,
-      monthly_churn_rate: Math.max(0, cc.monthly_churn_rate + sumAgentChurnUplift),
+      monthly_churn_rate: Math.max(0, cc.monthly_churn_rate + sumAgentChurnUplift_c),
       base_arpu: cc.base_arpu * (1 + (cc.arpu_uplift_percent || 0)) + (cc.arpu_uplift || 0)
     }, projectionMonths);
 
@@ -1410,6 +1515,15 @@ export function calculateScenario(
 
   const serviceRealizableHistory = new Map<string, number[]>();
 
+  // ADR 0009 Track B — per-cohort agent deflection aggregates, snapshotted every month and
+  // overwritten (only the final/steady-state month feeds buildAgentDeflectionCorridor, mirroring
+  // how buildPricingCorridor only reads timeline[last]). Populated by the agent per_customer
+  // branch below; stays empty when no service uses the per_customer driver.
+  let lastMonthCohortAgentAgg = new Map<string, CohortAgentAggregate>();
+  let lastMonthCohortPrice = new Map<string, number>();
+
+
+
   // 2b. Build penetration curve if expansion configured
   let expansionCurve: { withoutAi: number[]; withAiLower: number[]; withAiUpper: number[] } | null = null;
   if (scenario.expansion && scenario.expansion.expansion_vertical_id) {
@@ -1437,14 +1551,19 @@ export function calculateScenario(
     let upperMarginSum = 0;
     let lowerMarginSum = 0;
 
+    // Per-cohort active customer counts this month (ADR 0009 Track B) — consumed by the agent
+    // per_customer branch below to bucket interactions/labor-savings/COGS per cohort instead of
+    // the aggregate `activeCustomers`. Index-aligned with `scenario.scope_cohorts`.
+    const perCohortCustomers: number[] = new Array(scenario.scope_cohorts.length).fill(0);
+
     // Aggregate over all cohort models for month t
     for (let i = 0; i < scenario.scope_cohorts.length; i++) {
       const proj = cohortProjections[i];
       const target = proj.adoptionRate;
       const rampMonths = proj.rampMonths;
-      
+
       const a = rampMonths === 0 ? target : Math.min(1, (t + 1) / rampMonths) * target;
-      
+
       const baseMonth = proj.baselineModel.timeline[t];
       const fullMonth = proj.fullAdoptModel.timeline[t];
       const upliftOnlyMonth = proj.upliftOnlyModel.timeline[t];
@@ -1454,6 +1573,7 @@ export function calculateScenario(
         const cohortAiUsers = a * fullMonth.activeCustomers;
         const cohortGrossRev = a * fullMonth.mrr + (1 - a) * baseMonth.mrr;
 
+        perCohortCustomers[i] = cohortCustomers;
         activeCustomers += cohortCustomers;
         activeAiUsers += cohortAiUsers;
         
@@ -1478,6 +1598,25 @@ export function calculateScenario(
       }
     }
 
+    const monthCohortPrice = new Map<string, number>();
+    for (let i = 0; i < scenario.scope_cohorts.length; i++) {
+      const proj = cohortProjections[i];
+      const target = proj.adoptionRate;
+      const rampMonths = proj.rampMonths;
+      const a = rampMonths === 0 ? target : Math.min(1, (t + 1) / rampMonths) * target;
+      const baseMonth = proj.baselineModel.timeline[t];
+      const fullMonth = proj.fullAdoptModel.timeline[t];
+
+      if (fullMonth && baseMonth) {
+        const cohortCustomers = a * fullMonth.activeCustomers + (1 - a) * baseMonth.activeCustomers;
+        const cohortGrossRev = a * fullMonth.mrr + (1 - a) * baseMonth.mrr;
+        const price_c = cohortCustomers > 0
+          ? proj.grossMargin * (cohortGrossRev - baseMonth.mrr) / cohortCustomers
+          : 0;
+        monthCohortPrice.set(scenario.scope_cohorts[i].id, price_c);
+      }
+    }
+
     let activeAiUsersUpper = activeAiUsers;
     let activeAiUsersLower = activeAiUsers;
     if (expansionCurve) {
@@ -1497,10 +1636,15 @@ export function calculateScenario(
 
     // Carrier-based revenue gating (ADR 0001–0004)
     const carrier = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
-    const carrierIncludesMonetization = carrier === 'plan' || carrier === 'feature' || carrier === 'pack';
+    // ADR 0012 Decision 2 — a 'pool' carrier also books ordinary monetization revenue, but only
+    // for services NOT in the pool's burn-rate table. Pool-member services' revenue is the tier
+    // fee + overage computed later in this loop; including them here too would double-count.
+    const carrierIncludesMonetization = carrier === 'plan' || carrier === 'feature' || carrier === 'pack' || carrier === 'pool';
 
     if (carrierIncludesMonetization) {
-      const activeServices = (scenario.services ?? []).filter(s => t >= (s.rollout_month ?? 0));
+      const activeServices = (scenario.services ?? [])
+        .filter(s => t >= (s.rollout_month ?? 0))
+        .filter(s => carrier !== 'pool' || !poolBurnRateMap.has(s.id));
       if (expansionCurve) {
         monetizationUpper = calculateMonetizationRevenue(activeAiUsersUpper, activeServices, creditSettings, providersMap);
         monetizationLower = calculateMonetizationRevenue(activeAiUsersLower, activeServices, creditSettings, providersMap);
@@ -1548,10 +1692,11 @@ export function calculateScenario(
         lowerRevenue = monetizationLower.totalRevenue + planSubscriptionRevenueLower;
         break;
       case 'pool':
-        // Tier fee + overage (ADR 0010) depend on this month's consumed credits, only known
-        // after the per-service loop below runs — added in there, not here.
-        upperRevenue = 0;
-        lowerRevenue = 0;
+        // Non-pool-member services' monetization revenue (ADR 0012 Decision 2) is known now;
+        // the pool tier's own fee + overage (ADR 0010) depend on this month's consumed credits,
+        // only known after the per-service loop below runs — added onto this in there, not here.
+        upperRevenue = monetizationUpper.totalRevenue;
+        lowerRevenue = monetizationLower.totalRevenue;
         break;
       case 'cohort':
       default:
@@ -1568,6 +1713,9 @@ export function calculateScenario(
 
     let monthTotalInteractions = 0;
     let monthDeflectedInteractions = 0;
+    // ADR 0009 Track B — per-cohort agent aggregates for this month, merged across every
+    // per_customer-driver agent service. Overwrites `lastMonthCohortAgentAgg` at month end.
+    const monthCohortAgentAgg = new Map<string, CohortAgentAggregate>();
     let monthLaborSavingsCash = 0;
     let monthLaborSavingsCapacity = 0;
     let monthFailedDeflectionCost = 0;
@@ -1585,6 +1733,10 @@ export function calculateScenario(
     let monthPoolConsumedCreditsLower = 0;
     let monthCopilotEvcValueUpper = 0;
     let monthAgentEvcValueUpper = 0;
+    // Token cost of pool-MEMBER services only (ADR 0012 Decision 2 lets non-pool services share
+    // the scenario, so tokenCostsUpper below is no longer pool-scoped — this accumulator keeps
+    // the credit-value floor's numerator matched to its denominator, monthPoolConsumedCreditsUpper).
+    let monthPoolTokenCostsUpper = 0;
 
     // A. Direct AI Services Costs (from scenario_services rollout)
     if (scenario.services) {
@@ -1593,27 +1745,127 @@ export function calculateScenario(
         if (service.service_type === 'agent') {
           if (t >= rolloutMonth) {
             const driver = service.interaction_driver_type || 'flat';
-            let serviceInteractions = 0;
-            if (driver === 'flat') {
-              serviceInteractions = (service.monthly_volume || 0) * Math.pow(1 + (service.volume_growth_rate || 0), t);
-            } else if (driver === 'per_customer') {
-              serviceInteractions = activeCustomers * (service.interactions_per_customer_month || 0);
-            }
-
             const ramp = service.containment_ramp_months || 0;
             const containmentRate = service.containment_rate || 0;
             const containmentStartRate = service.containment_start_rate || 0;
             const escalationRate = service.escalation_rate || 0;
+            const averageHandleTime = service.average_handle_time_seconds || 0;
+            const productiveHours = service.productive_hours_per_fte_month || 120;
+            const baselineFte = service.baseline_fte || 0;
+            const fullyLoadedCost = service.fully_loaded_cost_per_fte_month || 0;
 
-            let contain_t = containmentRate;
-            if (ramp > 0 && t < ramp) {
-              contain_t = containmentStartRate + ((t + 1) / ramp) * (containmentRate - containmentStartRate);
+            let serviceInteractions = 0;
+            let deflected = 0;
+            let failed = 0;
+            let hoursSaved = 0;
+            let laborValueAtCohortRates = 0;
+
+            if (driver === 'flat') {
+              serviceInteractions = (service.monthly_volume || 0) * Math.pow(1 + (service.volume_growth_rate || 0), t);
+
+              let contain_t = containmentRate;
+              if (ramp > 0 && t < ramp) {
+                contain_t = containmentStartRate + ((t + 1) / ramp) * (containmentRate - containmentStartRate);
+              }
+              const escal_t = escalationRate + Math.max(0, containmentRate - contain_t);
+              const failed_t = Math.max(0, 1 - contain_t - escal_t);
+
+              deflected = serviceInteractions * contain_t;
+              failed = serviceInteractions * failed_t;
+              hoursSaved = (deflected * averageHandleTime) / 3600;
+
+              laborValueAtCohortRates = (hoursSaved / productiveHours) * fullyLoadedCost;
+            } else if (driver === 'per_customer') {
+              // ADR 0009 Track B — resolve interactions/containment/handle-time per cohort
+              // (cohort_entity_overrides), summing additively into the cash pipeline below. When
+              // no cohort override exists, every cohort resolves to the service's own field, so
+              // the sums reconstruct today's single-formula aggregate exactly (regression-safe:
+              // see the "sums back to aggregate" test). fully_loaded_cost_per_fte_month overrides
+              // affect the cash NPV too (fteSaved-weighted blended rate), as resolved below.
+              const tempCohortUpdates: Array<{
+                cohortId: string;
+                cohortCustomers: number;
+                cohortInteractions: number;
+                deflected_i: number;
+                contain_t_i: number;
+                avoidedValue_i: number;
+                tokenCost_i: number;
+                failedCost_i: number;
+              }> = [];
+
+              for (let ci = 0; ci < scenario.scope_cohorts.length; ci++) {
+                const cohort = scenario.scope_cohorts[ci];
+                const cohortCustomers = perCohortCustomers[ci] ?? 0;
+                const interactionsPerCustomer_i = resolveCohortOverride(service.id, cohort.id, 'interactions_per_customer_month', service.interactions_per_customer_month || 0);
+                const containmentRate_i = resolveCohortOverride(service.id, cohort.id, 'containment_rate', containmentRate);
+                const avgHandleTime_i = resolveCohortOverride(service.id, cohort.id, 'average_handle_time_seconds', averageHandleTime);
+                const fullyLoadedCost_i = resolveCohortOverride(service.id, cohort.id, 'fully_loaded_cost_per_fte_month', fullyLoadedCost);
+
+                const cohortInteractions = cohortCustomers * interactionsPerCustomer_i;
+
+                let contain_t_i = containmentRate_i;
+                if (ramp > 0 && t < ramp) {
+                  contain_t_i = containmentStartRate + ((t + 1) / ramp) * (containmentRate_i - containmentStartRate);
+                }
+                const escal_t_i = escalationRate + Math.max(0, containmentRate_i - contain_t_i);
+                const failed_t_i = Math.max(0, 1 - contain_t_i - escal_t_i);
+
+                const deflected_i = cohortInteractions * contain_t_i;
+                const failed_i = cohortInteractions * failed_t_i;
+                const hoursSaved_i = (deflected_i * avgHandleTime_i) / 3600;
+
+                serviceInteractions += cohortInteractions;
+                deflected += deflected_i;
+                failed += failed_i;
+                hoursSaved += hoursSaved_i;
+
+                laborValueAtCohortRates += (hoursSaved_i / productiveHours) * fullyLoadedCost_i;
+
+                let tokenCost_i = 0;
+                if (service.provider_id && providersMap.has(service.provider_id)) {
+                  const provider = providersMap.get(service.provider_id)!;
+                  const inputPrice = provider.input_price / 1000000;
+                  const outputPrice = provider.output_price / 1000000;
+                  tokenCost_i = cohortInteractions * ((service.avg_input_tokens || 0) * inputPrice + (service.avg_output_tokens || 0) * outputPrice);
+                }
+                const failedCost_i = failed_i * (service.failed_deflection_penalty || 0);
+                const avoidedValue_i = (hoursSaved_i / productiveHours) * fullyLoadedCost_i;
+
+                tempCohortUpdates.push({
+                  cohortId: cohort.id,
+                  cohortCustomers,
+                  cohortInteractions,
+                  deflected_i,
+                  contain_t_i,
+                  avoidedValue_i,
+                  tokenCost_i,
+                  failedCost_i
+                });
+              }
+
+              // Apply the baseline FTE cap pro-rata to avoided value before merging services
+              const fteSavedService = hoursSaved / productiveHours;
+              const r_s = baselineFte > 0 ? Math.min(1, baselineFte / fteSavedService) : 1;
+
+              for (const update of tempCohortUpdates) {
+                const realizableAvoidedValue_i = update.avoidedValue_i * r_s;
+                const fixedCostAlloc_i = serviceInteractions > 0
+                  ? (service.fixed_cost_per_month || 0) * update.cohortInteractions / serviceInteractions
+                  : 0;
+
+                const prevAgg = monthCohortAgentAgg.get(update.cohortId);
+                monthCohortAgentAgg.set(update.cohortId, {
+                  customers: update.cohortCustomers,
+                  interactions: (prevAgg?.interactions ?? 0) + update.cohortInteractions,
+                  deflected: (prevAgg?.deflected ?? 0) + update.deflected_i,
+                  avoidedValue: (prevAgg?.avoidedValue ?? 0) + update.avoidedValue_i,
+                  realizableAvoidedValue: (prevAgg?.realizableAvoidedValue ?? 0) + realizableAvoidedValue_i,
+                  agentCogs: (prevAgg?.agentCogs ?? 0) + update.tokenCost_i,
+                  fixedCostAlloc: (prevAgg?.fixedCostAlloc ?? 0) + fixedCostAlloc_i,
+                  failedCost: (prevAgg?.failedCost ?? 0) + update.failedCost_i
+                });
+              }
             }
-            const escal_t = escalationRate + Math.max(0, containmentRate - contain_t);
-            const failed_t = Math.max(0, 1 - contain_t - escal_t);
-
-            const deflected = serviceInteractions * contain_t;
-            const failed = serviceInteractions * failed_t;
 
             // Credit pool (ADR 0010) — a resolved interaction is the agent's natural "activity"
             // unit; both bands share the same figure since agent volume doesn't depend on
@@ -1625,12 +1877,6 @@ export function calculateScenario(
               monthAgentEvcValueUpper += deflected * (service.value_per_outcome ?? 0);
             }
 
-            const averageHandleTime = service.average_handle_time_seconds || 0;
-            const productiveHours = service.productive_hours_per_fte_month || 120;
-            const baselineFte = service.baseline_fte || 0;
-            const fullyLoadedCost = service.fully_loaded_cost_per_fte_month || 0;
-
-            const hoursSaved = (deflected * averageHandleTime) / 3600;
             const fteSaved = hoursSaved / productiveHours;
             const realizable = baselineFte > 0 ? Math.min(fteSaved, baselineFte) : fteSaved;
 
@@ -1650,8 +1896,12 @@ export function calculateScenario(
             // only gates the per-outcome pricing block below, which is specific to that one mechanism.
             const isMonetized = !!service.monetization && service.monetization.monetization_type !== 'none';
             const isMonetizedOutcome = service.monetization?.monetization_type === 'outcome';
-            const serviceLaborCash = Math.floor(src) * fullyLoadedCost;
-            const serviceLaborCapacity = (realizable - Math.floor(src)) * fullyLoadedCost;
+
+            // effective blended rate:
+            const effRate = fteSaved > 0 ? laborValueAtCohortRates / fteSaved : fullyLoadedCost;
+
+            const serviceLaborCash = Math.floor(src) * effRate;
+            const serviceLaborCapacity = (realizable - Math.floor(src)) * effRate;
 
             const failedCost = failed * (service.failed_deflection_penalty || 0);
 
@@ -1683,6 +1933,9 @@ export function calculateScenario(
 
             tokenCostsUpper += totalAgentTokenCost;
             tokenCostsLower += totalAgentTokenCost;
+            if (poolBurnRate !== undefined) {
+              monthPoolTokenCostsUpper += totalAgentTokenCost;
+            }
             opex += failedCost;
 
             // Outcome pricing logic for Agent — a disjoint second stream (ADR 0009 Decision 1),
@@ -1745,6 +1998,7 @@ export function calculateScenario(
               monthPoolConsumedCreditsUpper += activityUpper * poolBurnRate;
               monthPoolConsumedCreditsLower += activityLower * poolBurnRate;
               monthCopilotEvcValueUpper += activityUpper * (service.value_per_outcome ?? 0);
+              monthPoolTokenCostsUpper += serviceTokenCostUpper + serviceFixedCost;
             }
 
             // Outcome pricing logic for Copilot — a disjoint second stream (ADR 0009 Decision 1),
@@ -1807,10 +2061,11 @@ export function calculateScenario(
       const tier = scenario.pool_tier;
       const captureForPool = tier.capture ?? scenario.evc_capture_target_pct ?? 0.30;
 
-      // Blended $/credit: this month's actual token cost ÷ credits consumed earning it. Token
-      // costs already include every service (pool homogeneity means that's effectively the pool's
-      // services), so reusing tokenCostsUpper avoids a second, pool-scoped COGS accumulator.
-      const creditFloorUpper = monthPoolConsumedCreditsUpper > 0 ? tokenCostsUpper / monthPoolConsumedCreditsUpper : 0;
+      // Blended $/credit: this month's actual token cost of pool-MEMBER services ÷ credits
+      // consumed earning it. Since ADR 0012 Decision 2 lets non-pool services share the scenario
+      // (and book their own revenue independently), tokenCostsUpper is no longer pool-scoped —
+      // monthPoolTokenCostsUpper keeps this floor's numerator matched to its denominator.
+      const creditFloorUpper = monthPoolConsumedCreditsUpper > 0 ? monthPoolTokenCostsUpper / monthPoolConsumedCreditsUpper : 0;
       const valuePerCreditUpper = monthPoolConsumedCreditsUpper > 0
         ? (captureForPool * (monthCopilotEvcValueUpper + monthAgentEvcValueUpper)) / monthPoolConsumedCreditsUpper
         : 0;
@@ -1836,11 +2091,18 @@ export function calculateScenario(
         // tokenCostsUpper above) becomes a margin hit, modeling real hard-cap risk.
       }
 
+      // Tier fee basis (ADR 0012 Decision 1) — 'flat' (default) books monthly_fee once, unchanged
+      // from ADR 0010; 'per_member' scales it by the same active-AI-user measure monetization
+      // revenue already uses elsewhere in this loop, so a subscription-style tier (e.g. Claude
+      // Pro) tracks the cohort's dynamic adoption curve instead of a frozen headcount.
+      const tierFeeUpper = tier.fee_basis === 'per_member' ? tier.monthly_fee * activeAiUsersUpper : tier.monthly_fee;
+      const tierFeeLower = tier.fee_basis === 'per_member' ? tier.monthly_fee * activeAiUsersLower : tier.monthly_fee;
+
       // Overage pricing only varies the volume by band in principle; reusing the upper-band
       // credit value for both keeps this in line with how plan/seat figures are also only
       // banded when an expansion curve is active (none here).
-      upperRevenue += tier.monthly_fee + overageRevenueUpper;
-      lowerRevenue += tier.monthly_fee + overageRevenueUpper;
+      upperRevenue += tierFeeUpper + overageRevenueUpper;
+      lowerRevenue += tierFeeLower + overageRevenueUpper;
 
       sumPoolConsumedCreditsUpper += monthPoolConsumedCreditsUpper;
       sumCopilotEvcValue += monthCopilotEvcValueUpper;
@@ -1919,6 +2181,11 @@ export function calculateScenario(
     });
 
     cashFlowsLower.push(parseFloat(netCashFlowLower.toFixed(2)));
+
+    // ADR 0009 Track B — snapshot this month's per-cohort agent aggregates; only the final
+    // (steady-state) month feeds buildAgentDeflectionCorridor, mirroring buildPricingCorridor.
+    lastMonthCohortAgentAgg = monthCohortAgentAgg;
+    lastMonthCohortPrice = monthCohortPrice;
   }
 
   // 4. Calculate aggregate KPIs
@@ -1969,7 +2236,7 @@ export function calculateScenario(
     };
     evc = calculateEVC(timeline, evcInputs);
     if (evc) {
-      evc.pricingCorridor = buildPricingCorridor(scenario, timeline, evc);
+      evc.pricingCorridor = buildPricingCorridor(scenario, timeline, evc, lastMonthCohortPrice);
       evc.pocketMarginWaterfall = buildPocketMarginWaterfall(scenario, timeline, evc);
     }
   }
@@ -2037,6 +2304,10 @@ export function calculateScenario(
     agentThreshold: agentMarginThreshold
   };
 
+  const agentDeflectionCorridor = lastMonthCohortAgentAgg.size > 0
+    ? buildAgentDeflectionCorridor(scenario, lastMonthCohortAgentAgg, agentMarginThreshold)
+    : null;
+
   return {
     timeline,
     paybackUpper,
@@ -2050,7 +2321,87 @@ export function calculateScenario(
     evc,
     driverProfile,
     streamMargins,
-    poolEconomics
+    poolEconomics,
+    agentDeflectionCorridor,
+    cohortPriceMap: lastMonthCohortPrice
+  };
+}
+
+
+
+/**
+ * Agent-archetype analogue of `buildPricingCorridor` — displaced-labor cost-to-serve vs.
+ * avoided-cost value per cohort, computed from the steady-state (last month) per-cohort agent
+ * aggregates. Pure; only meaningful for scenarios with at least one `per_customer`-driver agent
+ * service (empty aggregates in ⇒ empty points out).
+ */
+export function buildAgentDeflectionCorridor(
+  scenario: Scenario,
+  cohortAgentAgg: Map<string, CohortAgentAggregate>,
+  agentMarginThreshold: number = DEFAULT_AGENT_MARGIN_THRESHOLD
+): AgentDeflectionCorridorResult {
+  const cohorts = scenario.scope_cohorts || [];
+
+  const points: AgentDeflectionCorridorPoint[] = [];
+  let totalCustomers = 0;
+  let totalCostToServe = 0;
+  let totalAvoidedValue = 0;
+  let totalRealizableAvoidedValue = 0;
+
+  for (const cohort of cohorts) {
+    const agg = cohortAgentAgg.get(cohort.id);
+    if (!agg || agg.customers <= 0) continue;
+
+    const interactions = agg.interactions / agg.customers;
+    const containmentRate = agg.interactions > 0 ? agg.deflected / agg.interactions : 0;
+    const costToServe = (agg.agentCogs + agg.fixedCostAlloc + agg.failedCost) / agg.customers;
+    const avoidedValue = agg.avoidedValue / agg.customers;
+    const realizableAvoidedValue = agg.realizableAvoidedValue / agg.customers;
+    const realizationRatio = avoidedValue > 0 ? realizableAvoidedValue / avoidedValue : 1.0;
+    const netDeflectionValue = avoidedValue - costToServe;
+
+    let status: 'loss' | 'below_margin' | 'healthy' = 'healthy';
+    if (netDeflectionValue < 0) {
+      status = 'loss';
+    } else if (avoidedValue > 0 && netDeflectionValue / avoidedValue < agentMarginThreshold) {
+      status = 'below_margin';
+    }
+
+    const costDecomposition = {
+      tokens: agg.agentCogs / agg.customers,
+      fixedAlloc: agg.fixedCostAlloc / agg.customers,
+      failedDeflection: agg.failedCost / agg.customers
+    };
+
+    points.push({
+      cohortId: cohort.id,
+      cohortName: cohort.name,
+      interactions,
+      containmentRate,
+      costToServe,
+      avoidedValue,
+      realizableAvoidedValue,
+      realizationRatio,
+      netDeflectionValue,
+      costDecomposition,
+      status
+    });
+
+    totalCustomers += agg.customers;
+    totalCostToServe += agg.agentCogs + agg.fixedCostAlloc + agg.failedCost;
+    totalAvoidedValue += agg.avoidedValue;
+    totalRealizableAvoidedValue += agg.realizableAvoidedValue;
+  }
+
+  points.sort((a, b) => a.costToServe - b.costToServe);
+  const hasBreak = points.some(p => p.status === 'loss');
+
+  return {
+    points,
+    blendedCostToServe: totalCustomers > 0 ? totalCostToServe / totalCustomers : 0,
+    blendedAvoidedValue: totalCustomers > 0 ? totalAvoidedValue / totalCustomers : 0,
+    blendedRealizableAvoidedValue: totalCustomers > 0 ? totalRealizableAvoidedValue / totalCustomers : 0,
+    hasBreak
   };
 }
 
@@ -2179,7 +2530,8 @@ export function calculateCohortNetValue(
 export function buildPricingCorridor(
   scenario: Scenario,
   timeline: MonthlyBreakdown[],
-  evc: EvcResult
+  evc: EvcResult,
+  cohortPriceMap?: Map<string, number>
 ): PricingCorridorResult {
   const lastMonth = timeline[timeline.length - 1];
   const aiUsers = lastMonth ? lastMonth.aiUsers : 0;
@@ -2194,18 +2546,30 @@ export function buildPricingCorridor(
   const o = customers > 0 && lastMonth ? lastMonth.opex / customers : 0;
   const actualPrice = customers > 0 && lastMonth ? lastMonth.revenue / customers : 0;
 
+  const carrier = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
+  const useCohortPrice = carrier === 'cohort' && cohortPriceMap !== undefined;
+
   const cohorts = scenario.scope_cohorts || [];
   const hasAnyValuePerOutcome = (scenario.services || []).some(s => s.value_per_outcome != null && s.value_per_outcome > 0);
-  
+  // ADR 0011 Track A — middle-priority path: differentiate the EVC ceiling/target/floor per
+  // cohort via decomposed multipliers when any cohort resolved a non-1.0 multiplier through the
+  // scope-override cascade. Lower priority than the per-outcome path; higher than the flat
+  // scenario-scalar fallback (which still applies when neither is configured).
+  const hasAnyEvcMultiplier = cohorts.some(c =>
+    (c.evc_extra_value_multiplier ?? 1.0) !== 1.0 ||
+    (c.evc_negative_value_multiplier ?? 1.0) !== 1.0 ||
+    (c.evc_nba_multiplier ?? 1.0) !== 1.0
+  );
+
   const points: PricingCorridorPoint[] = cohorts.map(cohort => {
     const a = cohort.ai_adoption_rate ?? 0;
     const intensity = cohort.usage_intensity ?? 1.0;
     const gm = Math.max(0, Math.min(0.99, cohort.gross_margin ?? 1.0));
-    
+
     // Scale COGS by usage intensity
     const cogs = a * intensity * u + o;
     const floorTarget = cogs / (1 - gm);
-    
+
     let pointCeiling = evc.priceCeiling;
     let pointTarget = evc.priceTarget;
     let pointFloor = evc.priceFloor;
@@ -2213,7 +2577,7 @@ export function buildPricingCorridor(
 
     if (hasAnyValuePerOutcome) {
       const { valueFromOutcomes, netValue } = calculateCohortNetValue(cohort, scenario);
-      
+
       const referenceValue = (scenario.evc_nba_annual_value || 0) / 12;
       const capCeiling = scenario.evc_capture_ceiling_pct ?? 0.50;
       const capTarget = scenario.evc_capture_target_pct ?? 0.30;
@@ -2223,14 +2587,36 @@ export function buildPricingCorridor(
       pointTarget = referenceValue + capTarget * netValue;
       pointFloor = referenceValue + capFloor * netValue;
       cohortValFromOutcomes = valueFromOutcomes;
+    } else if (hasAnyEvcMultiplier) {
+      const extraMult = cohort.evc_extra_value_multiplier ?? 1.0;
+      const negMult = cohort.evc_negative_value_multiplier ?? 1.0;
+      const nbaMult = cohort.evc_nba_multiplier ?? 1.0;
+
+      const extra_c = (scenario.evc_extra_positive_value ?? 0) * extraMult;
+      const neg_c = (scenario.evc_negative_value ?? 0) * negMult;
+      const nba_c = (scenario.evc_nba_annual_value ?? 0) * nbaMult;
+
+      // Labor-savings term is intentionally left un-multiplied — multipliers scale
+      // willingness-to-pay inputs, not displaced-labor value (that's Track B's domain).
+      const netCreated_c = (extra_c + evc.laborSavings - neg_c) / 12;
+      const reference_c = nba_c / 12;
+      const capCeiling = scenario.evc_capture_ceiling_pct ?? 0.50;
+      const capTarget = scenario.evc_capture_target_pct ?? 0.30;
+      const capFloor = scenario.evc_capture_floor_pct ?? 0.15;
+
+      pointCeiling = reference_c + capCeiling * netCreated_c;
+      pointTarget = reference_c + capTarget * netCreated_c;
+      pointFloor = reference_c + capFloor * netCreated_c;
     }
 
+    const pointPrice = useCohortPrice ? (cohortPriceMap.get(cohort.id) ?? 0) : actualPrice;
+
     let status: 'loss' | 'below_margin' | 'healthy' | 'over_ceiling' = 'healthy';
-    if (actualPrice < cogs) {
+    if (pointPrice < cogs) {
       status = 'loss';
-    } else if (actualPrice < floorTarget) {
+    } else if (pointPrice < floorTarget) {
       status = 'below_margin';
-    } else if (actualPrice > pointCeiling) {
+    } else if (pointPrice > pointCeiling) {
       status = 'over_ceiling';
     }
 
@@ -2245,7 +2631,10 @@ export function buildPricingCorridor(
       targetPrice: pointTarget,
       floorPrice: pointFloor,
       valueFromOutcomes: hasAnyValuePerOutcome ? cohortValFromOutcomes : undefined,
-      status
+      status,
+      isReference: !!scenario.evc_reference_cohort_id && cohort.id === scenario.evc_reference_cohort_id,
+      pricePerCustomer: pointPrice,
+      priceBasis: useCohortPrice ? 'cohort' : 'blended'
     };
   });
 

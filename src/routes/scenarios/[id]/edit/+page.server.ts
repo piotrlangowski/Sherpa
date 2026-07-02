@@ -38,8 +38,13 @@ export const load: PageServerLoad = async ({ params }) => {
   const monetizationOverrides = Object.fromEntries(monetizationRepository.getScenarioOverrideMap(params.id));
 
   // Per-entity financial overrides for this scenario, keyed `${entity_type}:${entity_id}`.
+  // Scenario-wide only (cohort_id IS NULL) — this edit form has no cohort-scoped override inputs
+  // (ADR 0009 Track B cohort-scoped overrides are MCP-only for now); excluding them here avoids
+  // key collisions with a scenario-wide row for the same entity.
   const entityOverrides = Object.fromEntries(
-    entityOverridesRepository.getScenarioOverrides(params.id).map(r => [`${r.entity_type}:${r.entity_id}`, r])
+    entityOverridesRepository.getScenarioOverrides(params.id)
+      .filter(r => !r.cohort_id)
+      .map(r => [`${r.entity_type}:${r.entity_id}`, r])
   );
 
   return {

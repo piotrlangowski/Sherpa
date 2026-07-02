@@ -284,7 +284,14 @@ export interface CohortConfig {
   usage_intensity?: number;
   created_at?: string;
   updated_at?: string;
-  
+
+  // EVC per-cohort multipliers (ADR 0011 Track A) — resolved at runtime by the
+  // scope-override cascade (applyScopeOverrides), not persisted on cohort_configs.
+  // Relative to the scenario's evc_reference_cohort_id; default 1.0 (no differentiation).
+  evc_extra_value_multiplier?: number;
+  evc_negative_value_multiplier?: number;
+  evc_nba_multiplier?: number;
+
   vertical_name?: string;
 }
 
@@ -307,7 +314,12 @@ export interface ScopeOverride {
   gross_margin?: number | null;
   adoption_ramp_months?: number | null;
   usage_intensity?: number | null;
-  
+
+  // EVC per-cohort multipliers (ADR 0011 Track A) — relative to evc_reference_cohort_id.
+  evc_extra_value_multiplier?: number | null;
+  evc_negative_value_multiplier?: number | null;
+  evc_nba_multiplier?: number | null;
+
   // Presentation-only fields loaded on demand
   target_name?: string;
   base_values?: {
@@ -324,6 +336,9 @@ export interface ScopeOverride {
     acquisition_uplift: number | null;
     gross_margin: number | null;
     adoption_ramp_months: number | null;
+    evc_extra_value_multiplier: number | null;
+    evc_negative_value_multiplier: number | null;
+    evc_nba_multiplier: number | null;
   } | null;
 }
 
@@ -363,6 +378,13 @@ export interface EntityOverride {
 export interface EntityOverrideRecord extends EntityOverride {
   entity_type: EntityOverrideType;
   entity_id: string;
+  /**
+   * Optional cohort scope (ADR 0009 Track B). `null`/absent = scenario-wide (applies to every
+   * cohort, current behavior). When set, the override applies only to that cohort's consumption
+   * of the entity within the scenario — resolved inside the engine, not pre-mutated onto the
+   * shared entity list. Only meaningful for `entity_type: 'service'` (agent archetype fields).
+   */
+  cohort_id?: string | null;
 }
 
 /**
@@ -370,12 +392,17 @@ export interface EntityOverrideRecord extends EntityOverride {
  * `capture` is a nullable per-tier override of the EVC capture rate used in the credit-value
  * hybrid and stream attribution; falls back to the scenario's evc_capture_target_pct when unset.
  */
+/** How `monthly_fee` is charged (ADR 0012): once per tier, or once per active AI user. */
+export type PoolFeeBasis = 'flat' | 'per_member';
+
 export interface PoolTier {
   id: string;
   name: string;
   monthly_fee: number;
   credit_pool_size: number;
   capture?: number | null;
+  /** ADR 0012 Decision 1 — 'flat' (default, unchanged) or 'per_member' (monthly_fee × active AI users). */
+  fee_basis?: PoolFeeBasis;
   created_at?: string;
   updated_at?: string;
 }
@@ -450,6 +477,12 @@ export interface Scenario {
   evc_capture_floor_pct?: number | null;
   price_from_evc?: boolean;
   adoption_elasticity?: number;
+  /**
+   * Per-cohort EVC multipliers (ADR 0011 Track A) are expressed relative to this cohort's id.
+   * `null`/unset preserves the flat scenario-scalar EVC ceiling/target/floor (fully backward
+   * compatible) — see `buildPricingCorridor`.
+   */
+  evc_reference_cohort_id?: string | null;
 
   // Per-stream margin thresholds (ADR 0009) — nullable scenario override; the DB-aware
   // layer cascades the client_base global default in before reaching the pure engine.
@@ -472,6 +505,14 @@ export interface Scenario {
   packs?: Array<{ id: string; name: string; rollout_month: number }>;
   plans?: Array<{ id: string; name: string; rollout_month: number; base_price?: number; seats?: number }>;
   costs?: CostItem[];
+  /**
+   * Cohort-scoped entity overrides (ADR 0009 Track B), keyed `"${entity_type}:${entity_id}:${cohort_id}"`.
+   * Populated by the DB-aware layer (financial-engine.ts / MCP getFullScenario) from
+   * `scenario_entity_overrides` rows that carry a `cohort_id`; resolved inside the pure engine's
+   * agent `per_customer` branch (scenario-wide, `cohort_id IS NULL`, rows are still pre-mutated
+   * onto `services` as before). `null`/absent = no cohort-scoped overrides (unchanged behavior).
+   */
+  cohort_entity_overrides?: Record<string, EntityOverride> | null;
   results?: {
     payback_months: number | null;
     npv: number;
@@ -511,6 +552,10 @@ export interface PricingCorridorPoint {
   targetPrice?: number;
   floorPrice?: number;
   valueFromOutcomes?: number;
+  /** True when this point is the scenario's evc_reference_cohort_id (ADR 0011 Track A). */
+  isReference?: boolean;
+  pricePerCustomer?: number;
+  priceBasis: 'cohort' | 'blended';
 }
 
 export interface PricingCorridorResult {
@@ -518,6 +563,45 @@ export interface PricingCorridorResult {
   actualPrice: number;
   blendedMediumCogs: number;
   blendedMediumFloorTarget: number;
+  hasBreak: boolean;
+}
+
+/** Per-cohort suggested EVC multiplier defaults (ADR 0011 Track A), vs. the reference cohort. */
+export interface EvcMultiplierSuggestion {
+  cohortId: string;
+  cohortName: string;
+  suggestedExtraValueMultiplier: number;
+  arpuRatio: number;
+  intensityRatio: number;
+}
+
+/**
+ * Agent-archetype analogue of the Pricing Corridor (ADR 0009 Track B): displaced-labor
+ * cost-to-serve vs. avoided-cost value, per cohort, instead of a willingness-to-pay ceiling.
+ */
+export interface AgentDeflectionCorridorPoint {
+  cohortId: string;
+  cohortName: string;
+  interactions: number; // interactions/customer/month, steady-state
+  containmentRate: number;
+  costToServe: number; // AI COGS + fixedCostAlloc + failed-deflection cost, per customer/month
+  avoidedValue: number; // gross FTE-equivalent labor value avoided, per customer/month
+  realizableAvoidedValue: number;
+  realizationRatio: number;
+  netDeflectionValue: number; // avoidedValue - costToServe
+  costDecomposition: {
+    tokens: number;
+    fixedAlloc: number;
+    failedDeflection: number;
+  };
+  status: 'loss' | 'below_margin' | 'healthy';
+}
+
+export interface AgentDeflectionCorridorResult {
+  points: AgentDeflectionCorridorPoint[];
+  blendedCostToServe: number;
+  blendedAvoidedValue: number;
+  blendedRealizableAvoidedValue: number;
   hasBreak: boolean;
 }
 
@@ -609,6 +693,9 @@ export interface ScenarioResult {
 
   // Credit pool results (ADR 0010)
   pool_economics?: PoolEconomics | null;
+
+  // Agent Cost-to-Serve / Deflection Value corridor (ADR 0009 Track B)
+  agent_deflection_corridor?: AgentDeflectionCorridorResult | null;
 }
 
 export interface CohortTimelineResult {
@@ -710,6 +797,9 @@ export interface CalculationResult {
   driverProfile: DriverProfile;
   streamMargins: StreamMargins;
   poolEconomics?: PoolEconomics | null;
+  /** Agent Cost-to-Serve / Deflection Value corridor (ADR 0009 Track B). */
+  agentDeflectionCorridor?: AgentDeflectionCorridorResult | null;
+  cohortPriceMap?: Map<string, number>;
 }
 
 export interface SensitivityParamResult {

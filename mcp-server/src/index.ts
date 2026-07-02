@@ -18,6 +18,7 @@ import {
   resolveRevenueModel,
   validateRevenueIntegrity,
   validateScenarioConfig,
+  suggestEvcMultipliers,
   DEFAULT_COPILOT_MARGIN_THRESHOLD,
   DEFAULT_AGENT_MARGIN_THRESHOLD
 } from "./shared/financial-math.js";
@@ -347,7 +348,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
     SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
            evc_nba_annual_value, evc_extra_positive_value, evc_negative_value, evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
-           price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold, pool_tier_id
+           price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold, pool_tier_id, evc_reference_cohort_id
     FROM scenarios
     WHERE id = ?
   `).get(scenarioId) as any;
@@ -392,7 +393,8 @@ function getFullScenario(scenarioId: string): Scenario | null {
   const overrides = db.prepare(`
     SELECT id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
            acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
-           arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
+           arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+           evc_extra_value_multiplier, evc_negative_value_multiplier, evc_nba_multiplier
     FROM scenario_scope_overrides
     WHERE scenario_id = ?
   `).all(scenarioId) as ScopeOverride[];
@@ -461,15 +463,17 @@ function getFullScenario(scenarioId: string): Scenario | null {
   // Apply per-scenario entity overrides (service tokens / cost amount+frequency / plan base_price).
   // Provider-price overrides are applied separately via applyProviderOverrides at the calc sites.
   const entityOvRows = db.prepare(`
-    SELECT entity_type, entity_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month,
+    SELECT entity_type, entity_id, cohort_id, avg_input_tokens, avg_output_tokens, avg_requests_per_user_month,
            fixed_cost_per_month, amount, frequency, base_price,
            monthly_volume, interactions_per_customer_month, containment_rate, average_handle_time_seconds,
            fully_loaded_cost_per_fte_month, baseline_fte, churn_rate_uplift
     FROM scenario_entity_overrides
     WHERE scenario_id = ?
   `).all(scenarioId) as any[];
-  if (entityOvRows.length > 0) {
-    const ovMap = new Map<string, any>(entityOvRows.map((r) => [`${r.entity_type}:${r.entity_id}`, r]));
+  // Scenario-wide rows (cohort_id IS NULL) are pre-mutated onto the shared entity list, as before.
+  const scenarioWideOvRows = entityOvRows.filter((r) => r.cohort_id === null || r.cohort_id === undefined);
+  if (scenarioWideOvRows.length > 0) {
+    const ovMap = new Map<string, any>(scenarioWideOvRows.map((r) => [`${r.entity_type}:${r.entity_id}`, r]));
     const applyOv = (target: any, key: string, fields: string[]) => {
       const ov = ovMap.get(key);
       if (!ov) return;
@@ -478,6 +482,12 @@ function getFullScenario(scenarioId: string): Scenario | null {
     for (const svc of s.services) applyOv(svc, `service:${svc.id}`, ['avg_input_tokens', 'avg_output_tokens', 'avg_requests_per_user_month', 'fixed_cost_per_month', 'monthly_volume', 'interactions_per_customer_month', 'containment_rate', 'average_handle_time_seconds', 'fully_loaded_cost_per_fte_month', 'baseline_fte', 'churn_rate_uplift']);
     for (const c of s.costs) applyOv(c, `cost:${c.id}`, ['amount', 'frequency']);
     for (const pl of s.plans) applyOv(pl, `plan:${pl.id}`, ['base_price']);
+  }
+  // Cohort-scoped rows (ADR 0009 Track B) are NOT pre-mutated — resolved inside the pure engine's
+  // agent per_customer branch instead, keyed `${entity_type}:${entity_id}:${cohort_id}`.
+  const cohortOvRows = entityOvRows.filter((r) => r.cohort_id !== null && r.cohort_id !== undefined);
+  if (cohortOvRows.length > 0) {
+    s.cohort_entity_overrides = Object.fromEntries(cohortOvRows.map((r) => [`${r.entity_type}:${r.entity_id}:${r.cohort_id}`, r]));
   }
 
   // Attach effective monetization configs
@@ -1711,9 +1721,9 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
         monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
         revenue_integrity_status, revenue_integrity_message,
         evc, evc_price_floor, evc_price_target, evc_price_ceiling,
-        driver_profile, stream_margins, pool_economics
+        driver_profile, stream_margins, pool_economics, agent_deflection_corridor
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       resultsId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
       results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
@@ -1725,7 +1735,8 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
       results.evc?.priceCeiling ?? null,
       results.driverProfile ?? null,
       results.streamMargins ? JSON.stringify(results.streamMargins) : null,
-      results.poolEconomics ? JSON.stringify(results.poolEconomics) : null
+      results.poolEconomics ? JSON.stringify(results.poolEconomics) : null,
+      results.agentDeflectionCorridor ? JSON.stringify(results.agentDeflectionCorridor) : null
     );
   } else {
     db.prepare(`
@@ -1735,9 +1746,9 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
         monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
         revenue_integrity_status, revenue_integrity_message,
         evc, evc_price_floor, evc_price_target, evc_price_ceiling,
-        driver_profile, stream_margins, pool_economics
+        driver_profile, stream_margins, pool_economics, agent_deflection_corridor
       )
-      VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ((SELECT id FROM scenario_results WHERE scenario_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       scenarioId, scenarioId, results.paybackUpper, results.npvUpper, results.irr.annualNominal, results.tco, results.piUpper,
       results.paybackLower, results.npvLower, results.piLower, results.irr.monthly, results.irr.annualNominal, results.irr.status,
@@ -1749,7 +1760,8 @@ function saveScenarioResults(scenarioId: string, results: any, resultsId?: strin
       results.evc?.priceCeiling ?? null,
       results.driverProfile ?? null,
       results.streamMargins ? JSON.stringify(results.streamMargins) : null,
-      results.poolEconomics ? JSON.stringify(results.poolEconomics) : null
+      results.poolEconomics ? JSON.stringify(results.poolEconomics) : null,
+      results.agentDeflectionCorridor ? JSON.stringify(results.agentDeflectionCorridor) : null
     );
   }
 }
@@ -1758,7 +1770,7 @@ server.tool(
   "scenario_action",
   "List, create, retrieve, update, or delete SaaS ROI scenarios, or execute scenario projections (calculating NPV/IRR, performing sensitivity analysis, comparing scenarios, and parsing natural language descriptions). Scenarios target a scope_type ('all_clients', 'verticals', 'cohorts') resolving parameters via a global->vertical->cohort override cascade. The revenue_source ('cohort', 'monetization', 'both') dictates what revenue is counted. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true.",
   {
-    action: z.enum(["list", "get", "create", "update", "delete", "calculate", "compare", "sensitivity", "generate"]).describe("The action to perform: 'list' to view scenarios, 'get' to inspect a scenario, 'create' to add a scenario, 'update' to edit details, 'delete' to remove a scenario, 'calculate' to compute ROI, 'compare' to analyze multiple scenarios, 'sensitivity' for tornado charts, or 'generate' to parse natural language descriptions."),
+    action: z.enum(["list", "get", "create", "update", "delete", "calculate", "compare", "sensitivity", "generate", "suggest_evc_multipliers"]).describe("The action to perform: 'list' to view scenarios, 'get' to inspect a scenario, 'create' to add a scenario, 'update' to edit details, 'delete' to remove a scenario, 'calculate' to compute ROI, 'compare' to analyze multiple scenarios, 'sensitivity' for tornado charts, 'generate' to parse natural language descriptions, or 'suggest_evc_multipliers' (ADR 0011 Track A) to get data-derived suggested evc_extra_value_multiplier defaults (Caveat: base_arpu is current pricing — an endogenous ability-to-pay proxy; treat suggestion as starting prior, not evidence of WTP) for every cohort vs. evc_reference_cohort_id."),
     id: z.string().optional().describe("Unique UUID of the scenario. Required for 'get', 'update', 'delete', 'calculate', and 'sensitivity' actions."),
     ids: z.array(z.string()).optional().describe("Array of scenario UUIDs to compare. Required for 'compare' action."),
     name: z.string().optional().describe("Name of the scenario (e.g. 'Standard rollout'). Required for 'create' action."),
@@ -1809,6 +1821,7 @@ server.tool(
     adoption_elasticity: z.number().optional().describe("Adoption price elasticity (ε). 0 = inelastic. Higher values reduce adoption when capture exceeds target."),
     copilot_margin_threshold: nullableNumberInput({ min: 0, max: 1 }).describe("Soft (warn-only) copilot-stream gross-margin floor as a decimal (e.g. 0.78 for 78%). Defaults to 0.78 when unset."),
     agent_margin_threshold: nullableNumberInput({ min: 0, max: 1 }).describe("Soft (warn-only) agent-stream gross-margin floor as a decimal (e.g. 0.62 for 62%). Defaults to 0.62 when unset."),
+    evc_reference_cohort_id: z.string().nullable().optional().describe("ADR 0011 Track A: cohort UUID that per-cohort EVC multipliers (set via scenario_override_action) are expressed relative to. null/unset preserves the flat scenario-scalar EVC ceiling (fully backward compatible)."),
     variation_percent: z.number().optional().describe("Sensitivity analysis variation percent (default: 0.10 for 10% variation)."),
     confirm: z.boolean().optional().describe("Confirmation flag for deletion. Must be set to true to execute a 'delete' action.")
   },
@@ -1819,7 +1832,7 @@ server.tool(
           SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct,
                  s.modeling_type, s.revenue_carrier, s.revenue_bridge, s.expansion_vertical_id, s.penetration_baseline_months, s.ai_acceleration_factor, s.ai_som_lift_pct,
                  s.evc_nba_annual_value, s.evc_extra_positive_value, s.evc_negative_value, s.evc_capture_ceiling_pct, s.evc_capture_target_pct, s.evc_capture_floor_pct,
-                 s.price_from_evc, s.adoption_elasticity,
+                 s.price_from_evc, s.adoption_elasticity, s.evc_reference_cohort_id,
                  r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index,
                  r.payback_months_lower, r.npv_lower, r.profitability_index_lower, r.irr_monthly, r.irr_annual_nominal, r.irr_status,
                  r.revenue_integrity_status, r.revenue_integrity_message,
@@ -1853,6 +1866,29 @@ server.tool(
         }
         const getDiagnostics = getScenarioDiagnostics(scenario as Scenario);
         return { content: [{ type: "text", text: JSON.stringify({ ...filtered, diagnostics: getDiagnostics }, null, 2) }] };
+      }
+
+      if (args.action === "suggest_evc_multipliers") {
+        if (!args.id) {
+          throw new z.ZodError([{ code: "custom", path: ["id"], message: "Identyfikator 'id' jest wymagany dla akcji 'suggest_evc_multipliers'." }]);
+        }
+        const scenario = getFullScenario(args.id);
+        if (!scenario) {
+          return { content: [{ type: "text", text: `Scenario '${args.id}' not found` }], isError: true };
+        }
+        if (!scenario.evc_reference_cohort_id) {
+          return { content: [{ type: "text", text: `Scenario '${args.id}' has no evc_reference_cohort_id set — set one first (scenario_action 'update') so suggestions have a baseline to be relative to.` }], isError: true };
+        }
+        const suggestions = suggestEvcMultipliers(scenario);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              caveat: "base_arpu is current pricing — an endogenous ability-to-pay proxy; treat the suggestion as a starting prior, not evidence of WTP.",
+              suggestions
+            }, null, 2)
+          }]
+        };
       }
 
       if (args.action === "create") {
@@ -1894,10 +1930,10 @@ server.tool(
               evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
               evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
               price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold,
-              pool_tier_id,
+              pool_tier_id, evc_reference_cohort_id,
               created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             scenarioId, args.name, args.description || null, args.projection_months ?? 36,
             args.discount_rate ?? 0.10, scopeType, revSource, args.capex_contingency_pct ?? 0,
@@ -1909,7 +1945,7 @@ server.tool(
             args.evc_capture_target_pct ?? null, args.evc_capture_floor_pct ?? null,
             args.price_from_evc ? 1 : 0, args.adoption_elasticity ?? 0,
             args.copilot_margin_threshold ?? null, args.agent_margin_threshold ?? null,
-            args.pool_tier_id ?? null,
+            args.pool_tier_id ?? null, args.evc_reference_cohort_id ?? null,
             now, now
           );
 
@@ -2048,6 +2084,7 @@ server.tool(
           const copilot_margin_threshold = args.copilot_margin_threshold !== undefined ? args.copilot_margin_threshold : current.copilot_margin_threshold;
           const agent_margin_threshold = args.agent_margin_threshold !== undefined ? args.agent_margin_threshold : current.agent_margin_threshold;
           const pool_tier_id = args.pool_tier_id !== undefined ? args.pool_tier_id : current.pool_tier_id;
+          const evc_reference_cohort_id = args.evc_reference_cohort_id !== undefined ? args.evc_reference_cohort_id : current.evc_reference_cohort_id;
 
           db.prepare(`
             UPDATE scenarios
@@ -2059,7 +2096,7 @@ server.tool(
                 evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?,
                 evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?,
                 price_from_evc = ?, adoption_elasticity = ?, copilot_margin_threshold = ?, agent_margin_threshold = ?,
-                pool_tier_id = ?,
+                pool_tier_id = ?, evc_reference_cohort_id = ?,
                 updated_at = ?
             WHERE id = ?
           `).run(
@@ -2071,7 +2108,7 @@ server.tool(
             evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
             evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
             price_from_evc ? 1 : 0, adoption_elasticity ?? 0, copilot_margin_threshold ?? null, agent_margin_threshold ?? null,
-            pool_tier_id ?? null,
+            pool_tier_id ?? null, evc_reference_cohort_id ?? null,
             now, args.id
           );
 
@@ -2464,12 +2501,13 @@ server.tool(
 
 server.tool(
   "pool_tier_action",
-  "List, create, update, or delete unified credit-pool tiers (ADR 0010 Approach B). Each tier is a flat monthly subscription fee covering a shared credit pool; services drawing on the pool each have a burn-rate (credits consumed per activity unit — interaction for agent, request for copilot). A scenario adopts a tier via scenario_action's pool_tier_id with revenue_carrier 'pool'. All pool-participating services must share the same monetization_type (addon, usage, or hybrid) — enforced at scenario calculation time. Always specify the 'action' parameter. Deletions require 'confirm: true'.",
+  "List, create, update, or delete unified credit-pool tiers (ADR 0010 Approach B). Each tier covers a shared credit pool via a monthly fee — either flat (once per tier) or per-member (× the scenario's active AI users that month, ADR 0012 Decision 1); services drawing on the pool each have a burn-rate (credits consumed per activity unit — interaction for agent, request for copilot). A scenario adopts a tier via scenario_action's pool_tier_id with revenue_carrier 'pool'. All pool-MEMBER services (present in this tier's burn_rates) must share the same monetization_type (addon, usage, or hybrid) — enforced at scenario calculation time; services in the same scenario but NOT in the pool book their own monetization revenue independently (ADR 0012 Decision 2) and are exempt from that homogeneity rule. Always specify the 'action' parameter. Deletions require 'confirm: true'.",
   {
     action: z.enum(["list", "get", "create", "update", "delete"]).describe("The action to perform: 'list' to view tiers, 'get' to inspect one tier's burn-rate table, 'create' to add a tier, 'update' to edit it, 'delete' to remove it."),
     id: z.string().optional().describe("Unique UUID of the tier. Required for 'get', 'update', and 'delete' actions."),
     name: z.string().optional().describe("Tier display name (e.g. 'Gold'). Required for 'create' action."),
-    monthly_fee: z.number().optional().describe("Flat monthly subscription fee, booked in full every month regardless of usage (ADR 0010 Decision 2)."),
+    monthly_fee: z.number().optional().describe("Subscription fee, booked in full every month regardless of usage (ADR 0010 Decision 2). Charged once per tier ('flat') or once per active AI user ('per_member') depending on fee_basis."),
+    fee_basis: z.enum(["flat", "per_member"]).optional().describe("How monthly_fee is charged (ADR 0012 Decision 1). 'flat' (default): once per month, independent of subscriber count — fits a B2B org-wide tier (e.g. Copilot Enterprise). 'per_member': monthly_fee × the scenario's active AI users that month — fits a B2C per-subscriber plan (e.g. Claude Pro)."),
     credit_pool_size: z.number().optional().describe("Credits included per month. Unused credits are breakage (extra margin, no rollover); usage beyond this triggers overage per each service's monetization_type."),
     capture: nullableNumberInput({ min: 0, max: 1 }).describe("Override of the EVC capture rate used in the credit-value hybrid (max(token cost, capture × value_per_outcome)) and in copilot/agent stream attribution. Defaults to the scenario's evc_capture_target_pct (or 0.30) when unset."),
     burn_rates: z.array(z.object({
@@ -2482,7 +2520,7 @@ server.tool(
     try {
       if (args.action === "list") {
         const tiers = db.prepare(`
-          SELECT id, name, monthly_fee, credit_pool_size, capture, created_at, updated_at
+          SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, created_at, updated_at
           FROM pool_tiers ORDER BY name ASC
         `).all();
         return { content: [{ type: "text", text: JSON.stringify(tiers, null, 2) }] };
@@ -2493,7 +2531,7 @@ server.tool(
           throw new z.ZodError([{ code: "custom", path: ["id"], message: "Identyfikator 'id' jest wymagany dla akcji 'get'." }]);
         }
         const tier = db.prepare(`
-          SELECT id, name, monthly_fee, credit_pool_size, capture, created_at, updated_at
+          SELECT id, name, monthly_fee, credit_pool_size, capture, fee_basis, created_at, updated_at
           FROM pool_tiers WHERE id = ?
         `).get(args.id) as any;
         if (!tier) {
@@ -2515,9 +2553,9 @@ server.tool(
         const now = new Date().toISOString();
         db.transaction(() => {
           db.prepare(`
-            INSERT INTO pool_tiers (id, name, monthly_fee, credit_pool_size, capture, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run(id, args.name, args.monthly_fee ?? 0, args.credit_pool_size ?? 0, args.capture ?? null, now, now);
+            INSERT INTO pool_tiers (id, name, monthly_fee, credit_pool_size, capture, fee_basis, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(id, args.name, args.monthly_fee ?? 0, args.credit_pool_size ?? 0, args.capture ?? null, args.fee_basis ?? 'flat', now, now);
 
           if (args.burn_rates && args.burn_rates.length > 0) {
             const insertRate = db.prepare("INSERT INTO pool_burn_rates (id, tier_id, service_id, burn_rate) VALUES (?, ?, ?, ?)");
@@ -2541,13 +2579,14 @@ server.tool(
         const monthly_fee = args.monthly_fee !== undefined ? args.monthly_fee : current.monthly_fee;
         const credit_pool_size = args.credit_pool_size !== undefined ? args.credit_pool_size : current.credit_pool_size;
         const capture = args.capture !== undefined ? args.capture : current.capture;
+        const fee_basis = args.fee_basis !== undefined ? args.fee_basis : (current.fee_basis ?? 'flat');
         const now = new Date().toISOString();
 
         db.transaction(() => {
           db.prepare(`
-            UPDATE pool_tiers SET name = ?, monthly_fee = ?, credit_pool_size = ?, capture = ?, updated_at = ?
+            UPDATE pool_tiers SET name = ?, monthly_fee = ?, credit_pool_size = ?, capture = ?, fee_basis = ?, updated_at = ?
             WHERE id = ?
-          `).run(name, monthly_fee, credit_pool_size, capture ?? null, now, args.id);
+          `).run(name, monthly_fee, credit_pool_size, capture ?? null, fee_basis, now, args.id);
 
           if (args.burn_rates !== undefined) {
             db.prepare("DELETE FROM pool_burn_rates WHERE tier_id = ?").run(args.id);
@@ -2623,7 +2662,8 @@ server.resource(
       const row = db.prepare(`
         SELECT id, scenario_id, payback_months, npv, irr_annual, tco, profitability_index, monthly_cashflows, monthly_mrr, monthly_customers, calculated_at,
                payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
-               evc, evc_price_floor, evc_price_target, evc_price_ceiling
+               evc, evc_price_floor, evc_price_target, evc_price_ceiling,
+               driver_profile, stream_margins, pool_economics, agent_deflection_corridor
         FROM scenario_results
         WHERE scenario_id = ?
       `).get(scenarioId) as any;
@@ -2659,7 +2699,11 @@ server.resource(
         evc: row.evc ? JSON.parse(row.evc) : null,
         evc_price_floor: row.evc_price_floor,
         evc_price_target: row.evc_price_target,
-        evc_price_ceiling: row.evc_price_ceiling
+        evc_price_ceiling: row.evc_price_ceiling,
+        driver_profile: row.driver_profile || null,
+        stream_margins: row.stream_margins ? JSON.parse(row.stream_margins) : null,
+        pool_economics: row.pool_economics ? JSON.parse(row.pool_economics) : null,
+        agent_deflection_corridor: row.agent_deflection_corridor ? JSON.parse(row.agent_deflection_corridor) : null
       };
 
       return {
@@ -3038,7 +3082,13 @@ server.tool(
     churn_reduction: nullableNumberInput().describe("Overridden churn reduction as a decimal (e.g. 0.10 for 10% reduction)."),
     acquisition_uplift: nullableNumberInput().describe("Overridden acquisition uplift as a decimal (e.g. 0.05 for 5%)."),
     gross_margin: nullableNumberInput().describe("Overridden gross margin as a decimal (e.g. 0.90 for 90%)."),
-    adoption_ramp_months: nullableNumberInput().describe("Overridden adoption ramp in months.")
+    adoption_ramp_months: nullableNumberInput().describe("Overridden adoption ramp in months."),
+
+    // EVC per-cohort multipliers (ADR 0011 Track A) — relative to the scenario's
+    // evc_reference_cohort_id (see scenario_action). Default 1.0 when unset.
+    evc_extra_value_multiplier: nullableNumberInput().describe("Multiplier applied to the scenario's evc_extra_positive_value for this cohort/vertical/global scope (e.g. 2.6 for a segment worth 2.6x the reference cohort's productivity value). Relative to evc_reference_cohort_id; use scenario_action's suggest_evc_multipliers action for a data-derived starting point."),
+    evc_negative_value_multiplier: nullableNumberInput().describe("Multiplier applied to the scenario's evc_negative_value (switching cost/friction) for this scope. No reliable auto-derivation — larger/more complex segments typically face higher migration/compliance friction."),
+    evc_nba_multiplier: nullableNumberInput().describe("Multiplier applied to the scenario's evc_nba_annual_value (next-best-alternative cost) for this scope. Advanced/optional — competitive per-seat pricing rarely swings much by segment.")
   },
   async (args) => {
     try {
@@ -3101,7 +3151,8 @@ server.tool(
                 ai_adoption_rate = ?, retention_floor = ?, expansion_rate = ?,
                 arpu_override = ?, arpu_uplift = ?, arpu_uplift_percent = ?,
                 churn_reduction = ?, acquisition_uplift = ?, gross_margin = ?,
-                adoption_ramp_months = ?
+                adoption_ramp_months = ?,
+                evc_extra_value_multiplier = ?, evc_negative_value_multiplier = ?, evc_nba_multiplier = ?
               WHERE id = ?
             `).run(
               args.monthly_churn_rate !== undefined ? args.monthly_churn_rate : current.monthly_churn_rate,
@@ -3117,6 +3168,9 @@ server.tool(
               args.acquisition_uplift !== undefined ? args.acquisition_uplift : current.acquisition_uplift,
               args.gross_margin !== undefined ? args.gross_margin : current.gross_margin,
               args.adoption_ramp_months !== undefined ? args.adoption_ramp_months : current.adoption_ramp_months,
+              args.evc_extra_value_multiplier !== undefined ? args.evc_extra_value_multiplier : current.evc_extra_value_multiplier,
+              args.evc_negative_value_multiplier !== undefined ? args.evc_negative_value_multiplier : current.evc_negative_value_multiplier,
+              args.evc_nba_multiplier !== undefined ? args.evc_nba_multiplier : current.evc_nba_multiplier,
               existing.id
             );
           } else {
@@ -3128,8 +3182,9 @@ server.tool(
                 ai_adoption_rate, retention_floor, expansion_rate,
                 arpu_override, arpu_uplift, arpu_uplift_percent,
                 churn_reduction, acquisition_uplift, gross_margin,
-                adoption_ramp_months
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                adoption_ramp_months,
+                evc_extra_value_multiplier, evc_negative_value_multiplier, evc_nba_multiplier
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
               newId,
               scenarioId,
@@ -3147,7 +3202,10 @@ server.tool(
               args.churn_reduction !== undefined ? args.churn_reduction : null,
               args.acquisition_uplift !== undefined ? args.acquisition_uplift : null,
               args.gross_margin !== undefined ? args.gross_margin : null,
-              args.adoption_ramp_months !== undefined ? args.adoption_ramp_months : null
+              args.adoption_ramp_months !== undefined ? args.adoption_ramp_months : null,
+              args.evc_extra_value_multiplier !== undefined ? args.evc_extra_value_multiplier : null,
+              args.evc_negative_value_multiplier !== undefined ? args.evc_negative_value_multiplier : null,
+              args.evc_nba_multiplier !== undefined ? args.evc_nba_multiplier : null
             );
           }
           db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(scenarioId);
@@ -3164,12 +3222,13 @@ server.tool(
 
 server.tool(
   "entity_override_action",
-  "Manage per-scenario overrides of a catalog entity's FINANCIAL parameters (scenario_entity_overrides) WITHOUT cloning the shared catalog. Polymorphic over entity_type: 'service' (avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month; for agent-type services also monthly_volume, interactions_per_customer_month, containment_rate, average_handle_time_seconds, fully_loaded_cost_per_fte_month, baseline_fte, churn_rate_uplift), 'cost' (amount, frequency), 'provider' (input_price, output_price), 'plan' (base_price). Use this to vary a service's token usage, a cost's amount, a provider's price, or a plan's base price in ONE scenario only — do NOT duplicate the catalog entity. Actions: 'list' (all overrides for a scenario), 'get', 'set' (upsert), 'delete'. Mutations invalidate the scenario's cached results. Only the fields relevant to entity_type are stored.",
+  "Manage per-scenario overrides of a catalog entity's FINANCIAL parameters (scenario_entity_overrides) WITHOUT cloning the shared catalog. Polymorphic over entity_type: 'service' (avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month; for agent-type services also monthly_volume, interactions_per_customer_month, containment_rate, average_handle_time_seconds, fully_loaded_cost_per_fte_month, baseline_fte, churn_rate_uplift), 'cost' (amount, frequency), 'provider' (input_price, output_price), 'plan' (base_price). Use this to vary a service's token usage, a cost's amount, a provider's price, or a plan's base price in ONE scenario only — do NOT duplicate the catalog entity. Optional cohort_id (ADR 0009 Track B, service entities only) scopes the override to one cohort's consumption of the service instead of the whole scenario — only interactions_per_customer_month, containment_rate, average_handle_time_seconds, fully_loaded_cost_per_fte_month, and churn_rate_uplift vary meaningfully per cohort; omit cohort_id for scenario-wide behavior (unchanged default). Actions: 'list' (all overrides for a scenario), 'get', 'set' (upsert), 'delete'. Mutations invalidate the scenario's cached results. Only the fields relevant to entity_type are stored.",
   {
     action: z.enum(["list", "get", "set", "delete"]).describe("Action to perform."),
     scenario_id: z.string().describe("Scenario UUID. Required for all actions."),
     entity_type: z.enum(["service", "cost", "provider", "plan"]).optional().describe("Catalog entity kind. Required for get, set, and delete."),
     entity_id: z.string().optional().describe("UUID of the catalog entity (service/cost/provider/plan). Required for get, set, and delete."),
+    cohort_id: z.string().nullable().optional().describe("[service only, ADR 0009 Track B] Cohort UUID to scope this override to. Omit/null for the default scenario-wide override (unchanged behavior). Only meaningful for containment_rate, average_handle_time_seconds, fully_loaded_cost_per_fte_month, interactions_per_customer_month, and churn_rate_uplift on agent-type services with interaction_driver_type='per_customer'."),
 
     // service overrides
     avg_input_tokens: nullableNumberInput().describe("[service] Override avg input tokens per request."),
@@ -3212,27 +3271,64 @@ server.tool(
       }
       const entityType = args.entity_type;
       const entityId = args.entity_id;
+      const cohortId = args.cohort_id ?? null;
 
       if (args.action === "get") {
-        const row = db.prepare(`SELECT * FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ?`).get(scenarioId, entityType, entityId);
+        const row = db.prepare(`SELECT * FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ? AND cohort_id IS ?`).get(scenarioId, entityType, entityId, cohortId);
         return { content: [{ type: "text", text: JSON.stringify(row ?? {}, null, 2) }] };
       }
 
       if (args.action === "delete") {
         db.transaction(() => {
-          db.prepare(`DELETE FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ?`).run(scenarioId, entityType, entityId);
+          db.prepare(`DELETE FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ? AND cohort_id IS ?`).run(scenarioId, entityType, entityId, cohortId);
           db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(scenarioId);
         })();
-        return { content: [{ type: "text", text: `Entity override deleted successfully for ${entityType} ${entityId}.` }] };
+        return { content: [{ type: "text", text: `Entity override deleted successfully for ${entityType} ${entityId}${cohortId ? ` (cohort ${cohortId})` : ''}.` }] };
       }
 
       if (args.action === "set") {
+        if (cohortId) {
+          if (entityType !== "service") {
+            return {
+              isError: true,
+              content: [{
+                type: "text",
+                text: "Cohort-scoped overrides are only allowed for entity_type 'service'."
+              }]
+            };
+          }
+          const allowedCohortFields = new Set([
+            "interactions_per_customer_month",
+            "containment_rate",
+            "average_handle_time_seconds",
+            "fully_loaded_cost_per_fte_month",
+            "churn_rate_uplift"
+          ]);
+          const invalidFields: string[] = [];
+          for (const f of FIELDS) {
+            if ((args as any)[f] !== undefined && (args as any)[f] !== null) {
+              if (!allowedCohortFields.has(f)) {
+                invalidFields.push(f);
+              }
+            }
+          }
+          if (invalidFields.length > 0) {
+            return {
+              isError: true,
+              content: [{
+                type: "text",
+                text: `Cohort-scoped overrides do not support the following fields: ${invalidFields.join(", ")}. Only key segment-level variables are allowed (interactions_per_customer_month, containment_rate, average_handle_time_seconds, fully_loaded_cost_per_fte_month, churn_rate_uplift). Org-wide constants / flat-driver aggregates are rejected to prevent ambiguity.`
+              }]
+            };
+          }
+        }
+
         // Mirror the web entityOverridesRepository: an all-empty override means "no override"
         // → clear any stored row instead of persisting a vacuous all-NULL row. A partial set
         // (>=1 field) keeps preserve-current-on-undefined semantics for the unspecified fields.
         const allEmpty = FIELDS.every((f) => (args as any)[f] === null || (args as any)[f] === undefined);
         db.transaction(() => {
-          const existing = db.prepare(`SELECT id FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ?`).get(scenarioId, entityType, entityId) as { id: string } | undefined;
+          const existing = db.prepare(`SELECT id FROM scenario_entity_overrides WHERE scenario_id = ? AND entity_type = ? AND entity_id = ? AND cohort_id IS ?`).get(scenarioId, entityType, entityId, cohortId) as { id: string } | undefined;
           if (allEmpty) {
             if (existing) db.prepare("DELETE FROM scenario_entity_overrides WHERE id = ?").run(existing.id);
           } else if (existing) {
@@ -3245,11 +3341,11 @@ server.tool(
             const cols = FIELDS.join(", ");
             const placeholders = FIELDS.map(() => "?").join(", ");
             const values = FIELDS.map((f) => ((args as any)[f] !== undefined ? (args as any)[f] : null));
-            db.prepare(`INSERT INTO scenario_entity_overrides (id, scenario_id, entity_type, entity_id, ${cols}) VALUES (?, ?, ?, ?, ${placeholders})`).run(newId, scenarioId, entityType, entityId, ...values);
+            db.prepare(`INSERT INTO scenario_entity_overrides (id, scenario_id, entity_type, entity_id, cohort_id, ${cols}) VALUES (?, ?, ?, ?, ?, ${placeholders})`).run(newId, scenarioId, entityType, entityId, cohortId, ...values);
           }
           db.prepare("DELETE FROM scenario_results WHERE scenario_id = ?").run(scenarioId);
         })();
-        return { content: [{ type: "text", text: allEmpty ? `No override fields provided — cleared any override for ${entityType} ${entityId}.` : `Entity override saved successfully for ${entityType} ${entityId}.` }] };
+        return { content: [{ type: "text", text: allEmpty ? `No override fields provided — cleared any override for ${entityType} ${entityId}${cohortId ? ` (cohort ${cohortId})` : ''}.` : `Entity override saved successfully for ${entityType} ${entityId}${cohortId ? ` (cohort ${cohortId})` : ''}.` }] };
       }
 
       throw new Error(`Nieobsługiwana akcja: ${args.action}`);

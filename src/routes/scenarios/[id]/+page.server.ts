@@ -61,6 +61,7 @@ export const load: PageServerLoad = async ({ params }) => {
   const driverProfile = detailedResult?.driverProfile ?? null;
   const streamMargins = detailedResult?.streamMargins ?? null;
   const poolEconomics = detailedResult?.poolEconomics ?? null;
+  const agentDeflectionCorridor = detailedResult?.agentDeflectionCorridor ?? null;
 
   return {
     scenario,
@@ -74,7 +75,8 @@ export const load: PageServerLoad = async ({ params }) => {
     pocketMarginWaterfall,
     driverProfile,
     streamMargins,
-    poolEconomics
+    poolEconomics,
+    agentDeflectionCorridor
   };
 };
 
