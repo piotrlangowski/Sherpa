@@ -160,10 +160,16 @@ export type { CalculationResult, MonthlyBreakdown };
 export function applyEntityOverrides(
   scenario: Scenario,
   allProviders: Provider[]
-): { services: Scenario['services']; costs: Scenario['costs']; plans: Scenario['plans']; providers: Provider[] } {
+): { services: Scenario['services']; costs: Scenario['costs']; plans: Scenario['plans']; providers: Provider[]; cohortEntityOverrides: Record<string, EntityOverride> } {
   const overrides = scenario.id
     ? entityOverridesRepository.getScenarioOverrideMap(scenario.id)
     : new Map<string, EntityOverride>();
+  // Cohort-scoped overrides (ADR 0009 Track B) are NOT pre-mutated here — they're resolved
+  // inside the pure engine's agent per_customer branch, since a single shared service list
+  // can't express "different values for different cohorts consuming the same service".
+  const cohortEntityOverrides = scenario.id
+    ? entityOverridesRepository.getScenarioCohortOverrideMap(scenario.id)
+    : {};
 
   const withOverride = <T extends object>(target: T, key: string, fields: (keyof EntityOverride)[]): T => {
     const ov = overrides.get(key);
@@ -196,7 +202,7 @@ export function applyEntityOverrides(
     withOverride(p, `provider:${p.id}`, ['input_price', 'output_price'])
   );
 
-  return { services, costs, plans, providers };
+  return { services, costs, plans, providers, cohortEntityOverrides };
 }
 
 /** Resolves a scenario's selected pool tier + its burn-rate table (ADR 0010), if any. */
@@ -252,7 +258,7 @@ export function calculateScenario(scenario: Scenario): CalculationResult {
   // Resolve effective monetization first, then apply per-scenario entity overrides
   // (service tokens, cost amounts, plan base_price, provider prices) on top.
   const monetized = attachMonetization(scenario);
-  const { services, costs, plans, providers } = applyEntityOverrides(monetized, allProviders);
+  const { services, costs, plans, providers, cohortEntityOverrides } = applyEntityOverrides(monetized, allProviders);
 
   // Per-stream margin thresholds (ADR 0009): scenario override wins, else the client_base
   // global default. Resolved here (not in the pure engine) so it follows the same
@@ -269,6 +275,7 @@ export function calculateScenario(scenario: Scenario): CalculationResult {
     plans,
     copilot_margin_threshold,
     agent_margin_threshold,
+    cohort_entity_overrides: cohortEntityOverrides,
     ...resolvePoolTier(scenario)
   };
 
@@ -327,7 +334,8 @@ export function runAndSaveScenario(scenarioId: string): CalculationResult {
     evc_price_ceiling: result.evc?.priceCeiling ?? null,
     driver_profile: result.driverProfile,
     stream_margins: result.streamMargins,
-    pool_economics: result.poolEconomics ?? null
+    pool_economics: result.poolEconomics ?? null,
+    agent_deflection_corridor: result.agentDeflectionCorridor ?? null
   });
 
   return result;
@@ -352,7 +360,7 @@ export function runCaptureCurve(scenario: Scenario): CaptureCurveResult {
   const resolvedConfigs = resolveScenarioCohorts(scenario);
 
   const monetized = attachMonetization(scenario);
-  const { services, costs, plans, providers } = applyEntityOverrides(monetized, allProviders);
+  const { services, costs, plans, providers, cohortEntityOverrides } = applyEntityOverrides(monetized, allProviders);
 
   const clientBase = clientBaseRepository.get();
   const copilot_margin_threshold = scenario.copilot_margin_threshold ?? clientBase.default_copilot_margin_threshold ?? DEFAULT_COPILOT_MARGIN_THRESHOLD;
@@ -366,6 +374,7 @@ export function runCaptureCurve(scenario: Scenario): CaptureCurveResult {
     plans,
     copilot_margin_threshold,
     agent_margin_threshold,
+    cohort_entity_overrides: cohortEntityOverrides,
     ...resolvePoolTier(scenario)
   };
 

@@ -214,25 +214,37 @@ export function seedDatabase(db: DatabaseConnection): void {
 
     // 10. Scenarios
     const insertScenario = db.prepare(`
-      INSERT INTO scenarios (id, name, description, projection_months, discount_rate, scope_type, revenue_source, modeling_type, revenue_carrier, revenue_bridge, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'cohort', 'incremental', 'cohort', null, ?, ?)
+      INSERT INTO scenarios (
+        id, name, description, projection_months, discount_rate, scope_type, revenue_source, modeling_type, revenue_carrier, revenue_bridge,
+        evc_nba_annual_value, evc_extra_positive_value, evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct, evc_reference_cohort_id,
+        created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'cohort', 'incremental', 'cohort', null, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertScenarioService = db.prepare(`INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)`);
     const insertScenarioCost = db.prepare(`INSERT INTO scenario_costs (scenario_id, cost_item_id) VALUES (?, ?)`);
     const insertScenarioCohort = db.prepare(`INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)`);
+    const insertScopeOverride = db.prepare(`
+      INSERT INTO scenario_scope_overrides (id, scenario_id, target_type, target_id, evc_extra_value_multiplier)
+      VALUES (?, ?, 'cohort', ?, ?)
+    `);
 
     const scHero = uuidv4();
     insertScenario.run(
-      scHero, 
-      'Is it worth adding AI Ticket Summaries?', 
-      'Calculate ROI of adding AI Ticket Summaries at 1,000 customers', 
-      36, 
-      0.10, 
-      'cohorts', 
-      now, 
+      scHero,
+      'Is it worth adding AI Ticket Summaries?',
+      'Calculate ROI of adding AI Ticket Summaries at 1,000 customers',
+      36,
+      0.10,
+      'cohorts',
+      // EVC (ADR 0011 Track A): "Individual Pro" is the reference cohort — Enterprise's
+      // higher base_arpu/usage_intensity scales its ceiling via evc_extra_value_multiplier
+      // below (~2.6 ≈ sqrt((250/80) × (1.5/0.7))), so the Pricing Corridor fans out of the box.
+      600, 400, 0.50, 0.30, 0.15, coPro,
+      now,
       now
     );
-    
+
     // Link cohorts
     insertScenarioCohort.run(scHero, coPro);
     insertScenarioCohort.run(scHero, coProPlus);
@@ -245,6 +257,9 @@ export function seedDatabase(db: DatabaseConnection): void {
     // Link costs
     insertScenarioCost.run(scHero, cBuild);
     insertScenarioCost.run(scHero, cOps);
+
+    // Enterprise's productivity value scales with its ARPU/usage-intensity vs. the reference cohort.
+    insertScopeOverride.run(uuidv4(), scHero, coEnterprise, 2.6);
 
     // Scenario Results: intentionally NOT pre-populated.
   })();

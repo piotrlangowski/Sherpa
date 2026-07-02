@@ -44,3 +44,51 @@ Pozytywne:
 
 Negatywne:
 - Wymagana ostrożność przy kalibracji `usage_intensity`, aby nie zawyżyć sztucznie wartości EVC bez pokrycia w cenie.
+
+## Rozszerzenie (Track A, 2026-07-01): mnożniki EVC per-kohorta i kohorta referencyjna
+
+Kontekst: Decyzja 5 (wsteczna zgodność/opt-in) oznaczała, że scenariusz **bez** `value_per_outcome`
+nadal dostawał płaski sufit EVC liczony ze skalarów scenariusza — różnicowanie per-segment
+dotyczyło wtedy wyłącznie COGS (Decyzja 2/3), nie wartości. Ta luka jest realnym problemem dla
+zwykłych scenariuszy Copilot (bez outcome-pricing), gdzie `base_arpu`/`usage_intensity` różnią się
+mocno między kohortami, a sufit EVC i tak jest identyczny dla wszystkich.
+
+Odrzucony alternatywny projekt: pojedynczy mnożnik blankietowy (`evc_value_multiplier`) na
+`CohortConfig` — konfliktuje driversy wartości (willingness-to-pay vs. koszt osobowy zastąpiony),
+które skalują się różnie i czasem nie-monotonicznie z wielkością segmentu. Zamiast tego:
+
+6. **Kohorta referencyjna.** Nowe pole `scenarios.evc_reference_cohort_id` (nullable). Istniejące
+   skalarne inputy EVC scenariusza (`evc_nba_annual_value`, `evc_extra_positive_value`,
+   `evc_negative_value`) są odtąd rozumiane jako opisujące **tę konkretną kohortę**, nie abstrakcyjny
+   blend. `null` zachowuje płaski sufit sprzed zmiany (pełna wsteczna zgodność).
+7. **Trzy rozłożone mnożniki, nie jeden.** Per kohorta, względem kohorty referencyjnej, przez
+   istniejącą kaskadę override'ów (`scenario_scope_overrides`, `all_clients → vertical → cohort`):
+   `evc_extra_value_multiplier` (skaluje `extraPositiveValue` — produktywność/oszczędność czasu,
+   rośnie z pensją i głębokością użycia), `evc_negative_value_multiplier` (skaluje `negativeValue`
+   — koszt przełączenia/tarcie organizacyjne, rośnie ze złożonością organizacji, nie z użyciem),
+   `evc_nba_multiplier` (skaluje `nbaAnnualValue`; domyślnie 1.0, zaawansowane/opcjonalne — cena
+   konkurencyjna per seat rzadko mocno różni się per segment dla Copilota). Domyślnie `1.0`
+   (brak różnicowania) gdy nic w kaskadzie nie ustawiło wartości.
+8. **Sugerowany domyślny mnożnik (nie ślepe zgadywanie).** `suggestEvcMultipliers` zwraca
+   data-derived sugestię dla `evc_extra_value_multiplier`:
+   `sqrt((cohort.base_arpu / ref.base_arpu) × (cohort.usage_intensity / ref.usage_intensity))`.
+   `evc_negative_value_multiplier`/`evc_nba_multiplier` nie mają wiarygodnej auto-derywacji —
+   pozostają `1.0` z tekstem podpowiedzi (np. "większe organizacje zwykle mają wyższe tarcie
+   migracji/compliance").
+9. **Priorytet ścieżek w `buildPricingCorridor`.** Kolejność: (1) `hasAnyValuePerOutcome` — ścieżka
+   per-outcome z Decyzji 1–4 powyżej (najwyższy priorytet, bez zmian); (2) **nowa** ścieżka
+   mnożnikowa — aktywna gdy którakolwiek kohorta ma mnożnik ≠ 1.0; (3) płaski fallback skalarny
+   scenariusza (bez zmian, gdy żadna z powyższych nie jest skonfigurowana). Termin labor-savings
+   pozostaje celowo bez mnożnika — mnożniki skalują inputy willingness-to-pay, nie zastąpiony koszt
+   osobowy (to domena ADR 0009 Track B).
+10. **Guardraile (walidacja niedestrukcyjna, `warn`).** Kohorta referencyjna z własnym mnożnikiem
+    ≠ 1.0 → sprzeczność (jest 1.0 względem samej siebie z definicji). Mnożnik ustawiony bez
+    `evc_reference_cohort_id` → ostrzeżenie o niezdefiniowanej bazie odniesienia.
+
+Konsekwencje (Track A): Pricing Corridor różnicuje sufit EVC dla zwykłych scenariuszy Copilot bez
+konieczności konfigurowania `value_per_outcome`; UI oznacza kohortę referencyjną wizualnie (★,
+przerywana linia łącząca), żeby było jasne, dlaczego pozostałe słupki od niej odbiegają.
+
+## Aneks: Corridor Precision Pass (2026-07-02)
+1. **Per-cohort price rung:** W przypadku gdy `revenue_carrier` resolves to `'cohort'`, wykres Pricing Corridor renderuje rzeczywistą cenę per kohorta (`pricePerCustomer`), zamiast ogólnoscenariuszowej średniej ważonej (`actualPrice`).
+2. **Transparency on EVC Multipliers:** Sugestia `suggestEvcMultipliers` zwraca dodatkowe pola `arpuRatio` oraz `intensityRatio`, pokazujące rozbicie składowych wzoru sugerowanego mnożnika. Ostrzeżenie (ATP proxy caveat) jest prezentowane w opisach i odpowiedziach MCP: `base_arpu` reprezentuje obecną cenę (endogeniczne przybliżenie zdolności do zapłaty / ATP), a sugestie są punktem startowym (prior), a nie bezpośrednim dowodem na gotowość do zapłaty (WTP).

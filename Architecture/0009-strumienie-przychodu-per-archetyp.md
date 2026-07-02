@@ -119,3 +119,44 @@ Parametry (ustalone 2026-06-28):
 - **Progi marży**: copilot 75–80%, agent 60–65%; **globalne z override per scenariusz** (kaskada jak
   `gross_margin`).
 - **Hybrid fee/overage**: abonament pokrywa `target`, overage z narzutem (> 1×) — stawka w ADR 0010.
+
+## Rozszerzenie (Track B, 2026-07-01): nakładki per-kohorta agenta i korytarz Cost-to-Serve
+
+Kontekst: ta sama różnica wartości/kosztu per segment, którą ADR 0011 rozwiązuje dla copilota
+(sufit EVC), dotyczy też agenta — koszt osobowy (`fully_loaded_cost_per_fte_month`) i złożoność
+interakcji (`containment_rate`, `average_handle_time_seconds`) plausibly różnią się między
+segmentami (np. "Enterprise support" vs "SMB support"), a dotychczas `scenario_entity_overrides`
+było wyłącznie scenariuszowe (jedna wartość dla wszystkich kohort).
+
+8. **Nakładki per-kohorta na `scenario_entity_overrides` (opcjonalny `cohort_id`).** Kolumna
+   `cohort_id` (nullable; `NULL` = zachowanie sprzed zmiany, scenariuszowo-szerokie) rozszerza
+   unikalny klucz do `(scenario_id, entity_type, entity_id, COALESCE(cohort_id, ''))`. Nakładki
+   scenariuszowo-szerokie nadal są pre-mutowane na współdzieloną listę usług; nakładki per-kohorta
+   są rozwiązywane **wewnątrz silnika** (gałąź agenta `interaction_driver_type = 'per_customer'`),
+   bo jedna współdzielona lista usług nie potrafi wyrazić "różne wartości dla różnych kohort
+   konsumujących tę samą usługę". Pola z sensowną wariancją per-kohorta:
+   `interactions_per_customer_month`, `containment_rate`, `average_handle_time_seconds`,
+   `fully_loaded_cost_per_fte_month`. Pola świadomie NIE per-kohorta (organizacyjne stałe, nie
+   zmienne per-segment): `baseline_fte` (pułap FTE), `staffing_realization_lag_months`,
+   `productive_hours_per_fte_month`, `monthly_volume`/wzrost (dotyczy tylko drivera `flat`, który
+   z definicji jest agregatem całej bazy). Suma per-kohorta odtwarza dzisiejszą wartość
+   scenariuszową dokładnie, gdy żadna nakładka per-kohorta nie jest ustawiona (regression-safe).
+9. **Korytarz Cost-to-Serve / Deflection Value (agent-owy odpowiednik Pricing Corridor).**
+   Willingness-to-pay (sufit EVC) nie jest ekonomicznie sensowny dla produktu deflekcyjnego —
+   wartość agenta to koszt zastąpionej alternatywy (FTE × czas obsługi × wolumen × containment),
+   nie cena, jaką klient zapłaciłby. Nowy, osobny widok per kohorta:
+   `wartość_unikniona = interactions × containment_rate × (fully_loaded_cost_per_fte_month ÷
+   interactions_handled_per_FTE_month) − AI_COGS − failed_deflection_penalty × (1 − containment_rate)`,
+   liczony na danych ostatniego (steady-state) miesiąca, analogicznie do `buildPricingCorridor`.
+   Renderowany jako osobna zakładka "Cost-to-Serve" (nie przełącznik na istniejącym wykresie EVC),
+   widoczna gdy `driverProfile` to `interaction_only`/`mixed`.
+- MCP: `entity_override_action` zyskuje opcjonalny parametr `cohort_id` (analogiczny do
+  `target_type`/`target_id` w `scenario_override_action`); brak zmiany w bazowym schemacie
+    service_action/cohort_action — różnicowanie żyje wyłącznie w warstwie nakładek.
+
+## Aneks: Corridor Precision Pass (2026-07-02)
+1. **FTE-cost symmetry:** Nadpisania `fully_loaded_cost_per_fte_month` na poziomie kohorty wpływają symetrycznie na kalkulację cash NPV (za pomocą średniej ważonej `fteSaved` stawki), a nie tylko na wizualizację korytarza.
+2. **Churn rate uplift:** Nadpisanie `churn_rate_uplift` na poziomie kohorty jest aplikowane bezpośrednio do danej kohorty (tylko jej retencja ulega zmianie). Pozostałe próby nadpisywania parametrów kohortowych (np. `monthly_churn_rate`) są odrzucane przy zapisie (whitelisting).
+3. **Fixed Cost Allocation:** Koszty stałe scenariusza są alokowane pro-rata na kohorty na podstawie ich udziału w wolumenie interakcji w danym miesiącu.
+4. **Staffing Cap Realizability:** W przypadku ustawienia limitu FTE (`baseline_fte > 0`), uniknięta wartość jest skalowana przez stosunek faktycznie zaoszczędzonych FTE do teoretycznej pojemności. Stosunek ten (`realizationRatio`) i faktyczna uniknięta wartość (`realizableAvoidedValue`) są przekazywane do punktów korytarza i wizualizowane na wykresie.
+5. **Persistence:** Wyniki korytarza `agentDeflectionCorridor` są serializowane jako JSON w kolumnie `agent_deflection_corridor` tabeli `scenario_results`.

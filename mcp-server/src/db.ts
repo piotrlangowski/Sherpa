@@ -17,8 +17,11 @@ console.error(`MCP connecting to database at: ${dbPath}`);
 let db: SherpaDatabase;
 try {
   db = new SherpaDatabase(dbPath);
-  db.pragma('journal_mode = WAL');
+  // busy_timeout must be set BEFORE journal_mode: switching to WAL takes a brief exclusive
+  // lock, and without a timeout a concurrent opener (dashboard + MCP write the same file)
+  // fails immediately with "database is locked".
   db.pragma('busy_timeout = 5000');
+  db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 
   // Self-initialize: create the schema and demo data on first run so the
