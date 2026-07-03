@@ -1078,4 +1078,28 @@ function runDataMigrations(db: DatabaseConnection): void {
     db.prepare("ALTER TABLE pool_tiers ADD COLUMN pool_size_basis TEXT NOT NULL DEFAULT 'absolute'").run();
     db.prepare("DELETE FROM scenario_results WHERE scenario_id IN (SELECT id FROM scenarios WHERE pool_tier_id IS NOT NULL)").run();
   }
+
+  // Migration 24: scenario_results never had a uniqueness constraint on scenario_id, and
+  // saveResults() always generates a fresh row id, so every recalculation left the previous
+  // cached row orphaned instead of replacing it. Duplicate rows made a single scenario appear
+  // multiple times anywhere that LEFT JOINs scenario_results (e.g. scenariosRepository.getAll(),
+  // used by the scenarios list and Compare pages). Dedup down to the most recent row per
+  // scenario, then add a UNIQUE index so INSERT OR REPLACE correctly upserts on scenario_id.
+  const scenarioResultsIndex24 = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_scenario_results_scenario_id'`
+  ).get();
+  if (!scenarioResultsIndex24) {
+    db.prepare(`
+      DELETE FROM scenario_results
+      WHERE rowid NOT IN (
+        SELECT MAX(r.rowid)
+        FROM scenario_results r
+        WHERE r.calculated_at = (
+          SELECT MAX(r2.calculated_at) FROM scenario_results r2 WHERE r2.scenario_id = r.scenario_id
+        )
+        GROUP BY r.scenario_id
+      )
+    `).run();
+    db.prepare(`CREATE UNIQUE INDEX idx_scenario_results_scenario_id ON scenario_results(scenario_id)`).run();
+  }
 }

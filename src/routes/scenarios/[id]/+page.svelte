@@ -25,6 +25,7 @@
   import Edit2 from '@lucide/svelte/icons/edit-2';
   import DollarSign from '@lucide/svelte/icons/dollar-sign';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
+  import Route from '@lucide/svelte/icons/route';
   import ExportButton from '$lib/components/dashboard/ExportButton.svelte';
   import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
 
@@ -37,6 +38,15 @@
   const timeline = $derived(data.timeline);
   const scopeSummary = $derived(data.scopeSummary);
   const resolvedConfigs = $derived(data.resolvedConfigs || []);
+
+  const modelingTypeLabel = $derived.by(() => {
+    switch (scenario.modeling_type) {
+      case 'incremental': return 'Incremental';
+      case 'gtm': return 'GTM';
+      case 'appraisal': return 'Appraisal';
+      default: return 'Appraisal';
+    }
+  });
 
   const diagnostics = $derived(data.diagnostics ?? []);
 
@@ -1370,6 +1380,12 @@
 
   {#if scopeSummary}
     <div class="glass border border-border px-4 py-2.5 rounded-lg flex items-center space-x-2 text-xs select-none">
+      <Route class="h-4 w-4 text-primary shrink-0" />
+      <span class="text-muted-foreground font-semibold">Type:</span>
+      <Badge variant="outline" class="glass-inset py-0.5 px-2 font-semibold">
+        {modelingTypeLabel}
+      </Badge>
+      <span class="text-muted-foreground/60">•</span>
       <Users2 class="h-4 w-4 text-primary shrink-0" />
       <span class="text-muted-foreground font-semibold">Scope Targeting:</span>
       <Badge variant="outline" class="glass-inset py-0.5 px-2 capitalize font-semibold">
