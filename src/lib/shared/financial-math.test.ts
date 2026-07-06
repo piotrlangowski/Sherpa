@@ -428,7 +428,7 @@ describe('Financial Math Module Tests', () => {
         expect(res.message).toContain('Incremental scenarios cannot have copilot monetization overrides');
       });
 
-      it('blocks incremental scenarios with plan seats', () => {
+      it('warns incremental scenarios with plan seats', () => {
         const sc: Scenario = {
           id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.1, scope_type: 'cohorts',
           modeling_type: 'incremental', revenue_carrier: 'cohort', scope_cohorts: [cohort],
@@ -436,8 +436,8 @@ describe('Financial Math Module Tests', () => {
           costs: []
         };
         const res = validateRevenueIntegrity(sc);
-        expect(res.status).toBe('block');
-        expect(res.message).toContain('Incremental scenarios cannot use plan seats');
+        expect(res.status).toBe('warn');
+        expect(res.message).toContain('Plan seats are inactive under the incremental (cohort) carrier');
       });
 
       it('blocks cohort carrier with seats and no bridge', () => {

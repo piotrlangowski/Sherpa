@@ -1,7 +1,9 @@
 import db from '../db';
 import type { Scenario, ScenarioResult, ScopeType, ScopeOverride, RevenueSource, ModelingType, RevenueCarrier, RevenueBridge } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
-import { resolveRevenueModel } from '../../shared/financial-math';
+import { resolveRevenueModel, deriveModelingType } from '../../shared/financial-math';
+import { monetizationRepository } from './monetization';
+import { entityOverridesRepository } from './entity-overrides';
 
 export const scenariosRepository = {
   getAll(): Scenario[] {
@@ -477,6 +479,122 @@ export const scenariosRepository = {
     })();
 
     return this.getById(id)!;
+  },
+
+  duplicate(id: string, overrides?: { name?: string; modeling_type?: ModelingType; revenue_carrier?: RevenueCarrier; revenue_bridge?: RevenueBridge; pool_tier_id?: string | null }): Scenario {
+    const original = this.getById(id);
+    if (!original) throw new Error(`Scenario not found: ${id}`);
+
+    const nextCarrier = overrides && overrides.revenue_carrier !== undefined ? overrides.revenue_carrier : original.revenue_carrier;
+    const nextBridge = overrides && overrides.revenue_bridge !== undefined ? overrides.revenue_bridge : original.revenue_bridge;
+
+    const isCarrierSwapped = overrides && overrides.revenue_carrier !== undefined && overrides.revenue_carrier !== original.revenue_carrier;
+
+    // A carrier swap must store the CANONICAL pair. resolveRevenueModel keeps a
+    // provided modeling_type whenever the pair is invariant-consistent, and e.g.
+    // (appraisal, plan) IS consistent — so passing the original's modeling_type
+    // through would store it, mislabeling the wizard route and the active module.
+    const nextModelingType =
+      overrides && overrides.modeling_type !== undefined
+        ? overrides.modeling_type
+        : isCarrierSwapped
+          ? deriveModelingType(nextCarrier!, nextBridge)
+          : original.modeling_type;
+
+    // Duplicating a duplicate must not compound suffixes
+    // ("X — USE perspective — INC perspective", "X (copy) (copy)").
+    const baseName = original.name
+      .replace(/(?:\s+—\s+(?:INC|GTM|USE|POOL|VAR) perspective)+$/, '')
+      .replace(/(?:\s+\(copy\))+$/, '');
+
+    let name: string;
+    if (overrides?.name) {
+      name = overrides.name;
+    } else if (isCarrierSwapped) {
+      const shortCodes: Record<string, string> = {
+        incremental: 'INC',
+        gtm: 'GTM',
+        appraisal: 'USE'
+      };
+      const shortCode = shortCodes[nextModelingType ?? ''] || 'VAR';
+      name = `${baseName} — ${shortCode} perspective`;
+    } else {
+      name = `${baseName} (copy)`;
+    }
+
+    const nextScenarioInput = {
+      name,
+      description: original.description,
+      projection_months: original.projection_months,
+      discount_rate: original.discount_rate,
+      scope_type: original.scope_type,
+      capex_contingency_pct: original.capex_contingency_pct,
+      modeling_type: nextModelingType,
+      revenue_carrier: nextCarrier,
+      revenue_bridge: nextBridge,
+      pool_tier_id: overrides && overrides.pool_tier_id !== undefined ? overrides.pool_tier_id : original.pool_tier_id,
+      expansion_vertical_id: original.expansion_vertical_id,
+      penetration_baseline_months: original.penetration_baseline_months,
+      ai_acceleration_factor: original.ai_acceleration_factor,
+      ai_som_lift_pct: original.ai_som_lift_pct,
+      evc_nba_annual_value: original.evc_nba_annual_value,
+      evc_extra_positive_value: original.evc_extra_positive_value,
+      evc_negative_value: original.evc_negative_value,
+      evc_capture_ceiling_pct: original.evc_capture_ceiling_pct,
+      evc_capture_target_pct: original.evc_capture_target_pct,
+      evc_capture_floor_pct: original.evc_capture_floor_pct,
+      price_from_evc: original.price_from_evc,
+      adoption_elasticity: original.adoption_elasticity,
+      copilot_margin_threshold: original.copilot_margin_threshold,
+      agent_margin_threshold: original.agent_margin_threshold,
+      evc_reference_cohort_id: original.evc_reference_cohort_id,
+      vertical_ids: (original.scope_verticals ?? []).map(v => v.id),
+      cohort_config_ids: (original.scope_cohorts ?? []).map(c => c.id),
+      scope_overrides: (original.scope_overrides ?? []).map(o => ({
+        target_type: o.target_type,
+        target_id: o.target_id,
+        monthly_churn_rate: o.monthly_churn_rate,
+        monthly_acquisition: o.monthly_acquisition,
+        acquisition_growth_rate: o.acquisition_growth_rate,
+        ai_adoption_rate: o.ai_adoption_rate,
+        retention_floor: o.retention_floor,
+        expansion_rate: o.expansion_rate,
+        arpu_override: o.arpu_override,
+        arpu_uplift: o.arpu_uplift,
+        arpu_uplift_percent: o.arpu_uplift_percent,
+        churn_reduction: o.churn_reduction,
+        acquisition_uplift: o.acquisition_uplift,
+        gross_margin: o.gross_margin,
+        adoption_ramp_months: o.adoption_ramp_months,
+        evc_extra_value_multiplier: o.evc_extra_value_multiplier,
+        evc_negative_value_multiplier: o.evc_negative_value_multiplier,
+        evc_nba_multiplier: o.evc_nba_multiplier
+      })),
+      services: (original.services ?? []).map(s => ({ id: s.id, rollout_month: s.rollout_month })),
+      packs: (original.packs ?? []).map(p => ({ id: p.id, rollout_month: p.rollout_month })),
+      plans: (original.plans ?? []).map(pl => ({ id: pl.id, rollout_month: pl.rollout_month, seats: pl.seats })),
+      cost_ids: (original.costs ?? []).map(c => c.id)
+    };
+
+    let clonedId: string;
+    db.transaction(() => {
+      const cloned = this.create(nextScenarioInput);
+      clonedId = cloned.id;
+
+      // Copy monetization overrides
+      const monetizationCatalog = monetizationRepository.getScenarioOverrides(id);
+      for (const m of monetizationCatalog) {
+        monetizationRepository.upsert(m.entity_type, m.entity_id, m, cloned.id);
+      }
+
+      // Copy entity overrides
+      const entityOverrides = entityOverridesRepository.getScenarioOverrides(id);
+      for (const eo of entityOverrides) {
+        entityOverridesRepository.upsert(cloned.id, eo.entity_type, eo.entity_id, eo, eo.cohort_id);
+      }
+    })();
+
+    return this.getById(clonedId!)!;
   },
 
   update(id: string, data: Partial<Omit<Scenario, 'id' | 'created_at' | 'updated_at' | 'services' | 'packs' | 'plans' | 'costs' | 'results' | 'scope_verticals' | 'scope_cohorts' | 'scope_overrides'>> & {

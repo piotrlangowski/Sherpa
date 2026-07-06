@@ -1,7 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { onMount, tick } from 'svelte';
-  import { formatCurrency, formatPercent, formatMonths, formatNumber, formatIrr, formatPI } from '$lib/utils/format';
+  import { formatCurrency, formatPercent, formatMonths, formatNumber, formatIrr, formatPI, modelingTypeLabel } from '$lib/utils/format';
   import Button from '$lib/components/ui/button/button.svelte';
   import Card from '$lib/components/ui/card/card.svelte';
   import CardHeader from '$lib/components/ui/card/card-header.svelte';
@@ -25,9 +25,12 @@
   import Edit2 from '@lucide/svelte/icons/edit-2';
   import DollarSign from '@lucide/svelte/icons/dollar-sign';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
-  import Route from '@lucide/svelte/icons/route';
+  import Target from '@lucide/svelte/icons/target';
   import ExportButton from '$lib/components/dashboard/ExportButton.svelte';
   import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
+  import TriangulationPanel from '$lib/components/dashboard/TriangulationPanel.svelte';
+  import Copy from '@lucide/svelte/icons/copy';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 
   import { appState } from '$lib/stores/app.svelte';
   import { mode } from 'mode-watcher';
@@ -38,15 +41,9 @@
   const timeline = $derived(data.timeline);
   const scopeSummary = $derived(data.scopeSummary);
   const resolvedConfigs = $derived(data.resolvedConfigs || []);
+  const perspectives = $derived(data.perspectives);
 
-  const modelingTypeLabel = $derived.by(() => {
-    switch (scenario.modeling_type) {
-      case 'incremental': return 'Incremental';
-      case 'gtm': return 'GTM';
-      case 'appraisal': return 'Appraisal';
-      default: return 'Appraisal';
-    }
-  });
+  const modelingTypeLabelStr = $derived(modelingTypeLabel(scenario.modeling_type, scenario.revenue_carrier));
 
   const diagnostics = $derived(data.diagnostics ?? []);
 
@@ -1367,6 +1364,69 @@
       <Button href="/scenarios/{scenario.id}/edit" variant="outline">
         <Edit2 class="h-4 w-4 mr-2" /> Edit Scenario
       </Button>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger>
+          <Button variant="outline">
+            <Copy class="h-4 w-4 mr-2" /> Duplicate As...
+          </Button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="end" class="text-foreground w-56">
+          <DropdownMenu.Item class="cursor-pointer p-0">
+            <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
+              <input type="hidden" name="targetPerspective" value="" />
+              <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline">
+                Exact Copy
+              </button>
+            </form>
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator />
+          <DropdownMenu.Label class="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1 select-none">Perspectives</DropdownMenu.Label>
+          
+          {#if scenario.revenue_carrier !== 'cohort'}
+            <DropdownMenu.Item class="cursor-pointer p-0">
+              <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
+                <input type="hidden" name="targetPerspective" value="cohort" />
+                <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline">
+                  Cohort / Incremental
+                </button>
+              </form>
+            </DropdownMenu.Item>
+          {/if}
+
+          {#if scenario.revenue_carrier !== 'plan'}
+            <DropdownMenu.Item class="cursor-pointer p-0">
+              <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
+                <input type="hidden" name="targetPerspective" value="plan" />
+                <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline">
+                  Plan Seats / GTM
+                </button>
+              </form>
+            </DropdownMenu.Item>
+          {/if}
+
+          {#if scenario.revenue_carrier !== 'feature'}
+            <DropdownMenu.Item class="cursor-pointer p-0">
+              <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
+                <input type="hidden" name="targetPerspective" value="feature" />
+                <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline">
+                  AI Service / Appraisal
+                </button>
+              </form>
+            </DropdownMenu.Item>
+          {/if}
+
+          {#if scenario.revenue_carrier !== 'pool'}
+            <DropdownMenu.Item class="cursor-pointer p-0" disabled={!scenario.pool_tier_id}>
+              <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
+                <input type="hidden" name="targetPerspective" value="pool" />
+                <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline" disabled={!scenario.pool_tier_id}>
+                  Credit Pool
+                </button>
+              </form>
+            </DropdownMenu.Item>
+          {/if}
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
       <Button href="/scenarios/{scenario.id}/sensitivity" variant="outline">
         <TrendingUp class="h-4 w-4 mr-2" /> Run Sensitivity
       </Button>
@@ -1379,11 +1439,11 @@
   </div>
 
   {#if scopeSummary}
-    <div class="glass border border-border px-4 py-2.5 rounded-lg flex items-center space-x-2 text-xs select-none">
-      <Route class="h-4 w-4 text-primary shrink-0" />
-      <span class="text-muted-foreground font-semibold">Type:</span>
+    <div class="glass border border-border px-4 py-2.5 rounded-lg flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs select-none">
+      <Target class="h-4 w-4 text-primary shrink-0" />
+      <span class="text-muted-foreground font-semibold">Goal:</span>
       <Badge variant="outline" class="glass-inset py-0.5 px-2 font-semibold">
-        {modelingTypeLabel}
+        {modelingTypeLabelStr}
       </Badge>
       <span class="text-muted-foreground/60">•</span>
       <Users2 class="h-4 w-4 text-primary shrink-0" />
@@ -2041,6 +2101,12 @@
       </Card>
     </div>
     </div>
+
+    {#if perspectives}
+      <div class="mt-6">
+        <TriangulationPanel triangulation={perspectives} currency={appState.currency} />
+      </div>
+    {/if}
 
     <!-- Explainer Card -->
     {#if scenario.modeling_type !== 'gtm'}

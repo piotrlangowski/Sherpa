@@ -23,6 +23,8 @@ import db from '../db';
 
 import { normalizeScenarioCurrency } from '../../shared/currency.js';
 import type { CalculationResult, MonthlyBreakdown } from '../../shared/types';
+import { computePerspectives } from '../../shared/perspectives.js';
+import type { TriangulationResult } from '../../shared/perspectives.js';
 
 export function buildCreditSettings(settings: Settings): CreditSettings {
   return {
@@ -228,30 +230,11 @@ export function resolveScenarioCohorts(scenario: Scenario): CohortConfig[] {
   return applyScopeOverrides(resolvedCohorts, scenario.scope_overrides ?? []);
 }
 
-export function calculateScenario(scenario: Scenario): CalculationResult {
-  const integrity = validateRevenueIntegrity(scenario);
-  if (integrity.status === 'block') {
-    return {
-      timeline: [],
-      paybackUpper: null,
-      paybackLower: null,
-      npvUpper: 0,
-      npvLower: 0,
-      piUpper: 0,
-      piLower: 0,
-      irr: { monthly: null, annualNominal: null, status: 'blocked_by_integrity', displayable: false },
-      tco: 0,
-      driverProfile: 'seat_only',
-      streamMargins: {
-        copilot: null,
-        agent: null,
-        blended: 0,
-        copilotThreshold: DEFAULT_COPILOT_MARGIN_THRESHOLD,
-        agentThreshold: DEFAULT_AGENT_MARGIN_THRESHOLD
-      }
-    };
-  }
-
+export function assembleRuntimeScenario(scenario: Scenario): {
+  normalizedScenario: Scenario;
+  normalizedProviders: Provider[];
+  settings: Settings;
+} {
   const allProviders = providersRepository.getAll();
   const resolvedConfigs = resolveScenarioCohorts(scenario);
 
@@ -287,6 +270,34 @@ export function calculateScenario(scenario: Scenario): CalculationResult {
     settings.exchange_rates
   );
 
+  return { normalizedScenario, normalizedProviders, settings };
+}
+
+export function calculateScenario(scenario: Scenario): CalculationResult {
+  const integrity = validateRevenueIntegrity(scenario);
+  if (integrity.status === 'block') {
+    return {
+      timeline: [],
+      paybackUpper: null,
+      paybackLower: null,
+      npvUpper: 0,
+      npvLower: 0,
+      piUpper: 0,
+      piLower: 0,
+      irr: { monthly: null, annualNominal: null, status: 'blocked_by_integrity', displayable: false },
+      tco: 0,
+      driverProfile: 'seat_only',
+      streamMargins: {
+        copilot: null,
+        agent: null,
+        blended: 0,
+        copilotThreshold: DEFAULT_COPILOT_MARGIN_THRESHOLD,
+        agentThreshold: DEFAULT_AGENT_MARGIN_THRESHOLD
+      }
+    };
+  }
+
+  const { normalizedScenario, normalizedProviders, settings } = assembleRuntimeScenario(scenario);
   return pureCalculateScenario(normalizedScenario, normalizedProviders, buildCreditSettings(settings));
 }
 
@@ -356,35 +367,14 @@ export function runCaptureCurve(scenario: Scenario): CaptureCurveResult {
     };
   }
 
-  const allProviders = providersRepository.getAll();
-  const resolvedConfigs = resolveScenarioCohorts(scenario);
-
-  const monetized = attachMonetization(scenario);
-  const { services, costs, plans, providers, cohortEntityOverrides } = applyEntityOverrides(monetized, allProviders);
-
-  const clientBase = clientBaseRepository.get();
-  const copilot_margin_threshold = scenario.copilot_margin_threshold ?? clientBase.default_copilot_margin_threshold ?? DEFAULT_COPILOT_MARGIN_THRESHOLD;
-  const agent_margin_threshold = scenario.agent_margin_threshold ?? clientBase.default_agent_margin_threshold ?? DEFAULT_AGENT_MARGIN_THRESHOLD;
-
-  const runtimeScenario = {
-    ...monetized,
-    scope_cohorts: resolvedConfigs,
-    services,
-    costs,
-    plans,
-    copilot_margin_threshold,
-    agent_margin_threshold,
-    cohort_entity_overrides: cohortEntityOverrides,
-    ...resolvePoolTier(scenario)
-  };
-
-  const settings = settingsRepository.get();
-  const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
-    runtimeScenario,
-    providers,
-    settings.currency,
-    settings.exchange_rates
-  );
-
+  const { normalizedScenario, normalizedProviders, settings } = assembleRuntimeScenario(scenario);
   return pureRunCaptureCurve(normalizedScenario, normalizedProviders, buildCreditSettings(settings));
+}
+
+export function computeScenarioPerspectives(scenario: Scenario): TriangulationResult | null {
+  const { normalizedScenario, normalizedProviders, settings } = assembleRuntimeScenario(scenario);
+  const result = computePerspectives(normalizedScenario, normalizedProviders, buildCreditSettings(settings));
+  const filledCount = result.perspectives.filter(p => p.filled).length;
+  if (filledCount < 2) return null;
+  return result;
 }

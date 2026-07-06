@@ -25,6 +25,8 @@ export const load: PageServerLoad = async () => {
       description: s.description,
       projection_months: s.projection_months,
       discount_rate: s.discount_rate,
+      modeling_type: s.modeling_type,
+      revenue_carrier: s.revenue_carrier,
       scope_type: s.scope_type,
       scope_verticals: s.scope_verticals,
       scope_cohorts: s.scope_cohorts,

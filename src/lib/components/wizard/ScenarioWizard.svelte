@@ -896,8 +896,11 @@
   }
 
   const selectedRouteOption = $derived.by(() => {
-    if (modelingType === 'incremental') return 'cohort';
-    if (modelingType === 'gtm') return 'plan';
+    // Route from the RESOLVED carrier, not modeling_type alone: a stored
+    // (appraisal, plan) pair is invariant-consistent, and keying on
+    // modeling_type would open the wrong route on edit.
+    if (resolvedCarrier === 'cohort') return 'cohort';
+    if (resolvedCarrier === 'plan') return 'plan';
     return 'monetization';
   });
 
@@ -1359,6 +1362,11 @@
       <!-- Step 3: Rollout Offerings & Expansion -->
       <div class={currentStep === 3 ? 'block' : 'hidden'}>
         <CardContent class="py-6 space-y-6 max-h-[60vh] overflow-y-auto">
+          {#if modelingType === 'incremental' || resolvedCarrier === 'cohort'}
+            <p class="text-xs text-muted-foreground italic bg-muted/10 p-2.5 rounded border border-border/20 select-none">
+              Selections from other perspectives are kept but inactive.
+            </p>
+          {/if}
           
           <!-- S-Curve Market Expansion (Phase 3) - Only GTM/plan carrier -->
           {#if resolvedCarrier === 'plan'}
@@ -1491,6 +1499,15 @@
           </div>
 
           <hr class="border-border/60" />
+          {:else}
+            <!-- Render hidden inputs to keep perspective data -->
+            {#each data.plans as plan}
+              {#if selectedPlans[plan.id]}
+                <input type="hidden" name="planIds" value={plan.id} />
+                <input type="hidden" name="rollout_month_plan_{plan.id}" value={rolloutPlans[plan.id] ?? 0} />
+                <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
+              {/if}
+            {/each}
           {/if}
 
           <!-- Feature Packs (only if carrier !== cohort) -->
@@ -1524,6 +1541,14 @@
               {/if}
             </div>
             <hr class="border-border/60" />
+          {:else}
+            <!-- Render hidden inputs to keep perspective data -->
+            {#each data.packs as pack}
+              {#if selectedPacks[pack.id]}
+                <input type="hidden" name="packIds" value={pack.id} />
+                <input type="hidden" name="rollout_month_pack_{pack.id}" value={rolloutPacks[pack.id] ?? 0} />
+              {/if}
+            {/each}
           {/if}
 
           <!-- AI Services -->

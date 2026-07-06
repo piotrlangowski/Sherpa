@@ -124,15 +124,20 @@ export function validateScenarioConfig(
     }
   }
 
-  // #2 A plan-carrier scenario with no seats has a revenue source that produces $0.
+  // #2 A plan-carrier scenario with no seats books $0 subscription. The plan
+  // carrier also books service monetization, so "pure cost" is only true when
+  // no service is monetized either.
   if (carrier === 'plan') {
     const totalSeats = plans.reduce((sum, p) => sum + (p.seats ?? 0), 0);
     if (totalSeats <= 0) {
+      const hasMonetization = services.some(s => s.monetization && s.monetization.monetization_type !== 'none');
       diagnostics.push({
         code: 'carrier_no_revenue',
-        severity: 'warn',
+        severity: hasMonetization ? 'info' : 'warn',
         field: 'plans',
-        message: `Revenue carrier is "plan" but total plan seats = 0, so the designated revenue source produces ${money(0)} — the scenario is pure cost. Set seats on at least one plan.`
+        message: hasMonetization
+          ? `Revenue carrier is "plan" but total plan seats = 0, so the subscription component books ${money(0)} — revenue comes only from service monetization riding on the plan carrier. Set seats on at least one plan to book subscription revenue too.`
+          : `Revenue carrier is "plan" but total plan seats = 0, so the designated revenue source produces ${money(0)} — the scenario is pure cost. Set seats on at least one plan.`
       });
     }
   }
@@ -651,9 +656,9 @@ export function validateRevenueIntegrity(scenario: Scenario): RevenueIntegrityRe
     const totalSeats = (scenario.plans ?? []).reduce((sum, p) => sum + (p.seats ?? 0), 0);
     if (totalSeats > 0) {
       return {
-        status: 'block',
-        severity: 'block',
-        message: 'Incremental scenarios cannot use plan seats as a revenue source. Remove seats or switch to GTM modeling.'
+        status: 'warn',
+        severity: 'warn',
+        message: 'Plan seats are inactive under the incremental (cohort) carrier — retained as perspective data, not booked as revenue.'
       };
     }
     if (hasMonetization) {
@@ -2756,7 +2761,7 @@ export function buildPocketMarginWaterfall(
 /**
  * Helper to clone the scenario object deeply to avoid mutating DB-cached records.
  */
-function cloneScenario(scenario: Scenario): Scenario {
+export function cloneScenario(scenario: Scenario): Scenario {
   return JSON.parse(JSON.stringify(scenario));
 }
 

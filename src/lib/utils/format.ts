@@ -1,5 +1,6 @@
-import type { Currency } from '../types';
+import type { Currency, ModelingType, RevenueCarrier } from '../types';
 import { CURRENCIES } from './constants';
+import { resolveCarrier } from '../shared/financial-math';
 
 export function getCurrencySymbol(currency: Currency): string {
   return CURRENCIES.find(c => c.value === currency)?.symbol || '$';
@@ -87,5 +88,42 @@ export function formatIrr(irr: any): string {
 export function formatPI(value: number | null | undefined): string {
   if (value === null || value === undefined) return 'N/A';
   return `${value.toFixed(2)}x`;
+}
+
+// Labels the RESOLVED revenue carrier (same resolveCarrier the engine and the
+// triangulation panel use), not the raw modeling_type. For 'appraisal' scenarios,
+// modeling_type alone under-determines the carrier (cohort/feature/pack/pool are
+// all valid), so reading modeling_type in isolation can label a scenario "Charge
+// for Usage / Add-On" when the money is actually booked by the cohort.
+export function modelingTypeLabel(
+  type: ModelingType | undefined | null,
+  revenueCarrier?: RevenueCarrier | null
+): string {
+  if (!type && !revenueCarrier) return '';
+  const carrier = resolveCarrier(type ?? undefined, revenueCarrier);
+  switch (carrier) {
+    case 'cohort': return 'Improve Existing Clients';
+    case 'plan': return 'Sell New Plan (Seats)';
+    case 'feature':
+    case 'pack': return 'Charge for Usage / Add-On';
+    case 'pool': return 'Unified Credit Pool';
+    default: return '';
+  }
+}
+
+export function modelingTypeShortCode(
+  type: ModelingType | undefined | null,
+  revenueCarrier?: RevenueCarrier | null
+): string {
+  if (!type && !revenueCarrier) return '';
+  const carrier = resolveCarrier(type ?? undefined, revenueCarrier);
+  switch (carrier) {
+    case 'cohort': return 'INC';
+    case 'plan': return 'GTM';
+    case 'feature':
+    case 'pack': return 'USE';
+    case 'pool': return 'POOL';
+    default: return '';
+  }
 }
 

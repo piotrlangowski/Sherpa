@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { mode } from 'mode-watcher';
-  import { formatCurrency, formatPercent, formatNumber, formatMonths, getCurrencySymbol, formatPI, formatIrr } from '$lib/utils/format';
+  import { formatCurrency, formatPercent, formatNumber, formatMonths, getCurrencySymbol, formatPI, formatIrr, modelingTypeLabel, modelingTypeShortCode } from '$lib/utils/format';
   import { appState } from '$lib/stores/app.svelte';
   import { CURRENCIES } from '$lib/utils/constants';
   import Button from '$lib/components/ui/button/button.svelte';
@@ -326,11 +326,16 @@
             />
             <div>
               <span class="text-sm font-bold text-foreground block">{s.name}</span>
-              {#if s.scopeSummary}
-                <span class="text-[9px] text-muted-foreground block mt-0.5">
-                  Scope: <span class="capitalize">{s.scope_type.replace('_', ' ')}</span> ({s.scopeSummary.cohortsCount} cohorts, ~{formatNumber(s.scopeSummary.totalUsers)} users)
-                </span>
-              {/if}
+              <div class="flex items-center gap-1.5 mt-1 select-none">
+                <Badge variant="outline" class="glass-inset py-0 px-2 text-[10px] font-semibold shrink-0" title={modelingTypeLabel(s.modeling_type, s.revenue_carrier)}>
+                  {modelingTypeShortCode(s.modeling_type, s.revenue_carrier)}
+                </Badge>
+                {#if s.scopeSummary}
+                  <span class="text-[9px] text-muted-foreground block leading-tight">
+                    Scope: <span class="capitalize">{s.scope_type.replace('_', ' ')}</span> ({s.scopeSummary.cohortsCount} cohorts, ~{formatNumber(s.scopeSummary.totalUsers)} users)
+                  </span>
+                {/if}
+              </div>
               {#if s.results}
                 <span class="text-[10px] text-muted-foreground block mt-0.5">
                   Incremental NPV: <strong class="text-emerald-600 dark:text-emerald-400 font-mono font-bold">{formatCurrency(s.results.npv, appState.currency, 0)}</strong> • Payback: <strong class="text-cyan-600 dark:text-cyan-400 font-mono font-bold">{s.results.payback_months === 0 ? 'Immediate' : s.results.payback_months !== null ? s.results.payback_months + 'm' : 'Not within horizon'}</strong>
@@ -418,11 +423,16 @@
                     <tr class="hover:bg-foreground/5 transition-all duration-150">
                       <td class="p-3 max-w-[200px]">
                         <span class="font-bold text-foreground block truncate">{s.name}</span>
-                        {#if s.scopeSummary}
-                          <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider block mt-0.5 leading-tight">
-                            {s.scope_type.replace('_', ' ')}: {s.scopeSummary.cohortsCount} {s.scopeSummary.cohortsCount === 1 ? 'cohort' : 'cohorts'} (~{formatNumber(s.scopeSummary.totalUsers)})
-                          </span>
-                        {/if}
+                        <div class="flex items-center gap-1.5 mt-1 select-none">
+                          <Badge variant="outline" class="glass-inset py-0 px-2 text-[10px] font-semibold shrink-0" title={modelingTypeLabel(s.modeling_type, s.revenue_carrier)}>
+                            {modelingTypeShortCode(s.modeling_type, s.revenue_carrier)}
+                          </Badge>
+                          {#if s.scopeSummary}
+                            <span class="text-[9px] text-muted-foreground uppercase font-bold tracking-wider leading-tight">
+                              {s.scope_type.replace('_', ' ')}: {s.scopeSummary.cohortsCount} {s.scopeSummary.cohortsCount === 1 ? 'cohort' : 'cohorts'} (~{formatNumber(s.scopeSummary.totalUsers)})
+                            </span>
+                          {/if}
+                        </div>
                       </td>
                       <td class="p-3 text-right font-mono text-muted-foreground">{s.projection_months}m</td>
                       <td class="p-3 text-right font-mono text-muted-foreground">{formatPercent(s.discount_rate)}</td>
