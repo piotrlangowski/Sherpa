@@ -365,7 +365,8 @@ function getFullScenario(scenarioId: string): Scenario | null {
       SELECT id, name, vertical_id, current_users, monthly_acquisition,
              acquisition_growth_rate, monthly_churn_rate, retention_floor,
              monthly_expansion_rate, ai_adoption_rate, base_arpu,
-             arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift
+             arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+             gross_margin, adoption_ramp_months
       FROM cohort_configs
     `).all() as any[];
   } else if (s.scope_type === 'verticals') {
@@ -373,7 +374,8 @@ function getFullScenario(scenarioId: string): Scenario | null {
       SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition,
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor,
              c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
-             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift
+             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.gross_margin, c.adoption_ramp_months
       FROM cohort_configs c
       JOIN verticals v ON c.vertical_id = v.id
       JOIN scenario_verticals sv ON sv.vertical_id = v.id
@@ -385,7 +387,8 @@ function getFullScenario(scenarioId: string): Scenario | null {
       SELECT c.id, c.name, c.vertical_id, c.current_users, c.monthly_acquisition,
              c.acquisition_growth_rate, c.monthly_churn_rate, c.retention_floor,
              c.monthly_expansion_rate, c.ai_adoption_rate, c.base_arpu,
-             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift
+             c.arpu_uplift, c.arpu_uplift_percent, c.churn_reduction, c.acquisition_uplift,
+             c.gross_margin, c.adoption_ramp_months
       FROM cohort_configs c
       JOIN scenario_cohorts sc ON sc.cohort_config_id = c.id
       WHERE sc.scenario_id = ?
@@ -397,6 +400,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
     SELECT id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
            acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
            arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+           gross_margin, adoption_ramp_months,
            evc_extra_value_multiplier, evc_negative_value_multiplier, evc_nba_multiplier
     FROM scenario_scope_overrides
     WHERE scenario_id = ?
@@ -3270,9 +3274,11 @@ server.tool(
           if (scenario.modeling_type === 'incremental' || carrier === 'cohort') {
             throw new Error(`Monetization overrides are disabled for incremental or cohort-carrier scenarios.`);
           }
-          const expectedEntityType = carrier === 'feature' ? 'service' : carrier;
-          if (entityType !== expectedEntityType) {
-            throw new Error(`Monetization overrides for this scenario can only be set on '${expectedEntityType}' entities (since the resolved carrier is '${carrier}').`);
+          if (carrier !== 'composite') {
+            const expectedEntityType = carrier === 'feature' ? 'service' : carrier;
+            if (entityType !== expectedEntityType) {
+              throw new Error(`Monetization overrides for this scenario can only be set on '${expectedEntityType}' entities (since the resolved carrier is '${carrier}').`);
+            }
           }
         }
         if (monType === 'none') {

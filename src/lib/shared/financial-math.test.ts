@@ -3592,6 +3592,114 @@ describe('ADR 0012 amendment — two knobs', () => {
       expect(result.compositeBreakdown?.agentMonetization.revenuePv).toBeCloseTo(10000, 0);
     });
   });
+
+  describe('adoption_ramp_months regression — ramp duration MUST affect NPV', () => {
+    // Minimal fixtures for ramp regression testing
+    const rampProvider: Provider = {
+      id: 'rp1', name: 'RampProvider', model_name: 'gpt-4', input_price: 5, output_price: 15,
+      is_predefined: true, currency: 'USD',
+      input_tokens_per_credit: 1000000, output_tokens_per_credit: 333333, updated_at: ''
+    };
+
+    const rampCohort: CohortConfig = {
+      id: 'rc1', name: 'Ramp Cohort',
+      current_users: 5250,
+      monthly_acquisition: 0,
+      acquisition_growth_rate: 0,
+      monthly_churn_rate: 0.02,
+      retention_floor: 0.50,
+      monthly_expansion_rate: 0,
+      ai_adoption_rate: 0.08,
+      base_arpu: 100,
+      arpu_uplift: 349,
+      gross_margin: 0.90,
+      adoption_ramp_months: 3
+    };
+
+    it('cohort carrier: ramp 3 vs ramp 11 produces different NPVs', () => {
+      const baseScenario: Scenario = {
+        id: 'ramp-cohort-sc', name: 'Ramp Cohort Test',
+        projection_months: 12,
+        discount_rate: 0.10,
+        scope_type: 'cohorts',
+        scope_cohorts: [{ ...rampCohort, adoption_ramp_months: 3 }],
+        services: [],
+        costs: []
+      };
+      const resultsRamp3 = calculateScenario(baseScenario, [rampProvider]);
+
+      const scenarioRamp11 = {
+        ...baseScenario,
+        scope_cohorts: [{ ...rampCohort, adoption_ramp_months: 11 }]
+      };
+      const resultsRamp11 = calculateScenario(scenarioRamp11, [rampProvider]);
+
+      // Longer ramp → delayed revenue → lower NPV
+      expect(resultsRamp3.npvUpper).toBeGreaterThan(resultsRamp11.npvUpper);
+      // The difference should be non-trivial (at least 1%)
+      const diffPct = (resultsRamp3.npvUpper - resultsRamp11.npvUpper) / resultsRamp3.npvUpper;
+      expect(diffPct).toBeGreaterThan(0.01);
+    });
+
+    it('composite carrier + addon service: ramp 3 vs ramp 11 produces different NPVs', () => {
+      const addonService: Service & { rollout_month: number; monetization?: MonetizationConfig } = {
+        id: 'ramp-svc1', name: 'AI Insights Addon', status: 'planned',
+        provider_id: 'rp1',
+        avg_input_tokens: 1000, avg_output_tokens: 500,
+        avg_requests_per_user_month: 10,
+        fixed_cost_per_month: 0,
+        service_type: 'agent',
+        rollout_month: 0,
+        monetization: { monetization_type: 'addon', addon_monthly_fee: 50 }
+      };
+
+      const compositeBase: Scenario = {
+        id: 'ramp-comp-sc', name: 'Ramp Composite Test',
+        projection_months: 12,
+        discount_rate: 0.10,
+        scope_type: 'cohorts',
+        modeling_type: 'composite',
+        revenue_carrier: 'composite',
+        arpu_uplift_includes_monetization: false,
+        scope_cohorts: [{ ...rampCohort, arpu_uplift: 0, adoption_ramp_months: 3 }],
+        services: [addonService],
+        costs: []
+      };
+      const resultsRamp3 = calculateScenario(compositeBase, [rampProvider]);
+
+      const compositeRamp11 = {
+        ...compositeBase,
+        scope_cohorts: [{ ...rampCohort, arpu_uplift: 0, adoption_ramp_months: 11 }]
+      };
+      const resultsRamp11 = calculateScenario(compositeRamp11, [rampProvider]);
+
+      // Longer ramp → fewer AI users in early months → lower addon revenue → lower NPV
+      expect(resultsRamp3.npvUpper).toBeGreaterThan(resultsRamp11.npvUpper);
+      const diffPct = (resultsRamp3.npvUpper - resultsRamp11.npvUpper) / resultsRamp3.npvUpper;
+      expect(diffPct).toBeGreaterThan(0.01);
+    });
+
+    it('ramp=0 (instant adoption) should produce the highest NPV', () => {
+      const baseScenario: Scenario = {
+        id: 'ramp-zero-sc', name: 'Ramp Zero Test',
+        projection_months: 12,
+        discount_rate: 0.10,
+        scope_type: 'cohorts',
+        scope_cohorts: [{ ...rampCohort, adoption_ramp_months: 0 }],
+        services: [],
+        costs: []
+      };
+      const resultsNoRamp = calculateScenario(baseScenario, [rampProvider]);
+
+      const scenarioRamp6 = {
+        ...baseScenario,
+        scope_cohorts: [{ ...rampCohort, adoption_ramp_months: 6 }]
+      };
+      const resultsRamp6 = calculateScenario(scenarioRamp6, [rampProvider]);
+
+      expect(resultsNoRamp.npvUpper).toBeGreaterThan(resultsRamp6.npvUpper);
+    });
+  });
 });
 
 

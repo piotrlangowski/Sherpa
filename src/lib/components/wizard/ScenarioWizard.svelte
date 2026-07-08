@@ -133,6 +133,8 @@
     arpu_uplift_percent: number | null;
     churn_reduction: number | null;
     acquisition_uplift: number | null;
+    gross_margin: number | null;
+    adoption_ramp_months: number | null;
   };
   let overrides = $state<OverrideRow[]>([]);
   let openOverrides = $state<Record<string, boolean>>({});
@@ -147,7 +149,9 @@
     arpu_uplift: o.arpu_uplift !== null ? parseFloat(o.arpu_uplift as any) : null,
     arpu_uplift_percent: o.arpu_uplift_percent !== null ? o.arpu_uplift_percent / 100 : null,
     churn_reduction: o.churn_reduction !== null ? o.churn_reduction / 100 : null,
-    acquisition_uplift: o.acquisition_uplift !== null ? o.acquisition_uplift / 100 : null
+    acquisition_uplift: o.acquisition_uplift !== null ? o.acquisition_uplift / 100 : null,
+    gross_margin: o.gross_margin !== null ? o.gross_margin / 100 : null,
+    adoption_ramp_months: o.adoption_ramp_months !== null ? parseInt(o.adoption_ramp_months as any) : null
   }))));
 
   // Sync overrides structure to selection
@@ -164,7 +168,8 @@
           target_type: 'all_clients', target_id: 'all', name: 'Global Client Base',
           monthly_churn_rate: null, monthly_acquisition: null, acquisition_growth_rate: null,
           ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null,
-          arpu_uplift: null, arpu_uplift_percent: null, churn_reduction: null, acquisition_uplift: null
+          arpu_uplift: null, arpu_uplift_percent: null, churn_reduction: null, acquisition_uplift: null,
+          gross_margin: null, adoption_ramp_months: null
         });
       } else if (_scopeType === 'cohorts') {
         for (const c of data.cohorts) {
@@ -174,7 +179,8 @@
               target_type: 'cohort', target_id: c.id, name: c.name,
               monthly_churn_rate: null, monthly_acquisition: null, acquisition_growth_rate: null,
               ai_adoption_rate: null, retention_floor: null, expansion_rate: null, arpu_override: null,
-              arpu_uplift: null, arpu_uplift_percent: null, churn_reduction: null, acquisition_uplift: null
+              arpu_uplift: null, arpu_uplift_percent: null, churn_reduction: null, acquisition_uplift: null,
+              gross_margin: null, adoption_ramp_months: null
             });
           }
         }
@@ -311,7 +317,9 @@
             arpu_uplift: ov.arpu_uplift,
             arpu_uplift_percent: ov.arpu_uplift_percent !== null ? Math.round(ov.arpu_uplift_percent * 1000) / 10 : null,
             churn_reduction: ov.churn_reduction !== null ? Math.round(ov.churn_reduction * 1000) / 10 : null,
-            acquisition_uplift: ov.acquisition_uplift !== null ? Math.round(ov.acquisition_uplift * 1000) / 10 : null
+            acquisition_uplift: ov.acquisition_uplift !== null ? Math.round(ov.acquisition_uplift * 1000) / 10 : null,
+            gross_margin: ov.gross_margin !== null && ov.gross_margin !== undefined ? ov.gross_margin * 100 : null,
+            adoption_ramp_months: ov.adoption_ramp_months ?? null
           };
         });
       } else {
@@ -369,7 +377,9 @@
       arpu_uplift: o.arpu_uplift !== null ? parseFloat(o.arpu_uplift as any) : null,
       arpu_uplift_percent: o.arpu_uplift_percent !== null ? o.arpu_uplift_percent / 100 : null,
       churn_reduction: o.churn_reduction !== null ? o.churn_reduction / 100 : null,
-      acquisition_uplift: o.acquisition_uplift !== null ? o.acquisition_uplift / 100 : null
+      acquisition_uplift: o.acquisition_uplift !== null ? o.acquisition_uplift / 100 : null,
+      gross_margin: o.gross_margin !== null ? o.gross_margin / 100 : null,
+      adoption_ramp_months: o.adoption_ramp_months !== null ? parseInt(o.adoption_ramp_months as any) : null
     }));
     return resolveScenarioCohortsClient(scopeType, data.cohorts, selectedCohorts, formattedOverrides as any[]);
   });
@@ -385,7 +395,9 @@
       arpu_uplift: o.arpu_uplift !== null ? parseFloat(o.arpu_uplift as any) : null,
       arpu_uplift_percent: o.arpu_uplift_percent !== null ? o.arpu_uplift_percent / 100 : null,
       churn_reduction: o.churn_reduction !== null ? o.churn_reduction / 100 : null,
-      acquisition_uplift: o.acquisition_uplift !== null ? o.acquisition_uplift / 100 : null
+      acquisition_uplift: o.acquisition_uplift !== null ? o.acquisition_uplift / 100 : null,
+      gross_margin: o.gross_margin !== null ? o.gross_margin / 100 : null,
+      adoption_ramp_months: o.adoption_ramp_months !== null ? parseInt(o.adoption_ramp_months as any) : null
     }));
 
     return buildDraftScenario(
@@ -846,7 +858,9 @@
     arpu_uplift: { label: 'AI ARPU Uplift ($ Flat)', chip: 'ARPU Uplift $', isPercent: false, symbol: '$' },
     arpu_uplift_percent: { label: 'AI ARPU Uplift (%)', chip: 'ARPU Uplift %', isPercent: true, symbol: '%' },
     churn_reduction: { label: 'AI Churn Reduction', chip: 'Churn Reduction', isPercent: true, symbol: '%' },
-    acquisition_uplift: { label: 'AI Acquisition Uplift', chip: 'Acquisition Uplift', isPercent: true, symbol: '%' }
+    acquisition_uplift: { label: 'AI Acquisition Uplift', chip: 'Acquisition Uplift', isPercent: true, symbol: '%' },
+    gross_margin: { label: 'Gross Margin (%)', chip: 'Gross Margin', isPercent: true, symbol: '%' },
+    adoption_ramp_months: { label: 'Adoption Ramp (months)', chip: 'Ramp Months', isPercent: false, symbol: 'mo' }
   };
 
   function getCohortListForTarget(ov: OverrideRow) {
@@ -1372,6 +1386,14 @@
                             <div class="space-y-1">
                               <Label class="text-xs font-semibold">AI Adoption Rate (%)</Label>
                               <Input type="number" step="0.1" min="0" max="100" placeholder="Inherit" bind:value={ov.ai_adoption_rate} class="bg-background text-xs font-mono" />
+                            </div>
+                            <div class="space-y-1">
+                              <Label class="text-xs font-semibold">Gross Margin (%)</Label>
+                              <Input type="number" step="0.1" min="0" max="100" placeholder="Inherit" bind:value={ov.gross_margin} class="bg-background text-xs font-mono" />
+                            </div>
+                            <div class="space-y-1">
+                              <Label class="text-xs font-semibold">Adoption Ramp (months)</Label>
+                              <Input type="number" step="1" min="0" max="120" placeholder="Inherit" bind:value={ov.adoption_ramp_months} class="bg-background text-xs font-mono" />
                             </div>
                           </div>
                         </div>
