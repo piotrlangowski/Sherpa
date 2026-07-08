@@ -29,6 +29,7 @@ import type {
   RevenueBridge,
   RevenueIntegrityResult,
   RevenueIntegrityStatus,
+  CompositeBreakdown,
   Settings,
   ScenarioDiagnostic,
   EvcInputs,
@@ -464,6 +465,7 @@ export function resolveCarrier(
   switch (modelingType) {
     case 'incremental': return 'cohort';
     case 'gtm':         return 'plan';
+    case 'composite':   return 'composite';
     case 'appraisal':   return revenueCarrier ?? 'cohort';
     default:            return revenueCarrier ?? 'cohort';
   }
@@ -484,6 +486,7 @@ export function deriveModelingType(
   revenueBridge?: RevenueBridge | null
 ): ModelingType {
   switch (carrier) {
+    case 'composite': return 'composite';
     case 'plan':    return 'gtm';
     case 'pack':
     case 'feature':
@@ -535,6 +538,112 @@ export function resolveRevenueModel(input: {
   }
   // 4. Nothing specified.
   return { modeling_type: 'incremental', revenue_carrier: 'cohort' };
+}
+
+export interface CompositeComponentResolution {
+  role: 'books' | 'folded' | 'pool_billed' | 'blocked' | 'empty';
+  reason: string;
+}
+
+export interface CompositeComponentsResolved {
+  cohort: CompositeComponentResolution;
+  plan: CompositeComponentResolution;
+  copilotMonetization: CompositeComponentResolution;
+  agentMonetization: CompositeComponentResolution;
+  pool: CompositeComponentResolution;
+  agentOutcome: CompositeComponentResolution;
+  copilotOutcome: CompositeComponentResolution;
+  unmonetizedLabor: CompositeComponentResolution;
+}
+
+export function resolveCompositeComponents(scenario: Scenario): CompositeComponentsResolved {
+  const hasCohort = (scenario.scope_cohorts ?? []).length > 0;
+  const totalSeats = (scenario.plans ?? []).reduce((sum, p) => sum + (p.seats ?? 0), 0);
+  const bridge = scenario.revenue_bridge;
+  const includesMon = scenario.arpu_uplift_includes_monetization ?? true;
+  const poolServiceIds = new Set((scenario.pool_burn_rates ?? []).map(br => br.service_id));
+  const hasPool = !!scenario.pool_tier_id;
+
+  const hasCopilotMon = (scenario.services ?? []).some(s => s.service_type === 'copilot' && s.monetization && s.monetization.monetization_type !== 'none' && s.monetization.monetization_type !== 'outcome');
+  const hasAgentMon = (scenario.services ?? []).some(s => s.service_type === 'agent' && s.monetization && s.monetization.monetization_type !== 'none' && s.monetization.monetization_type !== 'outcome');
+  
+  const hasCopilotOutcome = (scenario.services ?? []).some(s => s.service_type === 'copilot' && s.monetization?.monetization_type === 'outcome');
+  const hasAgentOutcome = (scenario.services ?? []).some(s => s.service_type === 'agent' && s.monetization?.monetization_type === 'outcome');
+
+  const hasUnmonetizedAgents = (scenario.services ?? []).some(s => s.service_type === 'agent' && (!s.monetization || s.monetization.monetization_type === 'none'));
+
+  // 1. Cohort
+  const cohort: CompositeComponentResolution = hasCohort
+    ? { role: 'books', reason: 'Cohort adoption books ARPU uplift' }
+    : { role: 'empty', reason: 'No cohorts configured' };
+
+  // 2. Plan
+  let plan: CompositeComponentResolution;
+  if (totalSeats === 0) {
+    plan = { role: 'empty', reason: 'No plan seats configured' };
+  } else if (!bridge) {
+    plan = { role: 'blocked', reason: 'Seats configured but no bridge selected' };
+  } else if (bridge === 'separate_market') {
+    plan = { role: 'books', reason: 'Plan books separate market subscriptions' };
+  } else {
+    plan = { role: 'folded', reason: 'Plan is upsell on cohort (folded into cohort uplift)' };
+  }
+
+  // 3. Copilot Monetization
+  let copilotMonetization: CompositeComponentResolution;
+  if (!hasCopilotMon) {
+    copilotMonetization = { role: 'empty', reason: 'No copilot monetization configured' };
+  } else if (includesMon) {
+    copilotMonetization = { role: 'folded', reason: 'Copilot monetization is folded (cross-check) into cohort uplift' };
+  } else {
+    copilotMonetization = { role: 'books', reason: 'Copilot monetization books additive revenue' };
+  }
+
+  // 4. Agent Monetization
+  let agentMonetization: CompositeComponentResolution;
+  if (!hasAgentMon) {
+    agentMonetization = { role: 'empty', reason: 'No agent monetization configured' };
+  } else {
+    const allInPool = (scenario.services ?? [])
+      .filter(s => s.service_type === 'agent' && s.monetization && s.monetization.monetization_type !== 'none' && s.monetization.monetization_type !== 'outcome')
+      .every(s => poolServiceIds.has(s.id));
+    if (hasPool && allInPool) {
+      agentMonetization = { role: 'pool_billed', reason: 'Agent monetization is pool-billed' };
+    } else {
+      agentMonetization = { role: 'books', reason: 'Agent monetization books additive revenue' };
+    }
+  }
+
+  // 5. Pool
+  const pool: CompositeComponentResolution = hasPool
+    ? { role: 'books', reason: 'Pool tier fee and overage books revenue' }
+    : { role: 'empty', reason: 'No credit pool tier configured' };
+
+  // 6. Agent Outcome
+  const agentOutcome: CompositeComponentResolution = hasAgentOutcome
+    ? { role: 'books', reason: 'Agent outcome-based pricing books disjoint revenue' }
+    : { role: 'empty', reason: 'No agent outcome monetization configured' };
+
+  // 7. Copilot Outcome
+  const copilotOutcome: CompositeComponentResolution = hasCopilotOutcome
+    ? { role: 'books', reason: 'Copilot outcome-based pricing books disjoint revenue' }
+    : { role: 'empty', reason: 'No copilot outcome monetization configured' };
+
+  // 8. Unmonetized Labor
+  const unmonetizedLabor: CompositeComponentResolution = hasUnmonetizedAgents
+    ? { role: 'books', reason: 'Unmonetized agent labor savings book displaced cost value' }
+    : { role: 'empty', reason: 'No unmonetized agent services' };
+
+  return {
+    cohort,
+    plan,
+    copilotMonetization,
+    agentMonetization,
+    pool,
+    agentOutcome,
+    copilotOutcome,
+    unmonetizedLabor
+  };
 }
 
 /**
@@ -614,34 +723,50 @@ export function validateRevenueIntegrity(scenario: Scenario): RevenueIntegrityRe
   const mt = scenario.modeling_type ?? 'appraisal';
   const carrier = resolveCarrier(mt, scenario.revenue_carrier);
 
-  // ADR 0010 Decision 4 — billing-homogeneity invariant. A shared credit pool only makes sense
-  // when every service drawing on it bills the same way; outcome pricing is Approach A and is
-  // never compatible with the pool (Approach B unifies billing into one tier fee instead).
-  // ADR 0012 Decision 2 — scoped to pool MEMBERS only (present in pool_burn_rates); a service in
-  // the same scenario but outside the pool books its own revenue independently and is free to use
-  // any monetization_type, so it must not trip this check.
-  if (carrier === 'pool') {
+  // ADR 0010 & ADR 0014 — billing-homogeneity invariant.
+  if (carrier === 'pool' || carrier === 'composite') {
     const poolServiceIds = new Set((scenario.pool_burn_rates ?? []).map(br => br.service_id));
-    const types = new Set(
-      (scenario.services ?? [])
-        .filter(s => poolServiceIds.has(s.id))
-        .map(s => s.monetization?.monetization_type)
-        .filter((t): t is MonetizationType => !!t && t !== 'none')
-    );
-    if (types.size > 1 || types.has('outcome')) {
-      return {
-        status: 'block',
-        severity: 'block',
-        message: `Credit-pool scenarios require every pool service to share the same billing model (addon, usage, or hybrid) — found: ${types.size > 0 ? [...types].join(', ') : 'none'}. Outcome-based pricing is Approach A and is not compatible with a shared pool.`
-      };
+    if (poolServiceIds.size > 0) {
+      const types = new Set(
+        (scenario.services ?? [])
+          .filter(s => poolServiceIds.has(s.id))
+          .map(s => s.monetization?.monetization_type)
+          .filter((t): t is MonetizationType => !!t && t !== 'none')
+      );
+      if (types.size > 1 || types.has('outcome')) {
+        return {
+          status: 'block',
+          severity: 'block',
+          message: `Credit-pool scenarios require every pool service to share the same billing model (addon, usage, or hybrid) — found: ${types.size > 0 ? [...types].join(', ') : 'none'}. Outcome-based pricing is Approach A and is not compatible with a shared pool.`
+        };
+      }
     }
   }
 
+  // ADR 0014 — composite carrier validations
+  if (carrier === 'composite') {
+    const totalSeats = (scenario.plans ?? []).reduce((sum, p) => sum + (p.seats ?? 0), 0);
+    if (totalSeats > 0 && !scenario.revenue_bridge) {
+      return {
+        status: 'block',
+        severity: 'block',
+        message: `Composite scenario has ${totalSeats} plan seats but no revenue bridge defined. Choose 'Upsell on Cohort' or 'Separate Market'.`
+      };
+    }
+    const hasCopilotMon = (scenario.services ?? []).some(
+      s => s.service_type === 'copilot' && s.monetization && s.monetization.monetization_type !== 'none' && s.monetization.monetization_type !== 'outcome'
+    );
+    if (hasCopilotMon && (scenario.arpu_uplift_includes_monetization ?? true)) {
+      return {
+        status: 'warn',
+        severity: 'warn',
+        message: 'Copilot monetization is currently folded (cross-checked) into cohort uplift. Set "arpu_uplift_includes_monetization" to false to book separate additive revenue.'
+      };
+    }
+    return { status: 'ok', severity: 'ok', message: null };
+  }
+
   // ADR 0001 — incremental scenarios must not have non-disjoint monetization or seats.
-  // ADR 0009 Decision 1 relaxes this for monetized *agent* services: their outcome
-  // revenue is a disjoint second stream alongside cohort ARPU uplift, so it is
-  // legal (warn, not block). A monetized *copilot* service still shares the
-  // cohort's seat event and stays hard-blocked.
   if (mt === 'incremental') {
     const hasMonetization = (scenario.services ?? []).some(
       s => s.monetization && s.monetization.monetization_type !== 'none'
@@ -1531,6 +1656,16 @@ export function calculateScenario(
   let sumCopilotEvcValue = 0;
   let sumAgentEvcValue = 0;
 
+  const cohortUpliftFlowUpper: number[] = [];
+  const planSubscriptionFlowUpper: number[] = [];
+  const copilotMonetizationFlowUpper: number[] = [];
+  const agentMonetizationFlowUpper: number[] = [];
+  const agentOutcomeFlowUpper: number[] = [];
+  const copilotOutcomeFlowUpper: number[] = [];
+  const unmonetizedLaborFlowUpper: number[] = [];
+  const poolFeeFlowUpper: number[] = [];
+  const poolOverageFlowUpper: number[] = [];
+
   const serviceRealizableHistory = new Map<string, number[]>();
 
   // ADR 0009 Track B — per-cohort agent deflection aggregates, snapshotted every month and
@@ -1652,17 +1787,20 @@ export function calculateScenario(
     let planSubscriptionRevenueUpper = 0;
     let planSubscriptionRevenueLower = 0;
 
-    // Carrier-based revenue gating (ADR 0001–0004)
     const carrier = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
-    // ADR 0012 Decision 2 — a 'pool' carrier also books ordinary monetization revenue, but only
-    // for services NOT in the pool's burn-rate table. Pool-member services' revenue is the tier
-    // fee + overage computed later in this loop; including them here too would double-count.
-    const carrierIncludesMonetization = carrier === 'plan' || carrier === 'feature' || carrier === 'pack' || carrier === 'pool';
+    const carrierIncludesMonetization = carrier === 'plan' || carrier === 'feature' || carrier === 'pack' || carrier === 'pool' || carrier === 'composite';
 
     if (carrierIncludesMonetization) {
       const activeServices = (scenario.services ?? [])
         .filter(s => t >= (s.rollout_month ?? 0))
-        .filter(s => carrier !== 'pool' || !poolBurnRateMap.has(s.id));
+        .filter(s => {
+          if (carrier === 'pool' && poolBurnRateMap.has(s.id)) return false;
+          if (carrier === 'composite') {
+            if (poolBurnRateMap.has(s.id)) return false;
+            if (s.service_type === 'copilot' && (scenario.arpu_uplift_includes_monetization ?? true) !== false) return false;
+          }
+          return true;
+        });
       if (expansionCurve) {
         monetizationUpper = calculateMonetizationRevenue(activeAiUsersUpper, activeServices, creditSettings, providersMap);
         monetizationLower = calculateMonetizationRevenue(activeAiUsersLower, activeServices, creditSettings, providersMap);
@@ -1672,30 +1810,50 @@ export function calculateScenario(
       }
     }
 
-    if (carrier === 'plan' || (carrier === 'cohort' && scenario.revenue_bridge === 'separate_market')) {
-      if (expansionCurve) {
-        for (const plan of scenario.plans ?? []) {
-          if (t >= (plan.rollout_month ?? 0)) {
-            const basePrice = plan.base_price ?? 0;
-            // Incremental seats = (with AI - without AI)
-            const seatsUpper = Math.max(0, expansionCurve.withAiUpper[t] - expansionCurve.withoutAi[t]);
-            const seatsLower = Math.max(0, expansionCurve.withAiLower[t] - expansionCurve.withoutAi[t]);
-            
-            planSubscriptionRevenueUpper += basePrice * seatsUpper;
-            planSubscriptionRevenueLower += basePrice * seatsLower;
-          }
+    if (expansionCurve) {
+      for (const plan of scenario.plans ?? []) {
+        if (t >= (plan.rollout_month ?? 0)) {
+          const basePrice = plan.base_price ?? 0;
+          // Incremental seats = (with AI - without AI)
+          const seatsUpper = Math.max(0, expansionCurve.withAiUpper[t] - expansionCurve.withoutAi[t]);
+          const seatsLower = Math.max(0, expansionCurve.withAiLower[t] - expansionCurve.withoutAi[t]);
+          
+          planSubscriptionRevenueUpper += basePrice * seatsUpper;
+          planSubscriptionRevenueLower += basePrice * seatsLower;
         }
-      } else {
-        let planSubscriptionRevenue = 0;
-        for (const plan of scenario.plans ?? []) {
-          if (t >= (plan.rollout_month ?? 0)) {
-            planSubscriptionRevenue += (plan.base_price ?? 0) * (plan.seats ?? 0);
-          }
-        }
-        planSubscriptionRevenueUpper = planSubscriptionRevenue;
-        planSubscriptionRevenueLower = planSubscriptionRevenue;
       }
+    } else {
+      let planSubscriptionRevenue = 0;
+      for (const plan of scenario.plans ?? []) {
+        if (t >= (plan.rollout_month ?? 0)) {
+          planSubscriptionRevenue += (plan.base_price ?? 0) * (plan.seats ?? 0);
+        }
+      }
+      planSubscriptionRevenueUpper = planSubscriptionRevenue;
+      planSubscriptionRevenueLower = planSubscriptionRevenue;
     }
+
+    const copilotNonPoolServices = (scenario.services ?? [])
+      .filter(s => t >= (s.rollout_month ?? 0))
+      .filter(s => s.service_type === 'copilot' && !poolBurnRateMap.has(s.id));
+    const agentNonPoolServices = (scenario.services ?? [])
+      .filter(s => t >= (s.rollout_month ?? 0))
+      .filter(s => s.service_type === 'agent' && !poolBurnRateMap.has(s.id));
+
+    let copilotMonUpper = 0;
+    let agentMonUpper = 0;
+    if (expansionCurve) {
+      copilotMonUpper = calculateMonetizationRevenue(activeAiUsersUpper, copilotNonPoolServices, creditSettings, providersMap).totalRevenue;
+      agentMonUpper = calculateMonetizationRevenue(activeAiUsersUpper, agentNonPoolServices, creditSettings, providersMap).totalRevenue;
+    } else {
+      copilotMonUpper = calculateMonetizationRevenue(activeAiUsers, copilotNonPoolServices, creditSettings, providersMap).totalRevenue;
+      agentMonUpper = calculateMonetizationRevenue(activeAiUsers, agentNonPoolServices, creditSettings, providersMap).totalRevenue;
+    }
+
+    copilotMonetizationFlowUpper.push(copilotMonUpper);
+    agentMonetizationFlowUpper.push(agentMonUpper);
+    cohortUpliftFlowUpper.push(upperMarginSum);
+    planSubscriptionFlowUpper.push(planSubscriptionRevenueUpper);
 
     let upperRevenue: number;
     let lowerRevenue: number;
@@ -1710,16 +1868,17 @@ export function calculateScenario(
         lowerRevenue = monetizationLower.totalRevenue + planSubscriptionRevenueLower;
         break;
       case 'pool':
-        // Non-pool-member services' monetization revenue (ADR 0012 Decision 2) is known now;
-        // the pool tier's own fee + overage (ADR 0010) depend on this month's consumed credits,
-        // only known after the per-service loop below runs — added onto this in there, not here.
         upperRevenue = monetizationUpper.totalRevenue;
         lowerRevenue = monetizationLower.totalRevenue;
         break;
+      case 'composite':
+        upperRevenue = upperMarginSum + (scenario.revenue_bridge === 'separate_market' ? planSubscriptionRevenueUpper : 0) + monetizationUpper.totalRevenue;
+        lowerRevenue = lowerMarginSum + (scenario.revenue_bridge === 'separate_market' ? planSubscriptionRevenueLower : 0) + monetizationLower.totalRevenue;
+        break;
       case 'cohort':
       default:
-        upperRevenue = upperMarginSum + planSubscriptionRevenueUpper;
-        lowerRevenue = lowerMarginSum + planSubscriptionRevenueLower;
+        upperRevenue = upperMarginSum + (scenario.revenue_bridge === 'separate_market' ? planSubscriptionRevenueUpper : 0);
+        lowerRevenue = lowerMarginSum + (scenario.revenue_bridge === 'separate_market' ? planSubscriptionRevenueLower : 0);
     }
 
     totalRevenueLowerSum += lowerRevenue;
@@ -2078,7 +2237,7 @@ export function calculateScenario(
     let monthPoolTierFeeUpper = 0;
     let monthPoolOverageRevenueUpper = 0;
 
-    if (carrier === 'pool' && scenario.pool_tier) {
+    if ((carrier === 'pool' || carrier === 'composite') && scenario.pool_tier) {
       const tier = scenario.pool_tier;
       const captureForPool = tier.capture ?? scenario.evc_capture_target_pct ?? 0.30;
       const poolSizeBasis = tier.pool_size_basis ?? 'absolute';
@@ -2139,6 +2298,12 @@ export function calculateScenario(
       sumPoolConsumedCreditsUpper += monthPoolConsumedCreditsUpper;
       sumCopilotEvcValue += monthCopilotEvcValueUpper;
       sumAgentEvcValue += monthAgentEvcValueUpper;
+
+      poolFeeFlowUpper.push(tierFeeUpper);
+      poolOverageFlowUpper.push(overageRevenueUpper);
+    } else {
+      poolFeeFlowUpper.push(0);
+      poolOverageFlowUpper.push(0);
     }
 
     // B. OPEX / CAPEX Line Items (from scenario_costs)
@@ -2215,6 +2380,10 @@ export function calculateScenario(
     });
 
     cashFlowsLower.push(parseFloat(netCashFlowLower.toFixed(2)));
+
+    unmonetizedLaborFlowUpper.push(monthLaborSavingsCash);
+    agentOutcomeFlowUpper.push(monthAgentOutcomeRevenueUpper);
+    copilotOutcomeFlowUpper.push(monthCopilotOutcomeRevenueUpper);
 
     // ADR 0009 Track B — snapshot this month's per-cohort agent aggregates; only the final
     // (steady-state) month feeds buildAgentDeflectionCorridor, mirroring buildPricingCorridor.
@@ -2356,6 +2525,63 @@ export function calculateScenario(
     ? buildAgentDeflectionCorridor(scenario, lastMonthCohortAgentAgg, agentMarginThreshold)
     : null;
 
+  const calculatePV = (flow: number[]) => {
+    const rMonthly = Math.pow(1 + annualDiscountRate, 1 / 12) - 1;
+    let pv = 0;
+    for (let t = 0; t < flow.length; t++) {
+      pv += flow[t] / Math.pow(1 + rMonthly, t);
+    }
+    return parseFloat(pv.toFixed(2));
+  };
+
+  const resComp = resolveCompositeComponents(scenario);
+
+  const compositeBreakdown: CompositeBreakdown = {
+    cohort: {
+      role: resComp.cohort.role,
+      revenuePv: resComp.cohort.role === 'books' ? calculatePV(cohortUpliftFlowUpper) : 0,
+      reason: resComp.cohort.reason
+    },
+    plan: {
+      role: resComp.plan.role,
+      revenuePv: resComp.plan.role === 'books' ? calculatePV(planSubscriptionFlowUpper) : 0,
+      memoValue: resComp.plan.role === 'folded' ? calculatePV(planSubscriptionFlowUpper) : undefined,
+      reason: resComp.plan.reason
+    },
+    copilotMonetization: {
+      role: resComp.copilotMonetization.role,
+      revenuePv: resComp.copilotMonetization.role === 'books' ? calculatePV(copilotMonetizationFlowUpper) : 0,
+      memoValue: resComp.copilotMonetization.role === 'folded' ? calculatePV(copilotMonetizationFlowUpper) : undefined,
+      reason: resComp.copilotMonetization.reason
+    },
+    agentMonetization: {
+      role: resComp.agentMonetization.role,
+      revenuePv: resComp.agentMonetization.role === 'books' ? calculatePV(agentMonetizationFlowUpper) : 0,
+      memoValue: resComp.agentMonetization.role === 'pool_billed' ? calculatePV(agentMonetizationFlowUpper) : undefined,
+      reason: resComp.agentMonetization.reason
+    },
+    pool: {
+      role: resComp.pool.role,
+      revenuePv: resComp.pool.role === 'books' ? calculatePV(poolFeeFlowUpper.map((fee, idx) => fee + poolOverageFlowUpper[idx])) : 0,
+      reason: resComp.pool.reason
+    },
+    agentOutcome: {
+      role: resComp.agentOutcome.role,
+      revenuePv: resComp.agentOutcome.role === 'books' ? calculatePV(agentOutcomeFlowUpper) : 0,
+      reason: resComp.agentOutcome.reason
+    },
+    copilotOutcome: {
+      role: resComp.copilotOutcome.role,
+      revenuePv: resComp.copilotOutcome.role === 'books' ? calculatePV(copilotOutcomeFlowUpper) : 0,
+      reason: resComp.copilotOutcome.reason
+    },
+    unmonetizedLabor: {
+      role: resComp.unmonetizedLabor.role,
+      revenuePv: resComp.unmonetizedLabor.role === 'books' ? calculatePV(unmonetizedLaborFlowUpper) : 0,
+      reason: resComp.unmonetizedLabor.reason
+    }
+  };
+
   return {
     timeline,
     paybackUpper,
@@ -2371,7 +2597,8 @@ export function calculateScenario(
     streamMargins,
     poolEconomics,
     agentDeflectionCorridor,
-    cohortPriceMap: lastMonthCohortPrice
+    cohortPriceMap: lastMonthCohortPrice,
+    compositeBreakdown
   };
 }
 
@@ -2787,7 +3014,7 @@ export function runSensitivityAnalysis(
 
   const carrier = resolveCarrier(scenario.modeling_type, scenario.revenue_carrier);
   const monetizationActive =
-    (carrier === 'plan' || carrier === 'feature' || carrier === 'pack') &&
+    (carrier === 'plan' || carrier === 'feature' || carrier === 'pack' || carrier === 'composite') &&
     (scenario.services ?? []).some(s => s.monetization && s.monetization.monetization_type !== 'none');
 
   const baseResult = calculateScenario(scenario, allProviders, creditSettings);

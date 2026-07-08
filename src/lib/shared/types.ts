@@ -30,9 +30,9 @@ export type RevenueSource = 'cohort' | 'monetization' | 'both';
 // ============================================================
 
 /** Business-centric modeling type chosen in Step 0 of the wizard. */
-export type ModelingType = 'incremental' | 'gtm' | 'appraisal';
+export type ModelingType = 'incremental' | 'gtm' | 'appraisal' | 'composite';
 /** Exactly one entity level carries revenue; the rest are cost/context. */
-export type RevenueCarrier = 'cohort' | 'plan' | 'pack' | 'feature' | 'pool';
+export type RevenueCarrier = 'cohort' | 'plan' | 'pack' | 'feature' | 'pool' | 'composite';
 /** When a plan-carrier scenario also references a cohort, how they relate. */
 export type RevenueBridge = 'upsell_on_cohort' | 'separate_market';
 
@@ -466,6 +466,7 @@ export interface Scenario {
   modeling_type?: ModelingType;
   revenue_carrier?: RevenueCarrier | null;
   revenue_bridge?: RevenueBridge | null;
+  arpu_uplift_includes_monetization?: boolean;
 
   // Expansion modeling (Phase 3)
   expansion_vertical_id?: string | null;
@@ -664,6 +665,15 @@ export interface CaptureCurveResult {
   };
 }
 
+export interface CompositeComponentBreakdown {
+  role: 'books' | 'folded' | 'pool_billed' | 'blocked' | 'empty';
+  revenuePv: number;
+  memoValue?: number;
+  reason: string;
+}
+
+export type CompositeBreakdown = Record<string, CompositeComponentBreakdown>;
+
 export interface ScenarioResult {
   id: string;
   scenario_id: string;
@@ -702,6 +712,7 @@ export interface ScenarioResult {
 
   // Agent Cost-to-Serve / Deflection Value corridor (ADR 0009 Track B)
   agent_deflection_corridor?: AgentDeflectionCorridorResult | null;
+  composite_breakdown?: CompositeBreakdown | null;
 }
 
 export interface CohortTimelineResult {
@@ -808,6 +819,7 @@ export interface CalculationResult {
   /** Agent Cost-to-Serve / Deflection Value corridor (ADR 0009 Track B). */
   agentDeflectionCorridor?: AgentDeflectionCorridorResult | null;
   cohortPriceMap?: Map<string, number>;
+  compositeBreakdown?: CompositeBreakdown;
 }
 
 export interface SensitivityParamResult {
@@ -838,6 +850,7 @@ export interface ScenarioDiagnostic {
   code: string;
   severity: DiagnosticSeverity;
   message: string;
+  title?: string;
   field?: string;
 }
 

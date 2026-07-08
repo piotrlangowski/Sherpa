@@ -9,7 +9,7 @@ export const scenariosRepository = {
   getAll(): Scenario[] {
     const rows = db.prepare(`
       SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.created_at, s.updated_at,
-             s.capex_contingency_pct, s.modeling_type, s.revenue_carrier, s.revenue_bridge,
+             s.capex_contingency_pct, s.modeling_type, s.revenue_carrier, s.revenue_bridge, s.arpu_uplift_includes_monetization,
              s.price_from_evc, s.adoption_elasticity, s.copilot_margin_threshold, s.agent_margin_threshold,
              s.pool_tier_id,
              r.payback_months, r.npv, r.irr_annual, r.tco, r.profitability_index, r.calculated_at,
@@ -94,6 +94,7 @@ export const scenariosRepository = {
         copilot_margin_threshold: r.copilot_margin_threshold,
         agent_margin_threshold: r.agent_margin_threshold,
         pool_tier_id: r.pool_tier_id,
+        arpu_uplift_includes_monetization: r.arpu_uplift_includes_monetization !== 0,
         created_at: r.created_at,
         updated_at: r.updated_at,
         scope_verticals: vrtMap[r.id] || [],
@@ -131,7 +132,7 @@ export const scenariosRepository = {
   getById(id: string): Scenario | null {
     const r = db.prepare(`
       SELECT s.id, s.name, s.description, s.projection_months, s.discount_rate, s.scope_type, s.revenue_source, s.capex_contingency_pct,
-             s.modeling_type, s.revenue_carrier, s.revenue_bridge,
+             s.modeling_type, s.revenue_carrier, s.revenue_bridge, s.arpu_uplift_includes_monetization,
              s.expansion_vertical_id, s.penetration_baseline_months, s.ai_acceleration_factor, s.ai_som_lift_pct,
              s.evc_nba_annual_value, s.evc_extra_positive_value, s.evc_negative_value,
              s.evc_capture_ceiling_pct, s.evc_capture_target_pct, s.evc_capture_floor_pct,
@@ -358,6 +359,7 @@ export const scenariosRepository = {
       agent_margin_threshold: r.agent_margin_threshold,
       pool_tier_id: r.pool_tier_id,
       evc_reference_cohort_id: r.evc_reference_cohort_id,
+      arpu_uplift_includes_monetization: r.arpu_uplift_includes_monetization !== 0,
       created_at: r.created_at,
       updated_at: r.updated_at,
       scope_verticals: verticalRows,
@@ -379,6 +381,7 @@ export const scenariosRepository = {
     packs?: { id: string; rollout_month: number }[];
     plans?: { id: string; rollout_month: number; seats?: number }[];
     cost_ids?: string[];
+    monetization_configs?: Array<{ entity_type: 'service' | 'pack' | 'plan', entity_id: string, config: any }>;
   }): Scenario {
     const id = uuidv4();
     const now = new Date().toISOString();
@@ -402,7 +405,7 @@ export const scenariosRepository = {
       db.prepare(`
         INSERT INTO scenarios (
           id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct,
-          modeling_type, revenue_carrier, revenue_bridge,
+          modeling_type, revenue_carrier, revenue_bridge, arpu_uplift_includes_monetization,
           expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
           evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
           evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
@@ -410,10 +413,10 @@ export const scenariosRepository = {
           pool_tier_id, evc_reference_cohort_id,
           created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, data.name, data.description || null, data.projection_months, data.discount_rate, data.scope_type, legacyRevenueSource, data.capex_contingency_pct ?? 0,
-        modeling_type, revenue_carrier, revenue_bridge,
+        modeling_type, revenue_carrier, revenue_bridge, data.arpu_uplift_includes_monetization ? 1 : 0,
         data.expansion_vertical_id || null, data.penetration_baseline_months ?? null, data.ai_acceleration_factor ?? null, data.ai_som_lift_pct ?? null,
         data.evc_nba_annual_value ?? null, data.evc_extra_positive_value ?? null, data.evc_negative_value ?? null,
         data.evc_capture_ceiling_pct ?? null, data.evc_capture_target_pct ?? null, data.evc_capture_floor_pct ?? null,
@@ -476,6 +479,12 @@ export const scenariosRepository = {
         const insertCostLink = db.prepare("INSERT INTO scenario_costs (scenario_id, cost_item_id) VALUES (?, ?)");
         for (const cId of data.cost_ids) insertCostLink.run(id, cId);
       }
+
+      if (data.monetization_configs && data.monetization_configs.length > 0) {
+        for (const mc of data.monetization_configs) {
+          monetizationRepository.upsert(mc.entity_type, mc.entity_id, mc.config, id);
+        }
+      }
     })();
 
     return this.getById(id)!;
@@ -514,6 +523,7 @@ export const scenariosRepository = {
       const shortCodes: Record<string, string> = {
         incremental: 'INC',
         gtm: 'GTM',
+        composite: 'CMP',
         appraisal: 'USE'
       };
       const shortCode = shortCodes[nextModelingType ?? ''] || 'VAR';
@@ -606,6 +616,7 @@ export const scenariosRepository = {
     packs?: { id: string; rollout_month: number }[];
     plans?: { id: string; rollout_month: number; seats?: number }[];
     cost_ids?: string[];
+    arpu_uplift_includes_monetization?: boolean;
   }): void {
     const current = this.getById(id);
     if (!current) throw new Error(`Scenario not found: ${id}`);
@@ -629,6 +640,7 @@ export const scenariosRepository = {
     const projection_months = data.projection_months !== undefined ? data.projection_months : current.projection_months;
     const discount_rate = data.discount_rate !== undefined ? data.discount_rate : current.discount_rate;
     const scope_type = data.scope_type !== undefined ? data.scope_type : current.scope_type;
+    const arpu_uplift_includes_monetization = data.arpu_uplift_includes_monetization !== undefined ? data.arpu_uplift_includes_monetization : current.arpu_uplift_includes_monetization;
     // revenue_source is deprecated (no longer read by the engine); keep it
     // consistent with the authoritative revenue_carrier for external readers.
     const revenue_source: RevenueSource = (revenue_carrier ?? 'cohort') === 'cohort' ? 'cohort' : 'monetization';
@@ -655,10 +667,10 @@ export const scenariosRepository = {
       const capex_contingency_pct = data.capex_contingency_pct !== undefined ? data.capex_contingency_pct : current.capex_contingency_pct;
       db.prepare(`
         UPDATE scenarios
-        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?, evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?, price_from_evc = ?, adoption_elasticity = ?, copilot_margin_threshold = ?, agent_margin_threshold = ?, pool_tier_id = ?, evc_reference_cohort_id = ?, updated_at = ?
+        SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?, revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?, revenue_carrier = ?, revenue_bridge = ?, arpu_uplift_includes_monetization = ?, expansion_vertical_id = ?, penetration_baseline_months = ?, ai_acceleration_factor = ?, ai_som_lift_pct = ?, evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?, evc_capture_ceiling_pct = ?, evc_capture_target_pct = ?, evc_capture_floor_pct = ?, price_from_evc = ?, adoption_elasticity = ?, copilot_margin_threshold = ?, agent_margin_threshold = ?, pool_tier_id = ?, evc_reference_cohort_id = ?, updated_at = ?
         WHERE id = ?
       `).run(
-        name, description || null, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier || null, revenue_bridge || null,
+        name, description || null, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier || null, revenue_bridge || null, arpu_uplift_includes_monetization ? 1 : 0,
         expansion_vertical_id || null, penetration_baseline_months ?? null, ai_acceleration_factor ?? null, ai_som_lift_pct ?? null,
         evc_nba_annual_value ?? null, evc_extra_positive_value ?? null, evc_negative_value ?? null,
         evc_capture_ceiling_pct ?? null, evc_capture_target_pct ?? null, evc_capture_floor_pct ?? null,
@@ -754,7 +766,7 @@ export const scenariosRepository = {
              payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
              revenue_integrity_status, revenue_integrity_message,
              evc, evc_price_floor, evc_price_target, evc_price_ceiling,
-             driver_profile, stream_margins, pool_economics, agent_deflection_corridor
+             driver_profile, stream_margins, pool_economics, agent_deflection_corridor, composite_breakdown
       FROM scenario_results
       WHERE scenario_id = ?
     `).get(scenarioId) as any;
@@ -787,7 +799,8 @@ export const scenariosRepository = {
       driver_profile: r.driver_profile || null,
       stream_margins: r.stream_margins ? JSON.parse(r.stream_margins) : null,
       pool_economics: r.pool_economics ? JSON.parse(r.pool_economics) : null,
-      agent_deflection_corridor: r.agent_deflection_corridor ? JSON.parse(r.agent_deflection_corridor) : null
+      agent_deflection_corridor: r.agent_deflection_corridor ? JSON.parse(r.agent_deflection_corridor) : null,
+      composite_breakdown: r.composite_breakdown ? JSON.parse(r.composite_breakdown) : null
     };
   },
 
@@ -802,8 +815,8 @@ export const scenariosRepository = {
         payback_months_lower, npv_lower, profitability_index_lower, irr_monthly, irr_annual_nominal, irr_status,
         revenue_integrity_status, revenue_integrity_message,
         evc, evc_price_floor, evc_price_target, evc_price_ceiling,
-        driver_profile, stream_margins, pool_economics, agent_deflection_corridor
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        driver_profile, stream_margins, pool_economics, agent_deflection_corridor, composite_breakdown
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       results.scenario_id,
@@ -831,7 +844,8 @@ export const scenariosRepository = {
       results.driver_profile || null,
       results.stream_margins ? JSON.stringify(results.stream_margins) : null,
       results.pool_economics ? JSON.stringify(results.pool_economics) : null,
-      results.agent_deflection_corridor ? JSON.stringify(results.agent_deflection_corridor) : null
+      results.agent_deflection_corridor ? JSON.stringify(results.agent_deflection_corridor) : null,
+      results.composite_breakdown ? JSON.stringify(results.composite_breakdown) : null
     );
   },
 

@@ -348,7 +348,7 @@ function attachMonetization(scenario: Scenario): void {
 // Helper: Load a full scenario using the current multi-cohort schema (scope_type + junctions)
 function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
-    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
+    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, arpu_uplift_includes_monetization, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
            evc_nba_annual_value, evc_extra_positive_value, evc_negative_value, evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
            price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold, pool_tier_id, evc_reference_cohort_id
     FROM scenarios
@@ -356,6 +356,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
   `).get(scenarioId) as any;
 
   if (!s) return null;
+  s.arpu_uplift_includes_monetization = s.arpu_uplift_includes_monetization !== 0;
 
   // Resolve cohorts based on scope_type
   let baseCohorts: CohortConfig[] = [];
@@ -1790,8 +1791,9 @@ server.tool(
     discount_rate: z.number().min(0).max(1).optional().describe("Annual discount rate as a decimal (default: 0.10 for 10%)."),
     scope_type: z.enum(["all_clients", "verticals", "cohorts"]).optional().describe("Scope type (default: cohorts)."),
     revenue_source: z.enum(["cohort", "monetization", "both"]).optional().describe("Where the scenario draws its revenue from (deprecated, use modeling_type and revenue_carrier instead)."),
-    modeling_type: z.enum(["incremental", "gtm", "appraisal"]).optional().describe("Business-centric modeling type: 'incremental', 'gtm', or 'appraisal' (default: appraisal)."),
-    revenue_carrier: z.enum(["cohort", "plan", "pack", "feature", "pool"]).nullable().optional().describe("Exactly one entity level carries revenue; the rest are cost/context (default: cohort). 'pool' is the ADR 0010 credit-pool carrier."),
+    modeling_type: z.enum(["incremental", "gtm", "appraisal", "composite"]).optional().describe("Business-centric modeling type: 'incremental', 'gtm', 'appraisal', or 'composite' (default: appraisal)."),
+    revenue_carrier: z.enum(["cohort", "plan", "pack", "feature", "pool", "composite"]).nullable().optional().describe("Exactly one entity level carries revenue; the rest are cost/context (default: cohort). 'pool' is the ADR 0010 credit-pool carrier. 'composite' is the ADR 0014 composite carrier."),
+    arpu_uplift_includes_monetization: z.boolean().optional().describe("ADR 0014: If true (default), copilot monetization is folded (cross-checked) into cohort uplift. If false, it is additive."),
     pool_tier_id: z.string().nullable().optional().describe("UUID of the credit-pool tier this scenario draws from (ADR 0010). Required for revenue_carrier 'pool'; manage tiers with pool_tier_action."),
     revenue_bridge: z.enum(["upsell_on_cohort", "separate_market"]).nullable().optional().describe("When a plan-carrier scenario also references a cohort, how they relate."),
     capex_contingency_pct: z.number().min(0).max(1).optional().describe("CAPEX contingency buffer percentage (e.g. 0.20 for 20% contingency). Defaults to 0."),
@@ -1941,7 +1943,7 @@ server.tool(
             INSERT INTO scenarios (
               id, name, description, projection_months, discount_rate, scope_type,
               revenue_source, capex_contingency_pct, modeling_type, revenue_carrier,
-              revenue_bridge, expansion_vertical_id, penetration_baseline_months,
+              revenue_bridge, arpu_uplift_includes_monetization, expansion_vertical_id, penetration_baseline_months,
               ai_acceleration_factor, ai_som_lift_pct,
               evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
               evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
@@ -1949,11 +1951,11 @@ server.tool(
               pool_tier_id, evc_reference_cohort_id,
               created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             scenarioId, args.name, args.description || null, args.projection_months ?? 36,
             args.discount_rate ?? 0.10, scopeType, revSource, args.capex_contingency_pct ?? 0,
-            modeling_type, revenue_carrier || null, revenue_bridge || null,
+            modeling_type, revenue_carrier || null, revenue_bridge || null, args.arpu_uplift_includes_monetization !== false ? 1 : 0,
             args.expansion_vertical_id || null, args.penetration_baseline_months ?? null,
             args.ai_acceleration_factor ?? null, args.ai_som_lift_pct ?? null,
             args.evc_nba_annual_value ?? null, args.evc_extra_positive_value ?? null,
@@ -2110,12 +2112,13 @@ server.tool(
           const agent_margin_threshold = args.agent_margin_threshold !== undefined ? args.agent_margin_threshold : current.agent_margin_threshold;
           const pool_tier_id = args.pool_tier_id !== undefined ? args.pool_tier_id : current.pool_tier_id;
           const evc_reference_cohort_id = args.evc_reference_cohort_id !== undefined ? args.evc_reference_cohort_id : current.evc_reference_cohort_id;
+          const arpu_uplift_includes_monetization = args.arpu_uplift_includes_monetization !== undefined ? args.arpu_uplift_includes_monetization : current.arpu_uplift_includes_monetization;
 
           db.prepare(`
             UPDATE scenarios
             SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?,
                 revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?,
-                revenue_carrier = ?, revenue_bridge = ?,
+                revenue_carrier = ?, revenue_bridge = ?, arpu_uplift_includes_monetization = ?,
                 expansion_vertical_id = ?, penetration_baseline_months = ?,
                 ai_acceleration_factor = ?, ai_som_lift_pct = ?,
                 evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?,
@@ -2127,7 +2130,7 @@ server.tool(
           `).run(
             name, description || null, projection_months, discount_rate, scope_type,
             revenue_source, capex_contingency_pct, modeling_type,
-            revenue_carrier || null, revenue_bridge || null,
+            revenue_carrier || null, revenue_bridge || null, arpu_uplift_includes_monetization ? 1 : 0,
             expansion_vertical_id || null, penetration_baseline_months,
             ai_acceleration_factor, ai_som_lift_pct,
             evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,

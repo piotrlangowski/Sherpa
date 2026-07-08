@@ -18,13 +18,14 @@
   }
 
   interface Props {
-    scenarioId: string;
+    scenarioId?: string;
     entities: OverrideEntityRow[];
     modelingType?: ModelingType;
     resolvedCarrier?: RevenueCarrier;
+    onChanged?: (overrides: Record<string, MonetizationConfig | null>) => void;
   }
 
-  let { scenarioId, entities, modelingType = 'appraisal', resolvedCarrier = 'cohort' }: Props = $props();
+  let { scenarioId = '', entities, modelingType = 'appraisal', resolvedCarrier = 'cohort', onChanged }: Props = $props();
 
   const keyOf = (e: { type: string; id: string }) => `${e.type}:${e.id}`;
   const blank = (): MonetizationConfig => ({ monetization_type: 'none' });
@@ -85,20 +86,23 @@
     busy[key] = true;
     rowError[key] = null;
     try {
-      const res = await fetch('/api/monetization', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entity_type: e.type,
-          entity_id: e.id,
-          scenario_id: scenarioId,
-          config: draft[key]
-        })
-      });
-      if (!res.ok) throw new Error(`Save failed (${res.status})`);
+      if (scenarioId) {
+        const res = await fetch('/api/monetization', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entity_type: e.type,
+            entity_id: e.id,
+            scenario_id: scenarioId,
+            config: draft[key]
+          })
+        });
+        if (!res.ok) throw new Error(`Save failed (${res.status})`);
+      }
       // 'none' clears the override server-side; reflect that locally.
       overrides[key] = draft[key].monetization_type === 'none' ? null : JSON.parse(JSON.stringify(draft[key]));
       expanded[key] = false;
+      onChanged?.(overrides);
     } catch (err: any) {
       rowError[key] = err.message || 'Save failed';
     } finally {
@@ -111,11 +115,14 @@
     busy[key] = true;
     rowError[key] = null;
     try {
-      const params = new URLSearchParams({ entity_type: e.type, entity_id: e.id, scenario_id: scenarioId });
-      const res = await fetch(`/api/monetization?${params}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error(`Reset failed (${res.status})`);
+      if (scenarioId) {
+        const params = new URLSearchParams({ entity_type: e.type, entity_id: e.id, scenario_id: scenarioId });
+        const res = await fetch(`/api/monetization?${params}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`Reset failed (${res.status})`);
+      }
       overrides[key] = null;
       expanded[key] = false;
+      onChanged?.(overrides);
     } catch (err: any) {
       rowError[key] = err.message || 'Reset failed';
     } finally {

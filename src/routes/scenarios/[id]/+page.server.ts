@@ -92,28 +92,17 @@ export const actions: Actions = {
 
     throw redirect(303, '/scenarios');
   },
-  duplicateScenario: async ({ params, request }) => {
-    const formData = await request.formData();
-    const targetPerspective = formData.get('targetPerspective') as string || '';
-    
+  duplicateScenario: async ({ params }) => {
     try {
-      const overrides: any = {};
-      if (targetPerspective) {
-        overrides.revenue_carrier = targetPerspective;
-      }
-      const cloned = scenariosRepository.duplicate(params.id, overrides);
-      
+      const cloned = scenariosRepository.duplicate(params.id);
       try {
         runAndSaveScenario(cloned.id);
       } catch (err) {
         // tolerować błąd
       }
-      
       throw redirect(303, `/scenarios/${cloned.id}`);
     } catch (err: any) {
-      if (err.status === 303 || err.status === 307 || err.status === 302) {
-        throw err;
-      }
+      if (err.status === 303 || err.status === 307 || err.status === 302) throw err;
       return fail(500, { error: err.message });
     }
   }

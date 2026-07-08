@@ -346,7 +346,8 @@ export function runAndSaveScenario(scenarioId: string): CalculationResult {
     driver_profile: result.driverProfile,
     stream_margins: result.streamMargins,
     pool_economics: result.poolEconomics ?? null,
-    agent_deflection_corridor: result.agentDeflectionCorridor ?? null
+    agent_deflection_corridor: result.agentDeflectionCorridor ?? null,
+    composite_breakdown: result.compositeBreakdown ?? null
   });
 
   return result;

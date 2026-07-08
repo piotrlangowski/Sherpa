@@ -37,6 +37,7 @@
   let isMounted = false;
 
   function cleanupChart() {
+    activeEffectId++;
     if (chartInstance) {
       chartInstance.dispose();
       chartInstance = null;
@@ -332,7 +333,7 @@
                 </Badge>
                 {#if s.scopeSummary}
                   <span class="text-[9px] text-muted-foreground block leading-tight">
-                    Scope: <span class="capitalize">{s.scope_type.replace('_', ' ')}</span> ({s.scopeSummary.cohortsCount} cohorts, ~{formatNumber(s.scopeSummary.totalUsers)} users)
+                    Scope: <span class="capitalize">{s.scope_type.replace('_', ' ')}</span> ({s.scopeSummary.cohortsCount} cohorts, ~{formatNumber(s.scopeSummary.totalUsers)} accounts)
                   </span>
                 {/if}
               </div>

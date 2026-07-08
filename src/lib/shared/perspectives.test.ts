@@ -5,9 +5,10 @@ import {
   buildPerspectiveVariant,
   calculateRevenuePv,
   computePerspectives,
-  generateExplanation
+  generateExplanation,
+  classifyPerspectiveRelations
 } from './perspectives.js';
-import { calculateScenario } from './financial-math.js';
+import { calculateScenario, resolveCompositeComponents } from './financial-math.js';
 import type { Scenario, Provider, CreditSettings } from './types.js';
 
 describe('Scenario Revenue Perspectives (ADR 0013) Tests', () => {
@@ -454,5 +455,52 @@ describe('Active perspective always computed (ADR 0013 — unfilled active modul
     expect(Math.abs(useDelta.deltaNpvUpper)).toBeLessThan(0.01);
     expect(useDelta.explanation).toContain('about the same NPV');
     expect(tri.deltas.find(d => d.toModule === 'cohort')).toBeTruthy();
+  });
+});
+
+describe('classifyPerspectiveRelations (ADR 0014)', () => {
+  it('correctly identifies additive and contained relations', () => {
+    const scenario: Scenario = {
+      id: 'sc1', name: 'S', scope_type: 'cohorts', projection_months: 12, discount_rate: 0.1,
+      modeling_type: 'composite', revenue_carrier: 'composite', revenue_bridge: 'separate_market',
+      arpu_uplift_includes_monetization: false,
+      scope_cohorts: [{ id: 'c1', name: 'Cohort', current_users: 1000, monthly_acquisition: 0, monthly_churn_rate: 0, ai_adoption_rate: 0.5, base_arpu: 100, arpu_uplift: 10, acquisition_growth_rate: 0, retention_floor: 0, monthly_expansion_rate: 0 } as any],
+      plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 50, seats: 100 }],
+      services: [
+        { id: 's1', name: 'Copilot', service_type: 'copilot', status: 'planned', avg_input_tokens: 0, avg_output_tokens: 0, avg_requests_per_user_month: 10, fixed_cost_per_month: 0, monetization: { monetization_type: 'addon', addon_monthly_fee: 10 }, rollout_month: 0 } as any
+      ]
+    };
+
+    const rels = classifyPerspectiveRelations(scenario);
+    
+    // Cohort <-> Plan relation: separate market -> additive
+    const cp = rels.find(r => r.moduleA === 'cohort' && r.moduleB === 'plan')!;
+    expect(cp.kind).toBe('additive');
+    expect(cp.incommensurable).toBe(true); // seats (100) vs impliedPop (1000 * 0.5 = 500) has mismatch
+    
+    // Cohort <-> Copilot relation: includes = false -> additive
+    const cm = rels.find(r => r.moduleA === 'cohort' && r.moduleB === 'monetization')!;
+    expect(cm.kind).toBe('additive');
+  });
+
+  it('agrees with resolveCompositeComponents when seats are configured but no bridge is selected', () => {
+    // Regression guard: classifyPerspectiveRelations must never report a relation kind that
+    // contradicts the Composite Revenue Breakdown table (resolveCompositeComponents) for the
+    // same scenario — previously this case showed 'cross_check' here and 'blocked' there.
+    const scenario: Scenario = {
+      id: 'sc1', name: 'S', scope_type: 'cohorts', projection_months: 12, discount_rate: 0.1,
+      modeling_type: 'composite', revenue_carrier: 'composite', revenue_bridge: null,
+      scope_cohorts: [{ id: 'c1', name: 'Cohort', current_users: 1000, monthly_acquisition: 0, monthly_churn_rate: 0, ai_adoption_rate: 0.5, base_arpu: 100, arpu_uplift: 10, acquisition_growth_rate: 0, retention_floor: 0, monthly_expansion_rate: 0 } as any],
+      plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 50, seats: 100 }],
+      services: []
+    };
+
+    const rels = classifyPerspectiveRelations(scenario);
+    const resComp = resolveCompositeComponents(scenario);
+
+    expect(resComp.plan.role).toBe('blocked');
+    const cp = rels.find(r => r.moduleA === 'cohort' && r.moduleB === 'plan')!;
+    expect(cp).toBeTruthy();
+    expect(cp.kind).toBe('blocked');
   });
 });

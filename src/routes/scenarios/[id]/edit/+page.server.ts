@@ -100,6 +100,7 @@ export const actions: Actions = {
     const evc_capture_floor_pct = getFloatOrNull('evc_capture_floor_pct');
     const price_from_evc = formData.get('price_from_evc') === '1';
     const adoption_elasticity = parseFloat(formData.get('adoption_elasticity') as string || '0');
+    const arpu_uplift_includes_monetization = formData.get('arpu_uplift_includes_monetization') !== '0';
 
     let verticalIds: string[] = [];
     if (scopeType === 'verticals') {
@@ -163,6 +164,7 @@ export const actions: Actions = {
       modeling_type: modelingType as any,
       revenue_carrier: revenueCarrier as any,
       revenue_bridge: revenueBridge as any,
+      arpu_uplift_includes_monetization,
       pool_tier_id,
       plans,
       services,
@@ -185,6 +187,7 @@ export const actions: Actions = {
         modeling_type: modelingType as any,
         revenue_carrier: revenueCarrier as any,
         revenue_bridge: revenueBridge as any,
+        arpu_uplift_includes_monetization,
         pool_tier_id,
         vertical_ids: verticalIds,
         cohort_config_ids: cohortConfigIds,

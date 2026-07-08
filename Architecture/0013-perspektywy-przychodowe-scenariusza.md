@@ -36,3 +36,7 @@ Wprowadza się koncepcję perspektyw przychodowych realizowaną w następującyc
 
 ### Negatywne / Odnotowany smell (out of scope):
 - Walidacja konfiguracji po stronie aplikacji (`validateScenarioConfig`) biegnie przed `attachMonetization`, co sprawia, że blokada `incremental` + copilot monetization praktycznie nie odpala w przeglądarce (odpala za to poprawnie w MCP). Naprawa tego architektonicznego rozjazdu wymaga osobnego issue/refaktoryzacji kolejności składania danych w loaders.
+
+## Poprawki i Uzupełnienia
+
+- **Lipiec 2026:** Usunięto z interfejsu nagłówka (`+page.svelte`) menu dropdown "Duplicate As..." na rzecz zwykłego przycisku "Duplicate" (tworzącego dokładną kopię scenariusza). Powodem była redukcja przeładowania interfejsu (dropdown mieszał zwykłe powielanie z edycją typu modelowania) oraz dublowanie słownictwa/funkcji z panelu triangulacji. Sama możliwość programistyczna duplikacji z perspektywą (`scenariosRepository.duplicate(id, { revenue_carrier })`) pozostaje w warstwie repozytorium.

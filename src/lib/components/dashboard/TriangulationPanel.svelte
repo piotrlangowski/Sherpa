@@ -27,11 +27,12 @@
     pool: 'Credit Pool'
   };
 
-  const moduleShortCodes: Record<PerspectiveModule, string> = {
+  const moduleShortCodes: Record<PerspectiveModule | 'composite', string> = {
     cohort: 'INC',
     plan: 'GTM',
     monetization: 'USE',
-    pool: 'POOL'
+    pool: 'POOL',
+    composite: 'CMP'
   };
 
   const moduleDesc: Record<PerspectiveModule, string> = {
@@ -40,6 +41,17 @@
     monetization: 'Usage-based or add-on monetization (features)',
     pool: 'Shared credit pool under a flat fee and usage cap'
   };
+
+  const compNames: Record<string, string> = {
+    cohort: 'Cohort ARPU Uplift',
+    plan: 'Plan Subscriptions (Seats)',
+    copilotMonetization: 'Copilot Monetization Add-ons',
+    agentMonetization: 'Agent Monetization Add-ons',
+    pool: 'Credit Pool Tier Fee & Overages',
+    agentOutcome: 'Agent Outcome-based Revenue',
+    copilotOutcome: 'Copilot Outcome-based Revenue',
+    unmonetizedLabor: 'Labor Savings (Unmonetized)'
+  };
 </script>
 
 <div class="space-y-6">
@@ -47,7 +59,7 @@
     <CardHeader>
       <div class="flex items-center justify-between">
         <div>
-          <CardTitle class="text-xl font-bold text-foreground">Revenue Perspectives Triangulation (ADR 0013)</CardTitle>
+          <CardTitle class="text-xl font-bold text-foreground">Revenue Perspectives Triangulation</CardTitle>
           <CardDescription class="text-muted-foreground mt-1">
             Chassis comparison across active and alternative revenue carrier perspectives.
           </CardDescription>
@@ -208,8 +220,8 @@
     </CardContent>
   </Card>
 
-  <!-- Delta Analysis Section -->
-  {#if triangulation.deltas.length > 0}
+  <!-- Delta Analysis Section (hidden for now per user request) -->
+  {#if false && triangulation.deltas.length > 0}
     <div class="space-y-3">
       <h3 class="text-base font-bold text-foreground flex items-center space-x-2">
         <Info class="h-4.5 w-4.5 text-muted-foreground" />
@@ -272,6 +284,130 @@
                 <p class="text-xs text-muted-foreground mt-3 leading-relaxed">
                   {d.explanation}
                 </p>
+              </div>
+            </CardContent>
+          </Card>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  <!-- Composite Revenue Breakdown -->
+  {#if triangulation.activeMode === 'composite' && triangulation.compositeBreakdown}
+    <Card class="border-border bg-card">
+      <CardHeader>
+        <CardTitle class="text-base font-bold text-foreground">Composite Revenue Breakdown</CardTitle>
+        <CardDescription class="text-muted-foreground mt-1">
+          Detailed diagnostics of active, folded, and billed revenue streams.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-border/60 text-muted-foreground text-xs font-semibold select-none">
+                <th class="pb-2 pr-4">Revenue Component</th>
+                <th class="pb-2 px-4">Role</th>
+                <th class="pb-2 px-4 text-right">PV Value</th>
+                <th class="pb-2 pl-4">Rule/Reason</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border/40 text-xs font-sans">
+              {#each Object.entries(triangulation.compositeBreakdown) as [key, comp]}
+                <tr class="hover:bg-muted/30">
+                  <td class="py-3 pr-4 font-semibold text-foreground">
+                    {compNames[key] || key}
+                  </td>
+                  <td class="py-3 px-4">
+                    {#if comp.role === 'books'}
+                      <Badge variant="outline" class="border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5 font-semibold font-mono text-[10px]">
+                        ADDITIVE (BOOKS)
+                      </Badge>
+                    {:else if comp.role === 'folded'}
+                      <Badge variant="outline" class="border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5 font-semibold font-mono text-[10px]">
+                        FOLDED (MEMO)
+                      </Badge>
+                    {:else if comp.role === 'pool_billed'}
+                      <Badge variant="outline" class="border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/5 font-semibold font-mono text-[10px]">
+                        POOL BILLED
+                      </Badge>
+                    {:else if comp.role === 'blocked'}
+                      <Badge variant="outline" class="border-rose-500/30 text-rose-600 dark:text-rose-400 bg-rose-500/5 font-semibold font-mono text-[10px]">
+                        BLOCKED
+                      </Badge>
+                    {:else}
+                      <span class="text-muted-foreground/60 italic">None</span>
+                    {/if}
+                  </td>
+                  <td class="py-3 px-4 text-right font-mono font-semibold">
+                    {#if comp.role === 'books'}
+                      <span class="text-foreground">{formatCurrency(comp.revenuePv, currency, 0)}</span>
+                    {:else if comp.role === 'folded' || comp.role === 'pool_billed'}
+                      <span class="text-muted-foreground/75 italic" title="Not added to NPV summation. Diagnostic only.">
+                        ({formatCurrency(comp.memoValue || comp.revenuePv || 0, currency, 0)})
+                      </span>
+                    {:else}
+                      <span class="text-muted-foreground/40">—</span>
+                    {/if}
+                  </td>
+                  <td class="py-3 pl-4 text-muted-foreground">
+                    {comp.reason}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  {/if}
+
+  <!-- Revenue Perspective Relations -->
+  {#if triangulation.relations && triangulation.relations.length > 0}
+    <div class="space-y-3">
+      <h3 class="text-base font-bold text-foreground flex items-center space-x-2">
+        <Info class="h-4.5 w-4.5 text-muted-foreground" />
+        <span>Revenue Perspective Relations & Integrity</span>
+      </h3>
+      
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {#each triangulation.relations as rel}
+          <Card class="border-border bg-card shadow-sm {rel.incommensurable ? 'border-amber-500/40 bg-amber-500/5' : ''}">
+            <CardContent class="p-4 space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                  <Badge variant="outline" class="text-[10px] font-mono font-bold select-none border-border">
+                    {moduleShortCodes[rel.moduleA]}
+                  </Badge>
+                  <span class="text-muted-foreground text-xs">↔</span>
+                  <Badge variant="outline" class="text-[10px] font-mono font-bold select-none border-border">
+                    {moduleShortCodes[rel.moduleB]}
+                  </Badge>
+                </div>
+                
+                <Badge variant="outline" class="text-[10px] font-mono font-bold uppercase select-none
+                  {rel.kind === 'additive' ? 'border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5' :
+                   rel.kind === 'contained' ? 'border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5' :
+                   rel.kind === 'exclusive_billing' ? 'border-rose-500/30 text-rose-600 dark:text-rose-400 bg-rose-500/5' :
+                   rel.kind === 'blocked' ? 'border-rose-500/30 text-rose-600 dark:text-rose-400 bg-rose-500/5' :
+                   'border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/5'}">
+                  {rel.kind.replace('_', ' ')}
+                </Badge>
+              </div>
+              
+              <div class="space-y-1">
+                <span class="text-xs font-semibold text-foreground block">
+                  {moduleNames[rel.moduleA]} vs {moduleNames[rel.moduleB]}
+                </span>
+                <p class="text-xs text-muted-foreground leading-relaxed">
+                  {rel.reason}
+                </p>
+                {#if rel.incommensurable}
+                  <div class="flex items-center space-x-1.5 text-[10px] text-amber-600 dark:text-amber-400 font-semibold pt-1">
+                    <AlertTriangle class="h-3.5 w-3.5" />
+                    <span>Incommensurable: Different market populations / cohorts modeled.</span>
+                  </div>
+                {/if}
               </div>
             </CardContent>
           </Card>

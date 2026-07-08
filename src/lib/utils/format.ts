@@ -8,23 +8,26 @@ export function getCurrencySymbol(currency: Currency): string {
 
 const GROUP = '\u202F'; // narrow no-break space (display only)
 
-function formatGrouped(value: number, decimals: number): string {
+function formatGrouped(value: number, decimals: number, forceSign: boolean = false): string {
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
+    maximumFractionDigits: decimals,
+    signDisplay: forceSign ? 'exceptZero' : 'auto'
   })
     .formatToParts(value)
     .map((p) => (p.type === 'group' ? GROUP : p.value))
     .join('');
 }
 
-export function formatCurrency(value: number, currency: Currency, decimals: number = 0): string {
+// `forceSign` prepends "+" to positive values (e.g. attribution-band bounds where the sign
+// itself is the signal), via Intl's `signDisplay` rather than manual string handling.
+export function formatCurrency(value: number, currency: Currency, decimals: number = 0, forceSign: boolean = false): string {
   const currencyInfo = CURRENCIES.find(c => c.value === currency);
   const symbol = currencyInfo?.symbol || '$';
   const position = currencyInfo?.position || 'prefix';
-  
-  const formattedValue = formatGrouped(value, decimals);
-  
+
+  const formattedValue = formatGrouped(value, decimals, forceSign);
+
   return position === 'prefix' ? `${symbol}${formattedValue}` : `${formattedValue} ${symbol}`;
 }
 
@@ -107,6 +110,7 @@ export function modelingTypeLabel(
     case 'feature':
     case 'pack': return 'Charge for Usage / Add-On';
     case 'pool': return 'Unified Credit Pool';
+    case 'composite': return 'Composite (All Carriers)';
     default: return '';
   }
 }
@@ -123,6 +127,7 @@ export function modelingTypeShortCode(
     case 'feature':
     case 'pack': return 'USE';
     case 'pool': return 'POOL';
+    case 'composite': return 'CMP';
     default: return '';
   }
 }

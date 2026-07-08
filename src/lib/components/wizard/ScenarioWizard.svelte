@@ -27,6 +27,7 @@
   import Edit2 from '@lucide/svelte/icons/edit-2';
   import Info from '@lucide/svelte/icons/info';
   import TrendingUp from '@lucide/svelte/icons/trending-up';
+  import Check from '@lucide/svelte/icons/check';
   import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
 
   import { resolveScenarioCohortsClient, buildDraftScenario } from '$lib/shared/scenario-preview';
@@ -60,10 +61,32 @@
   const capexContingencyPct = $derived(capexContingencyPctArr[0]);
 
   let scopeType = $state<'all_clients' | 'cohorts'>('all_clients');
-  let modelingType = $state<ModelingType>('incremental');
-  let revenueCarrier = $state<RevenueCarrier | null>('cohort');
+  let selectedDimensions = $state<{ cohort: boolean; plan: boolean; monetization: boolean }>({
+    cohort: true,
+    plan: false,
+    monetization: false
+  });
+  let monetizationSubCarrier = $state<'feature' | 'pack' | 'pool'>('feature');
+
+  const selectedCount = $derived(
+    (selectedDimensions.cohort ? 1 : 0) +
+    (selectedDimensions.plan ? 1 : 0) +
+    (selectedDimensions.monetization ? 1 : 0)
+  );
+
+  const revenueCarrier = $derived.by<RevenueCarrier>(() => {
+    if (selectedCount >= 2) return 'composite';
+    if (selectedDimensions.cohort) return 'cohort';
+    if (selectedDimensions.plan) return 'plan';
+    if (selectedDimensions.monetization) return monetizationSubCarrier;
+    return 'cohort'; // Fallback
+  });
+
   let revenueBridge = $state<RevenueBridge | null>(null);
+  const modelingType = $derived(deriveModelingType(revenueCarrier, revenueBridge));
   let poolTierId = $state<string>('');
+  let arpuUpliftIncludesMonetization = $state(true);
+  let bufferedMonetizationConfigs = $state<Record<string, any>>({});
   let selectedCohorts = $state<Record<string, boolean>>({});
   
   // Cohort picker filter
@@ -232,10 +255,20 @@
       discountRateArr = [Math.round(s.discount_rate * 100)];
       capexContingencyPctArr = [Math.round((s.capex_contingency_pct || 0) * 100)];
       scopeType = s.scope_type === 'verticals' ? 'cohorts' : s.scope_type;
-      modelingType = s.modeling_type ?? 'appraisal';
-      revenueCarrier = s.revenue_carrier ?? 'cohort';
+      const resolved = resolveCarrier(s.modeling_type ?? 'appraisal', s.revenue_carrier ?? 'cohort');
+      if (resolved === 'composite') {
+        selectedDimensions = { cohort: true, plan: true, monetization: true };
+      } else if (resolved === 'cohort') {
+        selectedDimensions = { cohort: true, plan: false, monetization: false };
+      } else if (resolved === 'plan') {
+        selectedDimensions = { cohort: false, plan: true, monetization: false };
+      } else if (resolved === 'feature' || resolved === 'pack' || resolved === 'pool') {
+        selectedDimensions = { cohort: false, plan: false, monetization: true };
+        monetizationSubCarrier = resolved;
+      }
       revenueBridge = s.revenue_bridge ?? null;
       poolTierId = s.pool_tier_id ?? '';
+      arpuUpliftIncludesMonetization = s.arpu_uplift_includes_monetization ?? true;
       expansion_vertical_id = s.expansion_vertical_id ?? null;
       penetration_baseline_months = s.penetration_baseline_months ?? 12;
       ai_acceleration_factor_arr = [s.ai_acceleration_factor ?? 0.6];
@@ -599,6 +632,7 @@
   });
 
   function cleanupChart() {
+    activeEffectId++;
     if (chartInstance) {
       chartInstance.dispose();
       chartInstance = null;
@@ -610,6 +644,7 @@
   }
 
   function cleanupExpansionChart() {
+    activeExpansionEffectId++;
     if (expansionChartInstance) {
       expansionChartInstance.dispose();
       expansionChartInstance = null;
@@ -622,10 +657,21 @@
 
   let activeEffectId = 0;
   let activeExpansionEffectId = 0;
+  let isMounted = false;
+
+  onMount(() => {
+    isMounted = true;
+    return () => {
+      isMounted = false;
+      cleanupChart();
+      cleanupExpansionChart();
+    };
+  });
 
   function renderChart(currentRunId: number) {
     if (!chartElement || currentStep !== 5 || !previewResult) return;
     import('echarts').then((echarts) => {
+      if (!isMounted) return;
       if (currentRunId !== activeEffectId) return;
       if (!chartElement || currentStep !== 5 || !previewResult) return;
       if (chartInstance) {
@@ -644,6 +690,7 @@
   function renderExpansionChart(currentRunId: number) {
     if (!expansionChartElement || currentStep !== 3 || !currentExpansionCurves) return;
     import('echarts').then((echarts) => {
+      if (!isMounted) return;
       if (currentRunId !== activeExpansionEffectId) return;
       if (!expansionChartElement || currentStep !== 3 || !currentExpansionCurves) return;
       if (expansionChartInstance) {
@@ -713,11 +760,14 @@
     return `${upperStr} – ${lowerStr}`;
   }
 
-  // Per-entity monetization overrides (Step 3 edit-only)
+  // Per-entity monetization overrides (Step 3 edit-only / create-buffered)
   const monetizationEntities = $derived.by(() => {
     const rows: { type: 'plan' | 'pack' | 'service'; id: string; name: string; catalog: any; override: any }[] = [];
     const cat: Record<string, any> = data.monetizationCatalog ?? {};
-    const ovr: Record<string, any> = data.monetizationOverrides ?? {};
+    const ovr: Record<string, any> = {
+      ...(data.monetizationOverrides ?? {}),
+      ...bufferedMonetizationConfigs
+    };
     for (const p of data.plans) if (selectedPlans[p.id]) rows.push({ type: 'plan', id: p.id, name: p.name, catalog: cat[`plan:${p.id}`] ?? null, override: ovr[`plan:${p.id}`] ?? null });
     for (const p of data.packs) if (selectedPacks[p.id]) rows.push({ type: 'pack', id: p.id, name: p.name, catalog: cat[`pack:${p.id}`] ?? null, override: ovr[`pack:${p.id}`] ?? null });
     for (const s of data.services) if (selectedServices[s.id]) rows.push({ type: 'service', id: s.id, name: s.name, catalog: cat[`service:${s.id}`] ?? null, override: ovr[`service:${s.id}`] ?? null });
@@ -731,6 +781,9 @@
     liveEntityOverrides[`${type}:${id}`] = override;
     offeringOverrideKey += 1;
     costOverrideKey += 1;
+  }
+  function handleMonetizationChanged(newOverrides: any) {
+    bufferedMonetizationConfigs = { ...newOverrides };
   }
   let offeringOverrideKey = $state(0);
   let costOverrideKey = $state(0);
@@ -881,28 +934,19 @@
   }
 
   // Branch routing question helpers
-  function selectRevenueCarrierOption(opt: 'cohort' | 'plan' | 'monetization') {
-    if (opt === 'cohort') {
-      modelingType = 'incremental';
-      revenueCarrier = 'cohort';
-      revenueBridge = null;
-    } else if (opt === 'plan') {
-      modelingType = 'gtm';
-      revenueCarrier = 'plan';
-    } else {
-      modelingType = 'appraisal';
-      revenueCarrier = 'feature';
+  function toggleDimension(dim: 'cohort' | 'plan' | 'monetization') {
+    if (selectedDimensions[dim] && selectedCount === 1) {
+      // Prevent disabling the last active dimension
+      return;
     }
+    selectedDimensions[dim] = !selectedDimensions[dim];
   }
 
-  const selectedRouteOption = $derived.by(() => {
-    // Route from the RESOLVED carrier, not modeling_type alone: a stored
-    // (appraisal, plan) pair is invariant-consistent, and keying on
-    // modeling_type would open the wrong route on edit.
-    if (resolvedCarrier === 'cohort') return 'cohort';
-    if (resolvedCarrier === 'plan') return 'plan';
-    return 'monetization';
-  });
+  function enterFullComposite() {
+    selectedDimensions.cohort = true;
+    selectedDimensions.plan = true;
+    selectedDimensions.monetization = true;
+  }
 
   // Filter cohorts by vertical selection
   const filteredCohorts = $derived.by(() => {
@@ -975,7 +1019,9 @@
       <input type="hidden" name="modelingType" value={modelingType} />
       <input type="hidden" name="revenueCarrier" value={resolvedCarrier} />
       <input type="hidden" name="revenueBridge" value={revenueBridge || ''} />
-      <input type="hidden" name="pool_tier_id" value={resolvedCarrier === 'pool' ? poolTierId : ''} />
+      <input type="hidden" name="pool_tier_id" value={(resolvedCarrier === 'pool' || resolvedCarrier === 'composite') ? poolTierId : ''} />
+      <input type="hidden" name="arpu_uplift_includes_monetization" value={arpuUpliftIncludesMonetization ? '1' : '0'} />
+      <input type="hidden" name="monetizationConfigsJSON" value={JSON.stringify(bufferedMonetizationConfigs)} />
 
       <!-- Step 1: Details, Route & Scope selection -->
       <div class={currentStep === 1 ? 'block' : 'hidden'}>
@@ -1049,82 +1095,135 @@
           <div class="space-y-3">
             <Label class="font-semibold text-sm">How does this initiative earn revenue?</Label>
             <p class="text-xs text-muted-foreground -mt-1">
-              Select the primary revenue mechanism. This branches the parameters and wizard inputs.
+              Select the revenue mechanisms. You can select multiple options to combine them.
             </p>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
-              <button type="button" onclick={() => selectRevenueCarrierOption('cohort')} class="text-left flex flex-col p-4 border rounded-lg hover:glass-inset transition duration-150 {selectedRouteOption === 'cohort' ? 'border-primary bg-primary/5' : 'border-border'}">
-                <span class="text-sm font-bold text-foreground">Improve existing clients</span>
+              <button type="button" onclick={() => toggleDimension('cohort')} class="text-left flex flex-col p-4 border rounded-lg hover:glass-inset transition duration-150 relative {selectedDimensions.cohort ? 'border-primary bg-primary/5' : 'border-border'}">
+                {#if selectedDimensions.cohort}
+                  <div class="absolute top-2 right-2 text-primary">
+                    <Check class="h-4 w-4" />
+                  </div>
+                {/if}
+                <span class="text-sm font-bold text-foreground pr-6">Improve existing clients</span>
                 <span class="text-[10px] text-muted-foreground mt-2 leading-relaxed">
                   Revenue is driven by optimizing retention, churn reduction, or flat ARPU uplifts on your baseline cohorts. (No plans or monetization add-ons as revenue).
                 </span>
               </button>
 
-              <button type="button" onclick={() => selectRevenueCarrierOption('plan')} class="text-left flex flex-col p-4 border rounded-lg hover:glass-inset transition duration-150 {selectedRouteOption === 'plan' ? 'border-primary bg-primary/5' : 'border-border'}">
-                <span class="text-sm font-bold text-foreground">Sell a new plan (Seats)</span>
+              <button type="button" onclick={() => toggleDimension('plan')} class="text-left flex flex-col p-4 border rounded-lg hover:glass-inset transition duration-150 relative {selectedDimensions.plan ? 'border-primary bg-primary/5' : 'border-border'}">
+                {#if selectedDimensions.plan}
+                  <div class="absolute top-2 right-2 text-primary">
+                    <Check class="h-4 w-4" />
+                  </div>
+                {/if}
+                <span class="text-sm font-bold text-foreground pr-6">Sell a new plan (Seats)</span>
                 <span class="text-[10px] text-muted-foreground mt-2 leading-relaxed">
                   Revenue is driven by licensing subscriptions (pricing plan seats × base price). Optional new-market expansion curves.
                 </span>
               </button>
 
-              <button type="button" onclick={() => selectRevenueCarrierOption('monetization')} class="text-left flex flex-col p-4 border rounded-lg hover:glass-inset transition duration-150 {selectedRouteOption === 'monetization' ? 'border-primary bg-primary/5' : 'border-border'}">
-                <span class="text-sm font-bold text-foreground">Charge for usage / add-on</span>
+              <button type="button" onclick={() => toggleDimension('monetization')} class="text-left flex flex-col p-4 border rounded-lg hover:glass-inset transition duration-150 relative {selectedDimensions.monetization ? 'border-primary bg-primary/5' : 'border-border'}">
+                {#if selectedDimensions.monetization}
+                  <div class="absolute top-2 right-2 text-primary">
+                    <Check class="h-4 w-4" />
+                  </div>
+                {/if}
+                <span class="text-sm font-bold text-foreground pr-6">Charge for usage / add-on</span>
                 <span class="text-[10px] text-muted-foreground mt-2 leading-relaxed">
                   Revenue is carried by usage models or hybrid add-on features (credit-based billing, per-request, flat add-ons).
                 </span>
               </button>
             </div>
+            
+            <p class="text-[10px] text-muted-foreground/80 mt-1">
+              Select 2 or more to combine revenue streams (composite).
+            </p>
+
+            <hr class="border-border/40 my-3" />
+
+            <!-- Composite Row -->
+            <button 
+              type="button" 
+              onclick={enterFullComposite} 
+              class="w-full text-left flex items-start justify-between p-4 border rounded-lg hover:glass-inset transition duration-150 relative {resolvedCarrier === 'composite' ? 'border-primary bg-primary/5' : 'border-border bg-transparent'}"
+            >
+              <div class="flex-1 space-y-1 pr-6">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-bold text-foreground">Composite — Combine all streams</span>
+                  {#if resolvedCarrier === 'composite'}
+                    <Badge variant="outline" class="text-[9px] px-1.5 py-0.5 border-primary/30 text-primary bg-primary/10">
+                      Active {selectedCount >= 2 ? '(selected ≥2 dimensions)' : ''}
+                    </Badge>
+                  {/if}
+                </div>
+                <p class="text-[10px] text-muted-foreground leading-relaxed">
+                  Combines Cohort ARPU optimization, pricing Plan seats, Service monetization, and Credit pools into a single unified model.
+                </p>
+              </div>
+              <div class="flex items-center self-center pl-2">
+                {#if resolvedCarrier === 'composite'}
+                  <div class="text-primary bg-primary/10 p-1 rounded-full border border-primary/20">
+                    <Check class="h-4 w-4" />
+                  </div>
+                {:else}
+                  <div class="w-6 h-6 border border-border rounded-full flex items-center justify-center text-muted-foreground/40 text-[10px]">
+                    +
+                  </div>
+                {/if}
+              </div>
+            </button>
           </div>
 
-          <!-- Appraisal sub-toggle if Monetization route is selected -->
-          {#if selectedRouteOption === 'monetization'}
+          <!-- Appraisal sub-toggle if Monetization route is selected as the only dimension -->
+          {#if selectedDimensions.monetization && selectedCount === 1}
             <div class="space-y-3 glass-inset border border-border p-4 rounded-lg">
               <Label class="font-semibold text-xs text-muted-foreground">Appraisal Carrier Level</Label>
               <div class="grid grid-cols-3 gap-3 mt-1">
-                <label class="flex items-center space-x-2 text-xs cursor-pointer hover:bg-foreground/5 p-2 border rounded border-border/40 {revenueCarrier === 'feature' ? 'bg-primary/5 border-primary/50' : ''}">
-                  <input type="radio" name="revenueCarrierOption" value="feature" checked={revenueCarrier === 'feature'} onclick={() => { revenueCarrier = 'feature'; }} class="accent-primary" />
+                <label class="flex items-center space-x-2 text-xs cursor-pointer hover:bg-foreground/5 p-2 border rounded border-border/40 {monetizationSubCarrier === 'feature' ? 'bg-primary/5 border-primary/50' : ''}">
+                  <input type="radio" name="revenueCarrierOption" value="feature" checked={monetizationSubCarrier === 'feature'} onclick={() => { monetizationSubCarrier = 'feature'; }} class="accent-primary" />
                   <span class="font-medium">Atomic Service</span>
                 </label>
-                <label class="flex items-center space-x-2 text-xs cursor-pointer hover:bg-foreground/5 p-2 border rounded border-border/40 {revenueCarrier === 'pack' ? 'bg-primary/5 border-primary/50' : ''}">
-                  <input type="radio" name="revenueCarrierOption" value="pack" checked={revenueCarrier === 'pack'} onclick={() => { revenueCarrier = 'pack'; }} class="accent-primary" />
+                <label class="flex items-center space-x-2 text-xs cursor-pointer hover:bg-foreground/5 p-2 border rounded border-border/40 {monetizationSubCarrier === 'pack' ? 'bg-primary/5 border-primary/50' : ''}">
+                  <input type="radio" name="revenueCarrierOption" value="pack" checked={monetizationSubCarrier === 'pack'} onclick={() => { monetizationSubCarrier = 'pack'; }} class="accent-primary" />
                   <span class="font-medium">Feature Pack</span>
                 </label>
-                <label class="flex items-center space-x-2 text-xs cursor-pointer hover:bg-foreground/5 p-2 border rounded border-border/40 {revenueCarrier === 'pool' ? 'bg-primary/5 border-primary/50' : ''}">
-                  <input type="radio" name="revenueCarrierOption" value="pool" checked={revenueCarrier === 'pool'} onclick={() => { revenueCarrier = 'pool'; }} class="accent-primary" />
+                <label class="flex items-center space-x-2 text-xs cursor-pointer hover:bg-foreground/5 p-2 border rounded border-border/40 {monetizationSubCarrier === 'pool' ? 'bg-primary/5 border-primary/50' : ''}">
+                  <input type="radio" name="revenueCarrierOption" value="pool" checked={monetizationSubCarrier === 'pool'} onclick={() => { monetizationSubCarrier = 'pool'; }} class="accent-primary" />
                   <span class="font-medium">Unified Credit Pool</span>
                 </label>
               </div>
             </div>
-
-            {#if revenueCarrier === 'pool'}
-              <div class="space-y-2 glass-inset border border-border p-4 rounded-lg mt-3">
-                <div class="flex items-center justify-between">
-                  <Label for="pool_tier_select" class="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Select Credit Pool Tier</Label>
-                  <a href="/catalog/pools" class="text-[10px] text-primary hover:underline">Manage Pools</a>
-                </div>
-                {#if !data.poolTiers || data.poolTiers.length === 0}
-                  <div class="text-xs text-rose-500 bg-rose-500/10 border border-rose-500/20 p-3 rounded-md">
-                    No credit pool tiers found in the catalog. Please <a href="/catalog/pools/new" class="underline font-semibold hover:text-rose-600">create a credit pool tier</a> first.
-                  </div>
-                {:else}
-                  <select
-                    id="pool_tier_select"
-                    bind:value={poolTierId}
-                    required
-                    class="w-full bg-background border border-input rounded-md px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-medium font-sans"
-                  >
-                    <option value="">-- Choose Pool Tier --</option>
-                    {#each data.poolTiers as tier}
-                      <option value={tier.id}>{tier.name} ({tier.credit_pool_size.toLocaleString()} credits/mo, {formatCurrency(tier.monthly_fee, appState.currency, 0)}/mo)</option>
-                    {/each}
-                  </select>
-                  <p class="text-[10px] text-muted-foreground mt-1">This scenario will draw usage from this credit pool under Approach B billing.</p>
-                {/if}
-              </div>
-            {/if}
           {/if}
 
-          <!-- Opt-in Revenue Bridge: Only visible in Cohort carrier and when plans are selected -->
-          {#if resolvedCarrier === 'cohort' && totalSeatsScheduled > 0}
+          {#if revenueCarrier === 'pool' || resolvedCarrier === 'composite'}
+            <div class="space-y-2 glass-inset border border-border p-4 rounded-lg mt-3">
+              <div class="flex items-center justify-between">
+                <Label for="pool_tier_select" class="font-semibold text-xs text-muted-foreground uppercase tracking-wider">{resolvedCarrier === 'composite' ? 'Select Credit Pool Tier (Optional)' : 'Select Credit Pool Tier'}</Label>
+                <a href="/catalog/pools" class="text-[10px] text-primary hover:underline">Manage Pools</a>
+              </div>
+              {#if !data.poolTiers || data.poolTiers.length === 0}
+                <div class="text-xs text-muted-foreground bg-muted/10 border border-border/20 p-3 rounded-md">
+                  No credit pool tiers found in the catalog.
+                </div>
+              {:else}
+                <select
+                  id="pool_tier_select"
+                  bind:value={poolTierId}
+                  required={revenueCarrier === 'pool'}
+                  class="w-full bg-background border border-input rounded-md px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-medium font-sans"
+                >
+                  <option value="">{resolvedCarrier === 'composite' ? '-- No Credit Pool (Disable Pool Billing) --' : '-- Choose Pool Tier --'}</option>
+                  {#each data.poolTiers as tier}
+                    <option value={tier.id}>{tier.name} ({tier.credit_pool_size.toLocaleString()} credits/mo, {formatCurrency(tier.monthly_fee, appState.currency, 0)}/mo)</option>
+                  {/each}
+                </select>
+                <p class="text-[10px] text-muted-foreground mt-1">This scenario will draw usage from this credit pool under Approach B billing.</p>
+              {/if}
+            </div>
+          {/if}
+
+          <!-- Opt-in Revenue Bridge: Only visible in Cohort/Composite carrier and when plans are selected -->
+          {#if (resolvedCarrier === 'cohort' || resolvedCarrier === 'composite') && totalSeatsScheduled > 0}
             <div class="space-y-2 glass-inset border border-border p-4 rounded-lg">
               <div class="flex items-center space-x-2 text-amber-500 mb-1">
                 <Info class="h-4 w-4" />
@@ -1138,6 +1237,26 @@
                 <option value="upsell_on_cohort">Upsell on Cohort (Plan seats represent a subset of cohort; plan subscription revenue is ignored)</option>
                 <option value="separate_market">Separate Market (Plan seats represent a new independent market; plan subscription is additive)</option>
               </select>
+            </div>
+          {/if}
+
+          <!-- Copilot Monetization Folding: only visible in Composite carrier -->
+          {#if resolvedCarrier === 'composite'}
+            <div class="space-y-2 glass-inset border border-border p-4 rounded-lg">
+              <div class="flex items-center space-x-2 text-primary mb-1">
+                <Info class="h-4 w-4" />
+                <Label for="arpu_uplift_includes_monetization_checkbox" class="font-semibold text-xs uppercase tracking-wider">Copilot Monetization Folding</Label>
+              </div>
+              <p class="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                Decide whether Copilot monetization is folded (cross-checked) into the cohort ARPU uplift, or treated as separate additive revenue.
+              </p>
+              <div class="flex items-center justify-between pt-1">
+                <span class="text-xs text-muted-foreground">Fold (cross-check) Copilot monetization into Cohort Uplift</span>
+                <div class="flex items-center space-x-2">
+                  <span class="text-xs font-mono font-bold">{arpuUpliftIncludesMonetization ? 'YES (Folded)' : 'NO (Additive)'}</span>
+                  <input type="checkbox" id="arpu_uplift_includes_monetization_checkbox" bind:checked={arpuUpliftIncludesMonetization} class="accent-primary" />
+                </div>
+              </div>
             </div>
           {/if}
 
@@ -1207,17 +1326,16 @@
             <h3 class="text-sm font-bold uppercase tracking-wider">Parameter Overrides</h3>
           </div>
 
-          {#if resolvedCarrier !== 'cohort'}
-            <Card class="border border-border/60 bg-muted/10 p-6 text-center space-y-2">
-              <Info class="h-8 w-8 text-muted-foreground mx-auto" />
-              <h4 class="text-sm font-bold text-foreground">Cohort Uplifts Disabled</h4>
-              <p class="text-xs text-muted-foreground max-w-md mx-auto">
-                Under the chosen <b>{resolvedCarrier}</b> revenue route, cohort uplifts (ARPU, acquisition, churn) do not carry revenue. This prevents contradictory configuration. Proceed to rollout offerings.
+          {#if resolvedCarrier !== 'cohort' && resolvedCarrier !== 'composite'}
+            <div class="flex items-start space-x-2.5 bg-muted/10 border border-border/40 rounded-lg p-3">
+              <Badge variant="outline" class="text-[9px] font-mono font-bold uppercase shrink-0 mt-0.5 border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5">Diagnostic</Badge>
+              <p class="text-xs text-muted-foreground">
+                Under the chosen <b>{resolvedCarrier}</b> revenue route, cohort uplifts (ARPU, acquisition, churn) do not carry revenue — they are kept as perspective data and remain editable below.
               </p>
-            </Card>
-          {:else}
-            <p class="text-xs text-muted-foreground mb-4">Enter Flat ARPU uplifts, Churn reductions, or Acquisition gains to model AI value. Leave blank to inherit defaults.</p>
-            {#if overrides.length === 0}
+            </div>
+          {/if}
+          <p class="text-xs text-muted-foreground mb-4">Enter Flat ARPU uplifts, Churn reductions, or Acquisition gains to model AI value. Leave blank to inherit defaults.</p>
+          {#if overrides.length === 0}
               <p class="text-sm text-muted-foreground italic text-center py-6">No client targets selected in Step 1.</p>
             {:else}
               <div class="space-y-4">
@@ -1346,7 +1464,6 @@
                 {/each}
               </div>
             {/if}
-          {/if}
         </CardContent>
 
         <CardFooter class="border-t border-border glass-inset py-4 flex justify-between">
@@ -1450,13 +1567,14 @@
             </Card>
           {/if}
 
-          <!-- Pricing Plans — hidden for the pure 'Improve existing clients' (incremental) route,
-               where plan seats can never carry revenue. Still shown for appraisal+cohort bridge
-               scenarios (separate_market), so plan seats are never silently dropped on edit-save. -->
-          {#if modelingType !== 'incremental'}
+          <!-- Pricing Plans — always editable (ADR 0014); a diagnostic badge marks that seats
+               don't book revenue under the active carrier, instead of hiding the section. -->
           <div class="space-y-3">
-            <h3 class="text-sm font-bold text-foreground uppercase tracking-wider flex items-center">
-              <CalendarRange class="h-4 w-4 mr-1.5 text-primary" /> Pricing Plans & Rollout Offsets
+            <h3 class="text-sm font-bold text-foreground uppercase tracking-wider flex items-center justify-between">
+              <span class="flex items-center"><CalendarRange class="h-4 w-4 mr-1.5 text-primary" /> Pricing Plans & Rollout Offsets</span>
+              {#if modelingType === 'incremental'}
+                <Badge variant="outline" class="text-[9px] font-mono font-bold uppercase border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5">Diagnostic — not booked</Badge>
+              {/if}
             </h3>
             {#if data.plans.length === 0}
               <p class="text-xs text-muted-foreground italic pl-6">No pricing plans available.</p>
@@ -1479,16 +1597,12 @@
                         <input type="number" name="rollout_month_plan_{plan.id}" min="0" max={projectionMonths} bind:value={rolloutPlans[plan.id]} class="w-16 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
                         <span class="text-[10px] text-muted-foreground">M{rolloutPlans[plan.id]}</span>
 
-                        {#if resolvedCarrier === 'plan'}
-                          {#if expansion_vertical_id}
-                            <span class="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold ml-1">Seats: derived</span>
-                            <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
-                          {:else}
-                            <Label class="text-xs text-muted-foreground shrink-0 ml-1">Seats:</Label>
-                            <NumberField id="seats_plan_{plan.id}" name="seats_plan_{plan.id}" required={false} bind:value={seatsPlans[plan.id]} min="0" raw={true} grouped={true} decimals={0} class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
-                          {/if}
-                        {:else}
+                        {#if expansion_vertical_id}
+                          <span class="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold ml-1">Seats: derived</span>
                           <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
+                        {:else}
+                          <Label class="text-xs text-muted-foreground shrink-0 ml-1">Seats:</Label>
+                          <NumberField id="seats_plan_{plan.id}" name="seats_plan_{plan.id}" required={false} bind:value={seatsPlans[plan.id]} min="0" raw={true} grouped={true} decimals={0} class="w-20 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
                         {/if}
                       </div>
                     {/if}
@@ -1499,57 +1613,41 @@
           </div>
 
           <hr class="border-border/60" />
-          {:else}
-            <!-- Render hidden inputs to keep perspective data -->
-            {#each data.plans as plan}
-              {#if selectedPlans[plan.id]}
-                <input type="hidden" name="planIds" value={plan.id} />
-                <input type="hidden" name="rollout_month_plan_{plan.id}" value={rolloutPlans[plan.id] ?? 0} />
-                <input type="hidden" name="seats_plan_{plan.id}" value={seatsPlans[plan.id] ?? 0} />
-              {/if}
-            {/each}
-          {/if}
 
-          <!-- Feature Packs (only if carrier !== cohort) -->
-          {#if resolvedCarrier !== 'cohort'}
-            <div class="space-y-3">
-              <h3 class="text-sm font-bold text-foreground uppercase tracking-wider flex items-center">
-                <CalendarRange class="h-4 w-4 mr-1.5 text-primary" /> Feature Packs & Rollout Offsets
-              </h3>
-              {#if data.packs.length === 0}
-                <p class="text-xs text-muted-foreground italic pl-6">No feature packs available.</p>
-              {:else}
-                <div class="space-y-3 pl-6">
-                  {#each data.packs as pack}
-                    <div class="glass-inset border border-border/40 p-3 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      <label class="flex items-center space-x-3 cursor-pointer select-none">
-                        <input type="checkbox" name="packIds" value={pack.id} bind:checked={selectedPacks[pack.id]} class="h-4 w-4 accent-primary rounded border-border" />
-                        <div>
-                          <span class="text-sm font-bold text-foreground block">{pack.name}</span>
-                        </div>
-                      </label>
-                      {#if selectedPacks[pack.id]}
-                        <div class="flex items-center space-x-3 bg-muted/30 px-3 py-1.5 rounded border border-border/20">
-                          <Label class="text-xs text-muted-foreground shrink-0">Rollout Month:</Label>
-                          <input type="number" name="rollout_month_pack_{pack.id}" min="0" max={projectionMonths} bind:value={rolloutPacks[pack.id]} class="w-16 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
-                          <span class="text-[10px] text-muted-foreground">M{rolloutPacks[pack.id]}</span>
-                        </div>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
+          <!-- Feature Packs — always editable (ADR 0014); diagnostic badge when the active
+               carrier doesn't book pack revenue, instead of hiding the section. -->
+          <div class="space-y-3">
+            <h3 class="text-sm font-bold text-foreground uppercase tracking-wider flex items-center justify-between">
+              <span class="flex items-center"><CalendarRange class="h-4 w-4 mr-1.5 text-primary" /> Feature Packs & Rollout Offsets</span>
+              {#if resolvedCarrier === 'cohort'}
+                <Badge variant="outline" class="text-[9px] font-mono font-bold uppercase border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5">Diagnostic — not booked</Badge>
               {/if}
-            </div>
-            <hr class="border-border/60" />
-          {:else}
-            <!-- Render hidden inputs to keep perspective data -->
-            {#each data.packs as pack}
-              {#if selectedPacks[pack.id]}
-                <input type="hidden" name="packIds" value={pack.id} />
-                <input type="hidden" name="rollout_month_pack_{pack.id}" value={rolloutPacks[pack.id] ?? 0} />
-              {/if}
-            {/each}
-          {/if}
+            </h3>
+            {#if data.packs.length === 0}
+              <p class="text-xs text-muted-foreground italic pl-6">No feature packs available.</p>
+            {:else}
+              <div class="space-y-3 pl-6">
+                {#each data.packs as pack}
+                  <div class="glass-inset border border-border/40 p-3 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <label class="flex items-center space-x-3 cursor-pointer select-none">
+                      <input type="checkbox" name="packIds" value={pack.id} bind:checked={selectedPacks[pack.id]} class="h-4 w-4 accent-primary rounded border-border" />
+                      <div>
+                        <span class="text-sm font-bold text-foreground block">{pack.name}</span>
+                      </div>
+                    </label>
+                    {#if selectedPacks[pack.id]}
+                      <div class="flex items-center space-x-3 bg-muted/30 px-3 py-1.5 rounded border border-border/20">
+                        <Label class="text-xs text-muted-foreground shrink-0">Rollout Month:</Label>
+                        <input type="number" name="rollout_month_pack_{pack.id}" min="0" max={projectionMonths} bind:value={rolloutPacks[pack.id]} class="w-16 bg-background text-foreground border border-input rounded text-center text-xs py-0.5 font-mono" />
+                        <span class="text-[10px] text-muted-foreground">M{rolloutPacks[pack.id]}</span>
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+          <hr class="border-border/60" />
 
           <!-- AI Services -->
           <div class="space-y-3">
@@ -1608,6 +1706,18 @@
                 {/key}
               </div>
             {/if}
+          {:else if wizardMode === 'create'}
+            <div class="mt-6">
+              {#key monetizationKey}
+                <ScenarioMonetizationOverrides
+                  scenarioId={""}
+                  entities={monetizationEntities}
+                  modelingType={modelingType}
+                  resolvedCarrier={resolvedCarrier}
+                  onChanged={handleMonetizationChanged}
+                />
+              {/key}
+            </div>
           {/if}
         </CardContent>
 

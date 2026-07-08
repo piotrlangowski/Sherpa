@@ -1102,4 +1102,16 @@ function runDataMigrations(db: DatabaseConnection): void {
     `).run();
     db.prepare(`CREATE UNIQUE INDEX idx_scenario_results_scenario_id ON scenario_results(scenario_id)`).run();
   }
+
+  // Migration 25: ADR 0014 — composite carrier (arpu_uplift_includes_monetization + composite_breakdown) + invalidate scenario results.
+  const scenarioCols25 = (db.prepare("PRAGMA table_info(scenarios)").all() as any[]).map(c => c.name);
+  if (!scenarioCols25.includes('arpu_uplift_includes_monetization')) {
+    db.prepare("ALTER TABLE scenarios ADD COLUMN arpu_uplift_includes_monetization INTEGER NOT NULL DEFAULT 1").run();
+  }
+
+  const scenarioResultCols25 = (db.prepare("PRAGMA table_info(scenario_results)").all() as any[]).map(c => c.name);
+  if (!scenarioResultCols25.includes('composite_breakdown')) {
+    db.prepare("ALTER TABLE scenario_results ADD COLUMN composite_breakdown TEXT").run();
+    db.prepare("DELETE FROM scenario_results").run(); // invalidate all cached results
+  }
 }
