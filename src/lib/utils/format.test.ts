@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatCurrency, formatNumber, formatPercent, formatTokens, formatMonths } from './format';
+import { formatCurrency, formatNumber, formatPercent, formatTokens, formatMonths, modelingTypeLabel, modelingTypeShortCode } from './format';
 
 describe('format utilities with space grouping', () => {
   const GROUP = '\u202F'; // narrow no-break space
@@ -20,6 +20,13 @@ describe('format utilities with space grouping', () => {
       expect(formatCurrency(1234.56, 'USD', 2)).toBe(`$1${GROUP}234.56`);
       expect(formatCurrency(1000000, 'EUR', 0)).toBe(`€1${GROUP}000${GROUP}000`);
       expect(formatCurrency(500, 'PLN', 0)).toBe(`500 zł`);
+    });
+
+    it('should force a leading sign only when forceSign is true', () => {
+      expect(formatCurrency(1234, 'EUR', 0, true)).toBe(`€+1${GROUP}234`);
+      expect(formatCurrency(-1234, 'EUR', 0, true)).toBe(`€-1${GROUP}234`);
+      expect(formatCurrency(0, 'EUR', 0, true)).toBe(`€0`);
+      expect(formatCurrency(1234, 'EUR', 0)).toBe(`€1${GROUP}234`);
     });
   });
 
@@ -44,6 +51,17 @@ describe('format utilities with space grouping', () => {
       expect(formatMonths(0.5)).toBe('15 days');
       expect(formatMonths(12)).toBe('1 yr');
       expect(formatMonths(18)).toBe(`1 yr 6.0 mos`);
+    });
+  });
+
+  describe('modelingTypeLabel / modelingTypeShortCode', () => {
+    it('never returns an empty string for a known carrier, including composite (ADR 0014)', () => {
+      expect(modelingTypeLabel('incremental', 'cohort')).not.toBe('');
+      expect(modelingTypeLabel('gtm', 'plan')).not.toBe('');
+      expect(modelingTypeLabel('appraisal', 'feature')).not.toBe('');
+      expect(modelingTypeLabel('appraisal', 'pool')).not.toBe('');
+      expect(modelingTypeLabel('composite', 'composite')).not.toBe('');
+      expect(modelingTypeShortCode('composite', 'composite')).toBe('CMP');
     });
   });
 });

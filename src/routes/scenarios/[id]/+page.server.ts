@@ -1,6 +1,6 @@
 import type { PageServerLoad, Actions } from './$types';
 import { scenariosRepository } from '$lib/server/repositories/scenarios';
-import { runAndSaveScenario, calculateScenario, resolveScenarioCohorts, attachMonetization } from '$lib/server/services/financial-engine';
+import { runAndSaveScenario, calculateScenario, resolveScenarioCohorts, attachMonetization, computeScenarioPerspectives } from '$lib/server/services/financial-engine';
 import { providersRepository } from '$lib/server/repositories/providers';
 import { settingsRepository } from '$lib/server/repositories/settings';
 import { validateScenarioConfig } from '$lib/shared/financial-math';
@@ -57,6 +57,13 @@ export const load: PageServerLoad = async ({ params }) => {
   const poolEconomics = detailedResult?.poolEconomics ?? null;
   const agentDeflectionCorridor = detailedResult?.agentDeflectionCorridor ?? null;
 
+  let perspectives: any = null;
+  try {
+    perspectives = computeScenarioPerspectives(scenario);
+  } catch (err) {
+    perspectives = null;
+  }
+
   return {
     scenario,
     results,
@@ -70,7 +77,8 @@ export const load: PageServerLoad = async ({ params }) => {
     driverProfile,
     streamMargins,
     poolEconomics,
-    agentDeflectionCorridor
+    agentDeflectionCorridor,
+    perspectives
   };
 };
 
@@ -83,5 +91,19 @@ export const actions: Actions = {
     }
 
     throw redirect(303, '/scenarios');
+  },
+  duplicateScenario: async ({ params }) => {
+    try {
+      const cloned = scenariosRepository.duplicate(params.id);
+      try {
+        runAndSaveScenario(cloned.id);
+      } catch (err) {
+        // tolerować błąd
+      }
+      throw redirect(303, `/scenarios/${cloned.id}`);
+    } catch (err: any) {
+      if (err.status === 303 || err.status === 307 || err.status === 302) throw err;
+      return fail(500, { error: err.message });
+    }
   }
 };

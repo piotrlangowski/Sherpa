@@ -10,6 +10,7 @@ import { scenariosRepository } from '$lib/server/repositories/scenarios';
 import { providersRepository } from '$lib/server/repositories/providers';
 import { settingsRepository } from '$lib/server/repositories/settings';
 import { poolTiersRepository } from '$lib/server/repositories/pool-tiers';
+import { monetizationRepository } from '$lib/server/repositories/monetization';
 import { runAndSaveScenario } from '$lib/server/services/financial-engine';
 import { validateRevenueIntegrity } from '$lib/shared/financial-math';
 import { fail, redirect } from '@sveltejs/kit';
@@ -25,6 +26,7 @@ export const load: PageServerLoad = async () => {
   const providers = providersRepository.getAll();
   const settings = settingsRepository.get();
   const poolTiers = poolTiersRepository.getAll();
+  const monetizationCatalog = Object.fromEntries(monetizationRepository.getCatalogMap());
 
   return {
     clientBase,
@@ -36,7 +38,8 @@ export const load: PageServerLoad = async () => {
     costs,
     providers,
     settings,
-    poolTiers
+    poolTiers,
+    monetizationCatalog
   };
 };
 
@@ -75,6 +78,25 @@ export const actions: Actions = {
     const evc_capture_floor_pct = getFloatOrNull('evc_capture_floor_pct');
     const price_from_evc = formData.get('price_from_evc') === '1';
     const adoption_elasticity = parseFloat(formData.get('adoption_elasticity') as string || '0');
+    const arpu_uplift_includes_monetization = formData.get('arpu_uplift_includes_monetization') !== '0';
+
+    const monetizationConfigsJSON = formData.get('monetizationConfigsJSON') as string;
+    let monetizationConfigs: Array<{ entity_type: 'service' | 'pack' | 'plan', entity_id: string, config: any }> = [];
+    if (monetizationConfigsJSON) {
+      try {
+        const rawMap = JSON.parse(monetizationConfigsJSON);
+        for (const [key, val] of Object.entries(rawMap)) {
+          if (val) {
+            const [type, id] = key.split(':');
+            monetizationConfigs.push({
+              entity_type: type as any,
+              entity_id: id,
+              config: val
+            });
+          }
+        }
+      } catch (e) {}
+    }
 
     let verticalIds: string[] = [];
     if (scopeType === 'verticals') {
@@ -137,6 +159,7 @@ export const actions: Actions = {
       modeling_type: modelingType as any,
       revenue_carrier: revenueCarrier as any,
       revenue_bridge: revenueBridge as any,
+      arpu_uplift_includes_monetization,
       pool_tier_id,
       plans,
       services,
@@ -161,6 +184,7 @@ export const actions: Actions = {
         modeling_type: modelingType as any,
         revenue_carrier: revenueCarrier as any,
         revenue_bridge: revenueBridge as any,
+        arpu_uplift_includes_monetization,
         pool_tier_id,
         vertical_ids: verticalIds,
         cohort_config_ids: cohortConfigIds,
@@ -180,7 +204,8 @@ export const actions: Actions = {
         evc_capture_target_pct,
         evc_capture_floor_pct,
         price_from_evc,
-        adoption_elasticity
+        adoption_elasticity,
+        monetization_configs: monetizationConfigs
       });
 
       scenarioId = scenario.id;

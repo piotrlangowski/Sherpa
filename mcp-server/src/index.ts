@@ -19,6 +19,7 @@ import {
   validateRevenueIntegrity,
   validateScenarioConfig,
   suggestEvcMultipliers,
+  deriveModelingType,
   DEFAULT_COPILOT_MARGIN_THRESHOLD,
   DEFAULT_AGENT_MARGIN_THRESHOLD
 } from "./shared/financial-math.js";
@@ -27,6 +28,7 @@ import {
   normalizeScenarioCurrency,
   FALLBACK_EXCHANGE_RATES
 } from "./shared/currency.js";
+import { computePerspectives } from "./shared/perspectives.js";
 import type {
   Scenario,
   Provider,
@@ -346,7 +348,7 @@ function attachMonetization(scenario: Scenario): void {
 // Helper: Load a full scenario using the current multi-cohort schema (scope_type + junctions)
 function getFullScenario(scenarioId: string): Scenario | null {
   const s = db.prepare(`
-    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
+    SELECT id, name, description, projection_months, discount_rate, scope_type, revenue_source, capex_contingency_pct, modeling_type, revenue_carrier, revenue_bridge, arpu_uplift_includes_monetization, expansion_vertical_id, penetration_baseline_months, ai_acceleration_factor, ai_som_lift_pct,
            evc_nba_annual_value, evc_extra_positive_value, evc_negative_value, evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
            price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold, pool_tier_id, evc_reference_cohort_id
     FROM scenarios
@@ -354,6 +356,7 @@ function getFullScenario(scenarioId: string): Scenario | null {
   `).get(scenarioId) as any;
 
   if (!s) return null;
+  s.arpu_uplift_includes_monetization = s.arpu_uplift_includes_monetization !== 0;
 
   // Resolve cohorts based on scope_type
   let baseCohorts: CohortConfig[] = [];
@@ -1779,7 +1782,7 @@ server.tool(
   "scenario_action",
   "List, create, retrieve, update, or delete SaaS ROI scenarios, or execute scenario projections (calculating NPV/IRR, performing sensitivity analysis, comparing scenarios, and parsing natural language descriptions). Scenarios target a scope_type ('all_clients', 'verticals', 'cohorts') resolving parameters via a global->vertical->cohort override cascade. Revenue is carrier-first: modeling_type and revenue_carrier are resolved into a single authoritative pair (resolveRevenueModel) — the deprecated revenue_source field is no longer read by the engine. Coercion matrix: an explicit revenue_carrier always wins and relabels modeling_type via deriveModelingType ('plan'→'gtm'; 'pack'/'feature'/'pool'→'appraisal'; 'cohort'→'incremental', or 'appraisal' if a revenue_bridge is set). Without an explicit carrier, modeling_type drives it instead: 'incremental'→carrier 'cohort'; 'gtm'→carrier 'plan'; 'appraisal'→the given revenue_carrier or 'cohort' by default. If the requested modeling_type/revenue_carrier combination gets coerced, the create/update response includes a '[Revenue Model Coercion]' note showing what was actually stored. Always specify the 'action' parameter. For safety, deletions require setting 'confirm' to true.",
   {
-    action: z.enum(["list", "get", "create", "update", "delete", "calculate", "compare", "sensitivity", "generate", "suggest_evc_multipliers"]).describe("The action to perform: 'list' to view scenarios, 'get' to inspect a scenario, 'create' to add a scenario, 'update' to edit details, 'delete' to remove a scenario, 'calculate' to compute ROI, 'compare' to analyze multiple scenarios, 'sensitivity' for tornado charts, 'generate' to parse natural language descriptions, or 'suggest_evc_multipliers' (ADR 0011 Track A) to get data-derived suggested evc_extra_value_multiplier defaults (Caveat: base_arpu is current pricing — an endogenous ability-to-pay proxy; treat suggestion as starting prior, not evidence of WTP) for every cohort vs. evc_reference_cohort_id."),
+    action: z.enum(["list", "get", "create", "update", "delete", "calculate", "compare", "sensitivity", "generate", "suggest_evc_multipliers", "duplicate", "triangulate"]).describe("The action to perform: 'list' to view scenarios, 'get' to inspect a scenario, 'create' to add a scenario, 'update' to edit details, 'delete' to remove a scenario, 'calculate' to compute ROI, 'compare' to analyze multiple scenarios, 'sensitivity' for tornado charts, 'generate' to parse natural language descriptions, 'suggest_evc_multipliers' to suggest multipliers, 'duplicate' to clone a scenario, or 'triangulate' to run triangulation analysis."),
     id: z.string().optional().describe("Unique UUID of the scenario. Required for 'get', 'update', 'delete', 'calculate', and 'sensitivity' actions."),
     ids: z.array(z.string()).optional().describe("Array of scenario UUIDs to compare. Required for 'compare' action."),
     name: z.string().optional().describe("Name of the scenario (e.g. 'Standard rollout'). Required for 'create' action."),
@@ -1788,8 +1791,9 @@ server.tool(
     discount_rate: z.number().min(0).max(1).optional().describe("Annual discount rate as a decimal (default: 0.10 for 10%)."),
     scope_type: z.enum(["all_clients", "verticals", "cohorts"]).optional().describe("Scope type (default: cohorts)."),
     revenue_source: z.enum(["cohort", "monetization", "both"]).optional().describe("Where the scenario draws its revenue from (deprecated, use modeling_type and revenue_carrier instead)."),
-    modeling_type: z.enum(["incremental", "gtm", "appraisal"]).optional().describe("Business-centric modeling type: 'incremental', 'gtm', or 'appraisal' (default: appraisal)."),
-    revenue_carrier: z.enum(["cohort", "plan", "pack", "feature", "pool"]).nullable().optional().describe("Exactly one entity level carries revenue; the rest are cost/context (default: cohort). 'pool' is the ADR 0010 credit-pool carrier."),
+    modeling_type: z.enum(["incremental", "gtm", "appraisal", "composite"]).optional().describe("Business-centric modeling type: 'incremental', 'gtm', 'appraisal', or 'composite' (default: appraisal)."),
+    revenue_carrier: z.enum(["cohort", "plan", "pack", "feature", "pool", "composite"]).nullable().optional().describe("Exactly one entity level carries revenue; the rest are cost/context (default: cohort). 'pool' is the ADR 0010 credit-pool carrier. 'composite' is the ADR 0014 composite carrier."),
+    arpu_uplift_includes_monetization: z.boolean().optional().describe("ADR 0014: If true (default), copilot monetization is folded (cross-checked) into cohort uplift. If false, it is additive."),
     pool_tier_id: z.string().nullable().optional().describe("UUID of the credit-pool tier this scenario draws from (ADR 0010). Required for revenue_carrier 'pool'; manage tiers with pool_tier_action."),
     revenue_bridge: z.enum(["upsell_on_cohort", "separate_market"]).nullable().optional().describe("When a plan-carrier scenario also references a cohort, how they relate."),
     capex_contingency_pct: z.number().min(0).max(1).optional().describe("CAPEX contingency buffer percentage (e.g. 0.20 for 20% contingency). Defaults to 0."),
@@ -1939,7 +1943,7 @@ server.tool(
             INSERT INTO scenarios (
               id, name, description, projection_months, discount_rate, scope_type,
               revenue_source, capex_contingency_pct, modeling_type, revenue_carrier,
-              revenue_bridge, expansion_vertical_id, penetration_baseline_months,
+              revenue_bridge, arpu_uplift_includes_monetization, expansion_vertical_id, penetration_baseline_months,
               ai_acceleration_factor, ai_som_lift_pct,
               evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
               evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
@@ -1947,11 +1951,11 @@ server.tool(
               pool_tier_id, evc_reference_cohort_id,
               created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             scenarioId, args.name, args.description || null, args.projection_months ?? 36,
             args.discount_rate ?? 0.10, scopeType, revSource, args.capex_contingency_pct ?? 0,
-            modeling_type, revenue_carrier || null, revenue_bridge || null,
+            modeling_type, revenue_carrier || null, revenue_bridge || null, args.arpu_uplift_includes_monetization !== false ? 1 : 0,
             args.expansion_vertical_id || null, args.penetration_baseline_months ?? null,
             args.ai_acceleration_factor ?? null, args.ai_som_lift_pct ?? null,
             args.evc_nba_annual_value ?? null, args.evc_extra_positive_value ?? null,
@@ -2108,12 +2112,13 @@ server.tool(
           const agent_margin_threshold = args.agent_margin_threshold !== undefined ? args.agent_margin_threshold : current.agent_margin_threshold;
           const pool_tier_id = args.pool_tier_id !== undefined ? args.pool_tier_id : current.pool_tier_id;
           const evc_reference_cohort_id = args.evc_reference_cohort_id !== undefined ? args.evc_reference_cohort_id : current.evc_reference_cohort_id;
+          const arpu_uplift_includes_monetization = args.arpu_uplift_includes_monetization !== undefined ? args.arpu_uplift_includes_monetization : current.arpu_uplift_includes_monetization;
 
           db.prepare(`
             UPDATE scenarios
             SET name = ?, description = ?, projection_months = ?, discount_rate = ?, scope_type = ?,
                 revenue_source = ?, capex_contingency_pct = ?, modeling_type = ?,
-                revenue_carrier = ?, revenue_bridge = ?,
+                revenue_carrier = ?, revenue_bridge = ?, arpu_uplift_includes_monetization = ?,
                 expansion_vertical_id = ?, penetration_baseline_months = ?,
                 ai_acceleration_factor = ?, ai_som_lift_pct = ?,
                 evc_nba_annual_value = ?, evc_extra_positive_value = ?, evc_negative_value = ?,
@@ -2125,7 +2130,7 @@ server.tool(
           `).run(
             name, description || null, projection_months, discount_rate, scope_type,
             revenue_source, capex_contingency_pct, modeling_type,
-            revenue_carrier || null, revenue_bridge || null,
+            revenue_carrier || null, revenue_bridge || null, arpu_uplift_includes_monetization ? 1 : 0,
             expansion_vertical_id || null, penetration_baseline_months,
             ai_acceleration_factor, ai_som_lift_pct,
             evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
@@ -2235,6 +2240,261 @@ server.tool(
         }
         db.prepare("DELETE FROM scenarios WHERE id = ?").run(args.id);
         return { content: [{ type: "text", text: `Scenario with ID ${args.id} deleted successfully.` }] };
+      }
+
+      if (args.action === "duplicate") {
+        if (!args.id) {
+          throw new z.ZodError([{ code: "custom", path: ["id"], message: "Identyfikator 'id' jest wymagany do duplikowania scenariusza." }]);
+        }
+
+        const original = db.prepare("SELECT * FROM scenarios WHERE id = ?").get(args.id) as any;
+        if (!original) {
+          return { content: [{ type: "text", text: `Scenario '${args.id}' not found` }], isError: true };
+        }
+
+        const newId = crypto.randomUUID();
+        const now = new Date().toISOString();
+
+        // 1. Determine new name and carrier details
+        const nextCarrier = args.revenue_carrier !== undefined ? args.revenue_carrier : original.revenue_carrier;
+        const nextBridge = args.revenue_bridge !== undefined ? args.revenue_bridge : original.revenue_bridge;
+
+        const isCarrierSwapped = args.revenue_carrier !== undefined && args.revenue_carrier !== original.revenue_carrier;
+
+        // Canonical pair on carrier swap: resolveRevenueModel keeps a provided
+        // modeling_type whenever the pair is invariant-consistent (e.g.
+        // (appraisal, plan)), so the original's label must not be passed through.
+        const modelingType = args.modeling_type !== undefined
+          ? args.modeling_type
+          : isCarrierSwapped
+            ? deriveModelingType(nextCarrier!, nextBridge)
+            : original.modeling_type;
+
+        // Duplicating a duplicate must not compound name suffixes.
+        const baseName = (original.name as string)
+          .replace(/(?:\s+—\s+(?:INC|GTM|USE|POOL|VAR) perspective)+$/, '')
+          .replace(/(?:\s+\(copy\))+$/, '');
+
+        let name: string;
+        if (args.name) {
+          name = args.name;
+        } else if (isCarrierSwapped) {
+          const shortCodes: Record<string, string> = {
+            incremental: 'INC',
+            gtm: 'GTM',
+            appraisal: 'USE'
+          };
+          const shortCode = shortCodes[modelingType ?? ''] || 'VAR';
+          name = `${baseName} — ${shortCode} perspective`;
+        } else {
+          name = `${baseName} (copy)`;
+        }
+        const poolTierId = args.pool_tier_id !== undefined ? args.pool_tier_id : original.pool_tier_id;
+
+        // Resolve revenue model coercion
+        const coerced = resolveRevenueModel({
+          modeling_type: modelingType,
+          revenue_carrier: nextCarrier,
+          revenue_bridge: nextBridge
+        });
+        const finalModelingType = coerced.modeling_type;
+        const finalRevenueCarrier = coerced.revenue_carrier;
+        const finalRevenueSource = finalRevenueCarrier === 'cohort' ? 'cohort' : 'monetization';
+
+        db.transaction(() => {
+          // 2. Insert duplicated scenarios row
+          db.prepare(`
+            INSERT INTO scenarios (
+              id, name, description, projection_months, discount_rate, scope_type,
+              revenue_source, capex_contingency_pct, modeling_type, revenue_carrier,
+              revenue_bridge, expansion_vertical_id, penetration_baseline_months,
+              ai_acceleration_factor, ai_som_lift_pct,
+              evc_nba_annual_value, evc_extra_positive_value, evc_negative_value,
+              evc_capture_ceiling_pct, evc_capture_target_pct, evc_capture_floor_pct,
+              price_from_evc, adoption_elasticity, copilot_margin_threshold, agent_margin_threshold,
+              pool_tier_id, evc_reference_cohort_id,
+              created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            newId, name, original.description, original.projection_months, original.discount_rate, original.scope_type,
+            finalRevenueSource, original.capex_contingency_pct, finalModelingType, finalRevenueCarrier,
+            nextBridge, original.expansion_vertical_id, original.penetration_baseline_months,
+            original.ai_acceleration_factor, original.ai_som_lift_pct,
+            original.evc_nba_annual_value, original.evc_extra_positive_value, original.evc_negative_value,
+            original.evc_capture_ceiling_pct, original.evc_capture_target_pct, original.evc_capture_floor_pct,
+            original.price_from_evc, original.adoption_elasticity, original.copilot_margin_threshold, original.agent_margin_threshold,
+            poolTierId, original.evc_reference_cohort_id,
+            now, now
+          );
+
+          // 3. Duplicate verticals
+          const verticals = db.prepare("SELECT vertical_id FROM scenario_verticals WHERE scenario_id = ?").all(args.id) as any[];
+          for (const v of verticals) {
+            db.prepare("INSERT INTO scenario_verticals (scenario_id, vertical_id) VALUES (?, ?)").run(newId, v.vertical_id);
+          }
+
+          // 4. Duplicate cohorts
+          const cohorts = db.prepare("SELECT cohort_config_id FROM scenario_cohorts WHERE scenario_id = ?").all(args.id) as any[];
+          for (const c of cohorts) {
+            db.prepare("INSERT INTO scenario_cohorts (scenario_id, cohort_config_id) VALUES (?, ?)").run(newId, c.cohort_config_id);
+          }
+
+          // 5. Duplicate services
+          const services = db.prepare("SELECT service_id, rollout_month FROM scenario_services WHERE scenario_id = ?").all(args.id) as any[];
+          for (const s of services) {
+            db.prepare("INSERT INTO scenario_services (scenario_id, service_id, rollout_month) VALUES (?, ?, ?)").run(newId, s.service_id, s.rollout_month);
+          }
+
+          // 6. Duplicate packs
+          const packs = db.prepare("SELECT pack_id, rollout_month FROM scenario_packs WHERE scenario_id = ?").all(args.id) as any[];
+          for (const p of packs) {
+            db.prepare("INSERT INTO scenario_packs (scenario_id, pack_id, rollout_month) VALUES (?, ?, ?)").run(newId, p.pack_id, p.rollout_month);
+          }
+
+          // 7. Duplicate plans
+          const plans = db.prepare("SELECT plan_id, rollout_month, seats FROM scenario_plans WHERE scenario_id = ?").all(args.id) as any[];
+          for (const pl of plans) {
+            db.prepare("INSERT INTO scenario_plans (scenario_id, plan_id, rollout_month, seats) VALUES (?, ?, ?, ?)").run(newId, pl.plan_id, pl.rollout_month, pl.seats);
+          }
+
+          // 8. Duplicate costs
+          const costs = db.prepare("SELECT cost_item_id FROM scenario_costs WHERE scenario_id = ?").all(args.id) as any[];
+          for (const c of costs) {
+            db.prepare("INSERT INTO scenario_costs (scenario_id, cost_item_id) VALUES (?, ?)").run(newId, c.cost_item_id);
+          }
+
+          // 9. Duplicate scope overrides
+          const overrides = db.prepare("SELECT * FROM scenario_scope_overrides WHERE scenario_id = ?").all(args.id) as any[];
+          for (const o of overrides) {
+            db.prepare(`
+              INSERT INTO scenario_scope_overrides (
+                id, scenario_id, target_type, target_id, monthly_churn_rate, monthly_acquisition,
+                acquisition_growth_rate, ai_adoption_rate, retention_floor, expansion_rate, arpu_override,
+                arpu_uplift, arpu_uplift_percent, churn_reduction, acquisition_uplift,
+                gross_margin, adoption_ramp_months,
+                evc_extra_value_multiplier, evc_negative_value_multiplier, evc_nba_multiplier
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              crypto.randomUUID(), newId, o.target_type, o.target_id, o.monthly_churn_rate, o.monthly_acquisition,
+              o.acquisition_growth_rate, o.ai_adoption_rate, o.retention_floor, o.expansion_rate, o.arpu_override,
+              o.arpu_uplift, o.arpu_uplift_percent, o.churn_reduction, o.acquisition_uplift,
+              o.gross_margin, o.adoption_ramp_months,
+              o.evc_extra_value_multiplier, o.evc_negative_value_multiplier, o.evc_nba_multiplier
+            );
+          }
+
+          // 10. Duplicate monetization configs
+          const monetization = db.prepare("SELECT * FROM monetization_configs WHERE scenario_id = ?").all(args.id) as any[];
+          for (const m of monetization) {
+            db.prepare(`
+              INSERT INTO monetization_configs (
+                id, entity_type, entity_id, scenario_id, monetization_type,
+                addon_monthly_fee, addon_has_usage_limit, addon_usage_limit, addon_overcharge_policy,
+                usage_variant, price_per_credit, hybrid_monthly_fee, hybrid_included_credits,
+                hybrid_overcharge_policy, overcharge_markup, overcharge_user_pct, avg_overcharge_pct,
+                outcome_basis, price_per_outcome, outcomes_per_user_month
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              crypto.randomUUID(), m.entity_type, m.entity_id, newId, m.monetization_type,
+              m.addon_monthly_fee, m.addon_has_usage_limit, m.addon_usage_limit, m.addon_overcharge_policy,
+              m.usage_variant, m.price_per_credit, m.hybrid_monthly_fee, m.hybrid_included_credits,
+              m.hybrid_overcharge_policy, m.overcharge_markup, m.overcharge_user_pct, m.avg_overcharge_pct,
+              m.outcome_basis, m.price_per_outcome, m.outcomes_per_user_month
+            );
+          }
+
+          // 11. Duplicate scenario entity overrides
+          const entityOverrides = db.prepare("SELECT * FROM scenario_entity_overrides WHERE scenario_id = ?").all(args.id) as any[];
+          for (const eo of entityOverrides) {
+            db.prepare(`
+              INSERT INTO scenario_entity_overrides (
+                id, scenario_id, entity_type, entity_id, cohort_id,
+                avg_input_tokens, avg_output_tokens, avg_requests_per_user_month, fixed_cost_per_month,
+                amount, frequency, input_price, output_price, base_price,
+                monthly_volume, interactions_per_customer_month, containment_rate, average_handle_time_seconds,
+                fully_loaded_cost_per_fte_month, baseline_fte, churn_rate_uplift
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              crypto.randomUUID(), newId, eo.entity_type, eo.entity_id, eo.cohort_id,
+              eo.avg_input_tokens, eo.avg_output_tokens, eo.avg_requests_per_user_month, eo.fixed_cost_per_month,
+              eo.amount, eo.frequency, eo.input_price, eo.output_price, eo.base_price,
+              eo.monthly_volume, eo.interactions_per_customer_month, eo.containment_rate, eo.average_handle_time_seconds,
+              eo.fully_loaded_cost_per_fte_month, eo.baseline_fte, eo.churn_rate_uplift
+            );
+          }
+        })();
+
+        // 12. Recalculate results for the new scenario
+        const fullScenario = getFullScenario(newId)!;
+        const integrity = validateRevenueIntegrity(fullScenario);
+        const providers = applyProviderOverrides(newId, getProviders());
+        const creditSettings = getCreditSettings();
+        const { currency, exchangeRates } = loadCurrencyContext();
+        const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+          fullScenario,
+          providers,
+          currency,
+          exchangeRates
+        );
+
+        let calculationText = '';
+        if (integrity.status !== 'block') {
+          try {
+            const results = calculateScenarioWithIntegrity(normalizedScenario, normalizedProviders, creditSettings);
+            const resultsId = crypto.randomUUID();
+            saveScenarioResults(newId, results, resultsId);
+            calculationText = ` Projections calculated (NPV Range: ${results.npvLower.toLocaleString()} – ${results.npvUpper.toLocaleString()} ${currency}, IRR: ${formatIrrMcp(results.irr)}).`;
+          } catch (err) {
+            calculationText = ' (Calculation failed)';
+          }
+        } else {
+          calculationText = ` Projections calculation is blocked due to integrity error: ${integrity.message}`;
+        }
+
+        let coercionWarning = '';
+        if ((args.modeling_type !== undefined && args.modeling_type !== finalModelingType) ||
+            (args.revenue_carrier !== undefined && args.revenue_carrier !== finalRevenueCarrier)) {
+          coercionWarning = `\n\n[Revenue Model Coercion] Coerced modeling_type '${args.modeling_type}' with revenue_carrier '${args.revenue_carrier}' into authoritative pair '${finalModelingType}' / '${finalRevenueCarrier}'.`;
+        }
+
+        let warningText = integrity.status === 'warn' ? `\nWarning: ${integrity.message}` : '';
+
+        return {
+          content: [{
+            type: "text",
+            text: `Scenario successfully duplicated from ID: ${args.id} to new ID: ${newId}.${calculationText}${coercionWarning}${warningText}`
+          }]
+        };
+      }
+
+      if (args.action === "triangulate") {
+        if (!args.id) {
+          throw new z.ZodError([{ code: "custom", path: ["id"], message: "Identyfikator 'id' jest wymagany do triangulacji." }]);
+        }
+        const scenario = getFullScenario(args.id);
+        if (!scenario) {
+          return { content: [{ type: "text", text: `Scenario '${args.id}' not found` }], isError: true };
+        }
+
+        const providers = applyProviderOverrides(args.id, getProviders());
+        const creditSettings = getCreditSettings();
+        const { currency, exchangeRates } = loadCurrencyContext();
+        const { scenario: normalizedScenario, providers: normalizedProviders } = normalizeScenarioCurrency(
+          scenario,
+          providers,
+          currency,
+          exchangeRates
+        );
+
+        const triangulation = computePerspectives(normalizedScenario, normalizedProviders, creditSettings);
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(triangulation, null, 2)
+          }]
+        };
       }
 
       if (args.action === "calculate") {

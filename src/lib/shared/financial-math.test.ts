@@ -428,7 +428,7 @@ describe('Financial Math Module Tests', () => {
         expect(res.message).toContain('Incremental scenarios cannot have copilot monetization overrides');
       });
 
-      it('blocks incremental scenarios with plan seats', () => {
+      it('warns incremental scenarios with plan seats', () => {
         const sc: Scenario = {
           id: 'sc1', name: 'S', projection_months: 3, discount_rate: 0.1, scope_type: 'cohorts',
           modeling_type: 'incremental', revenue_carrier: 'cohort', scope_cohorts: [cohort],
@@ -436,8 +436,8 @@ describe('Financial Math Module Tests', () => {
           costs: []
         };
         const res = validateRevenueIntegrity(sc);
-        expect(res.status).toBe('block');
-        expect(res.message).toContain('Incremental scenarios cannot use plan seats');
+        expect(res.status).toBe('warn');
+        expect(res.message).toContain('Plan seats are inactive under the incremental (cohort) carrier');
       });
 
       it('blocks cohort carrier with seats and no bridge', () => {
@@ -3495,6 +3495,102 @@ describe('ADR 0012 amendment — two knobs', () => {
     // (value_per_outcome unset on both) -> profile fallback attributes 100% to copilot.
     expect(results.driverProfile).toBe('seat_only');
     expect(results.poolEconomics?.attribution).toEqual({ copilotShare: 1, agentShare: 0, method: 'profile_fallback' });
+  });
+
+  describe('composite carrier (ADR 0014)', () => {
+    const provider: Provider = {
+      id: 'pv1', name: 'OpenAI', model_name: 'gpt', input_price: 1, output_price: 1,
+      is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000,
+      output_tokens_per_credit: 1000, updated_at: ''
+    };
+    const cohort: CohortConfig = {
+      id: 'c1', name: 'Core', current_users: 1000, monthly_acquisition: 0,
+      acquisition_growth_rate: 0, monthly_churn_rate: 0.0, retention_floor: 1.0,
+      monthly_expansion_rate: 0.0, ai_adoption_rate: 0.50, base_arpu: 100,
+      arpu_uplift_percent: 0.10, churn_reduction: 0.0, adoption_ramp_months: 0
+    };
+    const copilotService: Service = {
+      id: 's1', name: 'Copilot', status: 'planned', provider_id: 'pv1',
+      avg_input_tokens: 10, avg_output_tokens: 10, avg_requests_per_user_month: 10,
+      fixed_cost_per_month: 0, service_type: 'copilot',
+      monetization: {
+        monetization_type: 'addon',
+        addon_monthly_fee: 10
+      }
+    };
+    const agentService: Service = {
+      id: 's2', name: 'Agent', status: 'planned', provider_id: 'pv1',
+      avg_input_tokens: 10, avg_output_tokens: 10, avg_requests_per_user_month: 10,
+      fixed_cost_per_month: 0, service_type: 'agent',
+      monetization: {
+        monetization_type: 'addon',
+        addon_monthly_fee: 20
+      }
+    };
+
+    it('sums cohort ARPU uplift + separate market plans + service monetization', () => {
+      const sc: Scenario = {
+        id: 'sc1', name: 'S', projection_months: 1, discount_rate: 0.1, scope_type: 'cohorts',
+        modeling_type: 'composite', revenue_carrier: 'composite', revenue_bridge: 'separate_market',
+        arpu_uplift_includes_monetization: false,
+        scope_cohorts: [cohort],
+        plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 50, seats: 100 }],
+        services: [
+          { ...copilotService, rollout_month: 0 },
+          { ...agentService, rollout_month: 0 }
+        ],
+        costs: []
+      };
+
+      const result = calculateScenario(sc, [provider]);
+      const m0 = result.timeline[0];
+
+      // Cohort uplift: 500 adopters * 10$ uplift = 5000$ (uplift only model arpu uplift = 100 * 0.1)
+      // Plan: 100 seats * 50$ = 5000$
+      // Copilot addon monetization: 500 adopters * 10$ fee = 5000$
+      // Agent usage monetization: 500 adopters * 10 requests * 2$ = 10000$
+      // Total Expected: 5000 + 5000 + 5000 + 10000 = 25000$
+      expect(m0.revenue).toBeCloseTo(25000, 0);
+      expect(result.compositeBreakdown?.cohort.revenuePv).toBeCloseTo(5000, 0);
+      expect(result.compositeBreakdown?.plan.revenuePv).toBeCloseTo(5000, 0);
+      expect(result.compositeBreakdown?.copilotMonetization.revenuePv).toBeCloseTo(5000, 0);
+      expect(result.compositeBreakdown?.agentMonetization.revenuePv).toBeCloseTo(10000, 0);
+    });
+
+    it('folds copilot monetization and plan subscription if upsell on cohort', () => {
+      const sc: Scenario = {
+        id: 'sc1', name: 'S', projection_months: 1, discount_rate: 0.1, scope_type: 'cohorts',
+        modeling_type: 'composite', revenue_carrier: 'composite', revenue_bridge: 'upsell_on_cohort',
+        arpu_uplift_includes_monetization: true,
+        scope_cohorts: [cohort],
+        plans: [{ id: 'p1', name: 'Pro', rollout_month: 0, base_price: 50, seats: 100 }],
+        services: [
+          { ...copilotService, rollout_month: 0 },
+          { ...agentService, rollout_month: 0 }
+        ],
+        costs: []
+      };
+
+      const result = calculateScenario(sc, [provider]);
+      const m0 = result.timeline[0];
+
+      // Cohort uplift: 5000$
+      // Plan: folded (revenuePv=0, memoValue=5000)
+      // Copilot monetization: folded (revenuePv=0, memoValue=5000)
+      // Agent monetization: books (10000$)
+      // Total Expected: 5000 + 10000 = 15000$
+      expect(m0.revenue).toBeCloseTo(15000, 0);
+      expect(result.compositeBreakdown?.cohort.role).toBe('books');
+      expect(result.compositeBreakdown?.cohort.revenuePv).toBeCloseTo(5000, 0);
+      expect(result.compositeBreakdown?.plan.role).toBe('folded');
+      expect(result.compositeBreakdown?.plan.revenuePv).toBe(0);
+      expect(result.compositeBreakdown?.plan.memoValue).toBeCloseTo(5000, 0);
+      expect(result.compositeBreakdown?.copilotMonetization.role).toBe('folded');
+      expect(result.compositeBreakdown?.copilotMonetization.revenuePv).toBe(0);
+      expect(result.compositeBreakdown?.copilotMonetization.memoValue).toBeCloseTo(5000, 0);
+      expect(result.compositeBreakdown?.agentMonetization.role).toBe('books');
+      expect(result.compositeBreakdown?.agentMonetization.revenuePv).toBeCloseTo(10000, 0);
+    });
   });
 });
 
