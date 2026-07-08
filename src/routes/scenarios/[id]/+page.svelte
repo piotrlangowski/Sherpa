@@ -777,12 +777,11 @@
 
   $effect(() => {
     const _options = chartOptions; // Synchronous read registers dependency
-    const currentRunId = ++activeEffectId;
+    cleanupChart();
+    const currentRunId = activeEffectId;
     if (activeTab === 'pricing_corridor') {
-      cleanupChart();
       renderCorridorChart(currentRunId);
     } else if (activeTab || timeline || mode.current) {
-      cleanupChart();
       renderChart(currentRunId);
     }
     return () => {
