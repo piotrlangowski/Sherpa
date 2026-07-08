@@ -8,8 +8,8 @@
   import CardTitle from '$lib/components/ui/card/card-title.svelte';
   import CardDescription from '$lib/components/ui/card/card-description.svelte';
   import CardContent from '$lib/components/ui/card/card-content.svelte';
-  import CardFooter from '$lib/components/ui/card/card-footer.svelte';
   import Badge from '$lib/components/ui/badge/badge.svelte';
+  import * as Sheet from '$lib/components/ui/sheet/index.js';
 
   // Lucide Icons
   import Compass from '@lucide/svelte/icons/compass';
@@ -30,7 +30,8 @@
   import DiagnosticsBanner from '$lib/components/dashboard/DiagnosticsBanner.svelte';
   import TriangulationPanel from '$lib/components/dashboard/TriangulationPanel.svelte';
   import Copy from '@lucide/svelte/icons/copy';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+  import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
+  import ScenarioConfigurationPanel from '$lib/components/dashboard/ScenarioConfigurationPanel.svelte';
 
   import { appState } from '$lib/stores/app.svelte';
   import { mode } from 'mode-watcher';
@@ -44,6 +45,21 @@
   const perspectives = $derived(data.perspectives);
 
   const modelingTypeLabelStr = $derived(modelingTypeLabel(scenario.modeling_type, scenario.revenue_carrier));
+
+  // Configuration Sheet — glanceable summary strip facts
+  const overrideCount = $derived(scenario.scope_overrides?.length ?? 0);
+  const scopeLabel = $derived.by(() => {
+    if (scenario.scope_type === 'all_clients') return 'Global Client Base';
+    if (scenario.scope_type === 'verticals') {
+      const n = scenario.scope_verticals?.length ?? 0;
+      return `${n} Vertical${n === 1 ? '' : 's'}`;
+    }
+    if (scenario.scope_type === 'cohorts') {
+      const n = scenario.scope_cohorts?.length ?? 0;
+      return `${n} Cohort${n === 1 ? '' : 's'}`;
+    }
+    return scenario.scope_type;
+  });
 
   const diagnostics = $derived(data.diagnostics ?? []);
 
@@ -76,6 +92,38 @@
     !hasUplifts && (timeline && timeline.length > 0 ? timeline.every((t: any) => Math.abs(t.revenue) < 0.01) : true)
   );
 
+  const bannerItems = $derived([
+    ...(results?.revenue_integrity_status === 'warn'
+      ? [{ code: 'revenue_integrity_warn', severity: 'warn' as const, title: 'Revenue Integrity Warning', message: results.revenue_integrity_message ?? '' }]
+      : []),
+    ...diagnostics,
+    ...(hasNoAiBenefit
+      ? [{ code: 'no_ai_benefit', severity: 'warn' as const, title: 'No AI benefit is modeled', message: 'No AI benefit is modeled — set uplift assumptions on cohorts or scenario overrides.' }]
+      : [])
+  ]);
+
+  // Range KPI color: green when the whole band is non-negative, red when entirely negative,
+  // amber when the band straddles zero (bounds disagree on sign — genuinely ambiguous; previously
+  // shown as green because the color only looked at the upper bound).
+  const npvColorClass = $derived.by(() => {
+    if (!results) return 'text-muted-foreground';
+    const lower = results.npv_lower ?? results.npv;
+    const upper = results.npv;
+    if (lower >= 0) return 'text-emerald-600 dark:text-emerald-400';
+    if (upper < 0) return 'text-rose-600 dark:text-rose-400';
+    return 'text-amber-500 dark:text-amber-400';
+  });
+
+  // Same three-state logic as npvColorClass, but breakeven for PI is 1.0x (NPV == 0), not 0.
+  const piColorClass = $derived.by(() => {
+    if (!results) return 'text-muted-foreground';
+    const lower = results.profitability_index_lower ?? results.profitability_index;
+    const upper = results.profitability_index;
+    if (lower >= 1.0) return 'text-emerald-600 dark:text-emerald-400';
+    if (upper < 1.0) return 'text-rose-600 dark:text-rose-400';
+    return 'text-amber-500 dark:text-amber-400';
+  });
+
   $effect(() => {
     if (scenario) {
       appState.setActiveScenario(scenario.id, scenario.name);
@@ -83,73 +131,36 @@
   });
 
   // Chart state
-  let activeTab = $state<'cashflow' | 'cumulative' | 'users' | 'value_split' | 'pricing_corridor' | 'margin_waterfall' | 'cost_to_serve'>('cashflow');
+  let activeTab = $state<'cashflow' | 'cumulative' | 'users' | 'pricing_corridor'>('cashflow');
   let chartElement: HTMLDivElement | undefined = $state();
-  let valuePieElement: HTMLDivElement | undefined = $state();
-  let captureCurveElement: HTMLDivElement | undefined = $state();
   let pricingCorridorElement: HTMLDivElement | undefined = $state();
-  let marginWaterfallElement: HTMLDivElement | undefined = $state();
-  let costToServeElement: HTMLDivElement | undefined = $state();
 
   let chartInstance: any = null;
-  let valuePieInstance: any = null;
-  let captureCurveInstance: any = null;
   let pricingCorridorInstance: any = null;
-  let marginWaterfallInstance: any = null;
-  let costToServeInstance: any = null;
 
   let resizeListener: (() => void) | null = null;
-  let splitResizeListener: (() => void) | null = null;
   let corridorResizeListener: (() => void) | null = null;
-  let waterfallResizeListener: (() => void) | null = null;
-  let costToServeResizeListener: (() => void) | null = null;
   let isMounted = false;
   let isExplainerOpen = $state(false);
+  let configSheetOpen = $state(false);
 
   function cleanupChart() {
+    activeEffectId++;
     if (chartInstance) {
       chartInstance.dispose();
       chartInstance = null;
-    }
-    if (valuePieInstance) {
-      valuePieInstance.dispose();
-      valuePieInstance = null;
-    }
-    if (captureCurveInstance) {
-      captureCurveInstance.dispose();
-      captureCurveInstance = null;
     }
     if (pricingCorridorInstance) {
       pricingCorridorInstance.dispose();
       pricingCorridorInstance = null;
     }
-    if (marginWaterfallInstance) {
-      marginWaterfallInstance.dispose();
-      marginWaterfallInstance = null;
-    }
-    if (costToServeInstance) {
-      costToServeInstance.dispose();
-      costToServeInstance = null;
-    }
     if (resizeListener) {
       window.removeEventListener('resize', resizeListener);
       resizeListener = null;
     }
-    if (splitResizeListener) {
-      window.removeEventListener('resize', splitResizeListener);
-      splitResizeListener = null;
-    }
     if (corridorResizeListener) {
       window.removeEventListener('resize', corridorResizeListener);
       corridorResizeListener = null;
-    }
-    if (waterfallResizeListener) {
-      window.removeEventListener('resize', waterfallResizeListener);
-      waterfallResizeListener = null;
-    }
-    if (costToServeResizeListener) {
-      window.removeEventListener('resize', costToServeResizeListener);
-      costToServeResizeListener = null;
     }
   }
 
@@ -181,6 +192,7 @@
         textStyle: { color: tooltipText }
       },
       legend: {
+        type: 'scroll',
         data: [
           ...(hasMonetization ? ['AI Monetization'] : []),
           ...(hasOutcome ? ['Outcome Revenue'] : []),
@@ -193,6 +205,12 @@
           ...(hasAgent ? ['Labor Savings (Cash)', 'Labor Savings (Capacity) (Memo)', 'Failed Deflection Cost', 'Total Interactions'] : [])
         ],
         textStyle: { color: textColor, fontSize: 11 },
+        pageTextStyle: { color: textColor },
+        pageIconColor: axisColor,
+        pageIconInactiveColor: lineColor,
+        itemGap: 14,
+        itemWidth: 14,
+        itemHeight: 10,
         bottom: 0
       },
       grid: { left: '3%', right: '5%', top: '12%', bottom: '15%', containLabel: true },
@@ -541,197 +559,6 @@
 
   let activeEffectId = 0;
 
-  function renderSplitCharts(currentRunId: number) {
-    if (!valuePieElement || !captureCurveElement) return;
-
-    tick().then(() => {
-      if (currentRunId !== activeEffectId) return;
-      import('echarts').then((echarts) => {
-        if (currentRunId !== activeEffectId) return;
-        if (!isMounted || activeTab !== 'value_split' || !valuePieElement || !captureCurveElement) return;
-
-        const isDark = mode.current === 'dark';
-        const textColor = isDark ? '#cbd5e1' : '#475569';
-        const axisColor = isDark ? '#94a3b8' : '#64748b';
-        const lineColor = isDark ? '#475569' : '#e2e8f0';
-        const splitLineColor = isDark ? 'rgba(71, 85, 105, 0.2)' : 'rgba(226, 232, 240, 0.6)';
-        const tooltipBg = isDark ? '#1e293b' : '#ffffff';
-        const tooltipBorder = isDark ? '#475569' : '#e2e8f0';
-        const tooltipText = isDark ? '#f8fafc' : '#0f172a';
-
-        // 1. Value Pie Option
-        const evcObj = results?.evc;
-        const surplusVal = evcObj?.customerSurplusPerUserMonth ?? 0;
-        const vendorProfit = evcObj?.vendorGrossProfitPerUserMonth ?? 0;
-        const cogsVal = evcObj?.cogsPerUserMonth ?? 0;
-
-        const pieOption = {
-          title: {
-            text: 'Value Creation Split',
-            left: 'center',
-            textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' }
-          },
-          tooltip: {
-            trigger: 'item',
-            backgroundColor: tooltipBg,
-            borderColor: tooltipBorder,
-            borderWidth: 1,
-            textStyle: { color: tooltipText },
-            formatter: (params: any) => {
-              return `${params.name}: <b>${formatCurrency(params.value, appState.currency, 0)}/mo</b> (${params.percent}%)`;
-            }
-          },
-          legend: {
-            orient: 'horizontal',
-            bottom: '0%',
-            left: 'center',
-            textStyle: { color: textColor, fontSize: 9 }
-          },
-          series: [
-            {
-              name: 'Value Split',
-              type: 'pie',
-              radius: ['45%', '70%'],
-              center: ['50%', '45%'],
-              avoidLabelOverlap: false,
-              itemStyle: {
-                borderRadius: 4,
-                borderColor: isDark ? '#1e293b' : '#fff',
-                borderWidth: 2
-              },
-              label: {
-                show: false,
-                position: 'center'
-              },
-              emphasis: {
-                label: {
-                  show: true,
-                  fontSize: 11,
-                  fontWeight: 'bold',
-                  formatter: '{b}\n{d}%'
-                }
-              },
-              labelLine: {
-                show: false
-              },
-              data: [
-                { value: surplusVal, name: 'Customer Surplus', itemStyle: { color: '#3b82f6' } },
-                { value: vendorProfit, name: 'Vendor Profit', itemStyle: { color: '#10b981' } },
-                { value: cogsVal, name: 'COGS', itemStyle: { color: '#f43f5e' } }
-              ]
-            }
-          ]
-        };
-
-        // 2. Capture Curve Option
-        const curveData = data.captureCurve;
-        const points = curveData?.points ?? [];
-        const optimalCapture = curveData?.optimalCapture ?? 0.3;
-
-        const lineOption = {
-          title: {
-            text: 'NPV Capture Curve',
-            left: 'center',
-            textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' }
-          },
-          tooltip: {
-            trigger: 'axis',
-            backgroundColor: tooltipBg,
-            borderColor: tooltipBorder,
-            borderWidth: 1,
-            textStyle: { color: tooltipText },
-            formatter: (params: any) => {
-              let res = `Capture Rate: <b>${params[0].name}</b><br/>`;
-              params.forEach((item: any) => {
-                res += `${item.marker} ${item.seriesName}: <b>${formatCurrency(item.value, appState.currency, 0)}</b><br/>`;
-              });
-              return res;
-            }
-          },
-          legend: {
-            bottom: '0%',
-            left: 'center',
-            textStyle: { color: textColor, fontSize: 9 }
-          },
-          grid: { left: '3%', right: '4%', top: '20%', bottom: '15%', containLabel: true },
-          xAxis: {
-            type: 'category',
-            boundaryGap: false,
-            data: points.map((p: any) => `${Math.round(p.capture * 100)}%`),
-            axisLabel: { color: axisColor, fontSize: 9 },
-            axisLine: { lineStyle: { color: lineColor } }
-          },
-          yAxis: {
-            type: 'value',
-            axisLabel: {
-              color: axisColor,
-              fontSize: 9,
-              formatter: (value: number) => formatCurrency(value, appState.currency, 0)
-            },
-            axisLine: { lineStyle: { color: lineColor } },
-            splitLine: { lineStyle: { color: splitLineColor } }
-          },
-          series: [
-            {
-              name: 'Vendor NPV',
-              type: 'line',
-              smooth: true,
-              data: points.map((p: any) => p.npvUpper),
-              itemStyle: { color: '#10b981' },
-              lineStyle: { width: 3 },
-              markLine: {
-                silent: true,
-                symbol: ['none', 'none'],
-                lineStyle: { color: '#8b5cf6', type: 'dashed', width: 1.5 },
-                label: {
-                  show: true,
-                  position: 'middle',
-                  color: '#8b5cf6',
-                  fontSize: 9,
-                  fontWeight: 'bold',
-                  formatter: `Optimum (${Math.round(optimalCapture * 100)}%)`
-                },
-                data: [
-                  { xAxis: `${Math.round(optimalCapture * 100)}%` }
-                ]
-              }
-            },
-            {
-              name: 'Customer Surplus PV',
-              type: 'line',
-              smooth: true,
-              data: points.map((p: any) => p.customerSurplus),
-              itemStyle: { color: '#3b82f6' },
-              lineStyle: { width: 2 }
-            }
-          ]
-        };
-
-        if (valuePieInstance) {
-          valuePieInstance.setOption(pieOption, true);
-        } else {
-          valuePieInstance = echarts.init(valuePieElement);
-          valuePieInstance.setOption(pieOption, true);
-        }
-
-        if (captureCurveInstance) {
-          captureCurveInstance.setOption(lineOption, true);
-        } else {
-          captureCurveInstance = echarts.init(captureCurveElement);
-          captureCurveInstance.setOption(lineOption, true);
-        }
-
-        if (!splitResizeListener) {
-          splitResizeListener = () => {
-            valuePieInstance?.resize();
-            captureCurveInstance?.resize();
-          };
-          window.addEventListener('resize', splitResizeListener);
-        }
-      });
-    });
-  }
-
   function renderCorridorChart(currentRunId: number) {
     if (!pricingCorridorElement) return;
 
@@ -917,352 +744,6 @@
     });
   }
 
-  function renderCostToServeChart(currentRunId: number) {
-    if (!costToServeElement) return;
-
-    tick().then(() => {
-      if (currentRunId !== activeEffectId) return;
-      import('echarts').then((echarts) => {
-        if (currentRunId !== activeEffectId) return;
-        if (!isMounted || activeTab !== 'cost_to_serve' || !costToServeElement) return;
-
-        const isDark = mode.current === 'dark';
-        const textColor = isDark ? '#cbd5e1' : '#475569';
-        const axisColor = isDark ? '#94a3b8' : '#64748b';
-        const lineColor = isDark ? '#475569' : '#e2e8f0';
-        const splitLineColor = isDark ? 'rgba(71, 85, 105, 0.2)' : 'rgba(226, 232, 240, 0.6)';
-        const tooltipBg = isDark ? '#1e293b' : '#ffffff';
-        const tooltipBorder = isDark ? '#475569' : '#e2e8f0';
-        const tooltipText = isDark ? '#f8fafc' : '#0f172a';
-
-        const corridor = data.agentDeflectionCorridor;
-        if (!corridor) return;
-        const points = corridor.points;
-
-        const xAxisData = points.map((p: any) => p.cohortName);
-
-        // 2-tier ladder (Avoided Value ceiling / Cost-to-Serve floor) — the Agent-archetype
-        // analogue of the Copilot Pricing Corridor, but framed as displaced-labor economics
-        // rather than a willingness-to-pay ceiling (ADR 0009 Track B).
-        const tierNames: Record<number, string> = {
-          2: 'Avoided Value',
-          1: 'Cost to Serve'
-        };
-
-        const rungData = points.flatMap((p: any, i: number) => {
-          const avoidedColor = p.status === 'loss' ? '#f43f5e' : '#10b981';
-          const costColor = p.status === 'loss' ? '#f43f5e' : '#94a3b8';
-          return [
-            { value: [i, 2], _ci: i, itemStyle: { color: avoidedColor }, _lbl: formatCurrency(p.avoidedValue, appState.currency, 0) },
-            { value: [i, 1], _ci: i, itemStyle: { color: costColor }, _lbl: formatCurrency(p.costToServe, appState.currency, 0) }
-          ];
-        });
-
-        const breakMarks = points.flatMap((p: any, i: number) =>
-          p.status === 'loss'
-            ? [{ coord: [i, 1.5], itemStyle: { color: '#f43f5e' }, label: { show: true, formatter: '⚠ COST > VALUE', color: '#fff', fontSize: 9, fontWeight: 'bold' } }]
-            : []
-        );
-
-        const corridorOption = {
-          title: {
-            text: 'Cost-to-Serve Corridor: Displaced-Labor Value vs. Deflection Cost',
-            subtext: 'Conceptual ladder — rungs ordered by role (not to scale); values shown per rung, per customer/month\n(value created, capacity basis; cash marker = after baseline-FTE cap)',
-            left: 'center',
-            textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' },
-            subtextStyle: { color: axisColor, fontSize: 9 }
-          },
-          tooltip: {
-            trigger: 'item',
-            backgroundColor: tooltipBg,
-            borderColor: tooltipBorder,
-            borderWidth: 1,
-            textStyle: { color: tooltipText },
-            formatter: (params: any) => {
-              const pt = points[params.data?._ci ?? 0];
-              if (!pt) return '';
-              let tooltipHtml = `
-                <div style="font-weight: bold; margin-bottom: 4px;">${pt.cohortName}</div>
-                Interactions/customer/mo: <b>${pt.interactions.toFixed(2)}</b><br/>
-                Containment Rate: <b>${Math.round(pt.containmentRate * 100)}%</b><br/>
-                <span style="color:#10b981">Avoided Value:</span> <b>${formatCurrency(pt.avoidedValue, appState.currency, 2)}/mo</b> (Capacity Basis)<br/>
-              `;
-              if (pt.realizationRatio < 1) {
-                tooltipHtml += `
-                <span style="color:#f59e0b">Realizable as cash:</span> <b>${formatCurrency(pt.realizableAvoidedValue, appState.currency, 2)}/mo</b> (${Math.round(pt.realizationRatio * 100)}% — FTE cap)<br/>
-                `;
-              }
-              tooltipHtml += `
-                <span style="color:#94a3b8">Cost to Serve:</span> <b>${formatCurrency(pt.costToServe, appState.currency, 2)}/mo</b><br/>
-                &nbsp;&nbsp;• Tokens: <b>${formatCurrency(pt.costDecomposition.tokens, appState.currency, 2)}/mo</b><br/>
-                &nbsp;&nbsp;• Fixed Allocation: <b>${formatCurrency(pt.costDecomposition.fixedAlloc, appState.currency, 2)}/mo</b><br/>
-                &nbsp;&nbsp;• Failed Deflection: <b>${formatCurrency(pt.costDecomposition.failedDeflection, appState.currency, 2)}/mo</b><br/>
-                Net Deflection Value: <b>${formatCurrency(pt.netDeflectionValue, appState.currency, 2)}/mo</b><br/>
-                Status: <span style="font-weight: bold; color: ${pt.status === 'loss' ? '#f43f5e' : (pt.status === 'healthy' ? '#10b981' : '#f59e0b')};">${pt.status.toUpperCase().replace('_', ' ')}</span>
-              `;
-              return tooltipHtml;
-            }
-          },
-          grid: { left: '3%', right: '8%', top: '24%', bottom: '12%', containLabel: true },
-          xAxis: {
-            type: 'category',
-            data: xAxisData,
-            axisLabel: { color: axisColor, fontSize: 9 },
-            axisLine: { lineStyle: { color: lineColor } }
-          },
-          yAxis: {
-            type: 'value',
-            min: 0.5,
-            max: 2.5,
-            interval: 1,
-            axisLabel: { color: axisColor, fontSize: 10, formatter: (v: number) => tierNames[v] ?? '' },
-            axisTick: { show: false },
-            axisLine: { show: false },
-            splitLine: { lineStyle: { color: splitLineColor, type: 'dashed' } }
-          },
-          series: [
-            {
-              name: 'Rungs',
-              type: 'scatter',
-              symbol: 'rect',
-              symbolSize: [54, 8],
-              data: rungData,
-              label: {
-                show: true,
-                position: 'top',
-                formatter: (params: any) => params.data?._lbl ?? '',
-                color: textColor,
-                fontSize: 9,
-                fontWeight: 'bold'
-              },
-              markArea: {
-                silent: true,
-                itemStyle: { color: isDark ? 'rgba(16,185,129,0.08)' : 'rgba(16,185,129,0.10)' },
-                data: [[{ yAxis: 1 }, { yAxis: 2 }]]
-              },
-              markLine: {
-                silent: true,
-                symbol: ['none', 'none'],
-                lineStyle: { color: axisColor, width: 1, opacity: 0.25 },
-                label: { show: false },
-                data: points.map((_p: any, i: number) => [{ coord: [i, 1] }, { coord: [i, 2] }])
-              },
-              markPoint: {
-                symbol: 'pin',
-                symbolSize: 46,
-                data: breakMarks
-              }
-            },
-            {
-              name: 'Realizable Cash Marker',
-              type: 'scatter',
-              symbol: 'circle',
-              symbolSize: 10,
-              itemStyle: {
-                color: '#f59e0b',
-                borderColor: '#fff',
-                borderWidth: 1
-              },
-              data: points.flatMap((p: any, i: number) => {
-                if (p.realizationRatio < 1) {
-                  return [{
-                    value: [i, 2],
-                    _ci: i,
-                    label: {
-                      show: true,
-                      position: 'bottom',
-                      formatter: () => formatCurrency(p.realizableAvoidedValue, appState.currency, 0),
-                      color: textColor,
-                      fontSize: 8,
-                      fontWeight: 'bold'
-                    }
-                  }];
-                }
-                return [];
-              })
-            }
-          ]
-        };
-
-        if (costToServeInstance) {
-          costToServeInstance.setOption(corridorOption, true);
-        } else {
-          costToServeInstance = echarts.init(costToServeElement);
-          costToServeInstance.setOption(corridorOption, true);
-        }
-
-        if (!costToServeResizeListener) {
-          costToServeResizeListener = () => {
-            costToServeInstance?.resize();
-          };
-          window.addEventListener('resize', costToServeResizeListener);
-        }
-      });
-    });
-  }
-
-  function renderWaterfallChart(currentRunId: number) {
-    if (!marginWaterfallElement) return;
-
-    tick().then(() => {
-      if (currentRunId !== activeEffectId) return;
-      import('echarts').then((echarts) => {
-        if (currentRunId !== activeEffectId) return;
-        if (!isMounted || activeTab !== 'margin_waterfall' || !marginWaterfallElement) return;
-
-        const isDark = mode.current === 'dark';
-        const textColor = isDark ? '#cbd5e1' : '#475569';
-        const axisColor = isDark ? '#94a3b8' : '#64748b';
-        const lineColor = isDark ? '#475569' : '#e2e8f0';
-        const splitLineColor = isDark ? 'rgba(71, 85, 105, 0.2)' : 'rgba(226, 232, 240, 0.6)';
-        const tooltipBg = isDark ? '#1e293b' : '#ffffff';
-        const tooltipBorder = isDark ? '#475569' : '#e2e8f0';
-        const tooltipText = isDark ? '#f8fafc' : '#0f172a';
-
-        const waterfall = data.pocketMarginWaterfall;
-        if (!waterfall) return;
-        const steps = waterfall.steps;
-
-        const helperData: number[] = [];
-        const visibleData: number[] = [];
-        let accumulated = 0;
-
-        for (let i = 0; i < steps.length; i++) {
-          const step = steps[i];
-          if (step.type === 'base' || step.type === 'total') {
-            helperData.push(0);
-            visibleData.push(step.value);
-            accumulated = step.value;
-          } else if (step.type === 'delta') {
-            const nextAccumulated = accumulated + step.value;
-            helperData.push(Math.min(accumulated, nextAccumulated));
-            visibleData.push(Math.abs(step.value));
-            accumulated = nextAccumulated;
-          }
-        }
-
-        const colors = [
-          '#64748b', // EVC: Slate
-          '#3b82f6', // Customer Surplus: Blue
-          '#0284c7', // Target Price: Sky Blue
-          '#f43f5e', // AI COGS: Rose
-          '#f59e0b', // Cost-to-Serve: Amber
-          '#10b981'  // Pocket Margin: Emerald
-        ];
-
-        const visibleDataColored = (steps as any).map((step: any, idx: number) => ({
-          value: visibleData[idx],
-          itemStyle: { color: colors[idx] }
-        }));
-
-        const waterfallOption = {
-          title: {
-            text: 'Pocket-Margin Waterfall (per Customer/Month)',
-            left: 'center',
-            textStyle: { color: textColor, fontSize: 13, fontWeight: 'bold' }
-          },
-          tooltip: {
-            trigger: 'axis',
-            backgroundColor: tooltipBg,
-            borderColor: tooltipBorder,
-            borderWidth: 1,
-            textStyle: { color: tooltipText },
-            formatter: (params: any) => {
-              const barParam = params.find((p: any) => p.seriesName === 'Waterfall');
-              if (!barParam) return '';
-              const idx = barParam.dataIndex;
-              const step = steps[idx];
-              const absVal = Math.abs(step.value);
-              const sign = step.value < 0 ? '-' : '';
-              return `
-                <div style="font-weight: bold; margin-bottom: 4px;">${step.name}</div>
-                Value: <b>${sign}${formatCurrency(absVal, appState.currency, 2)}/mo</b>
-              `;
-            }
-          },
-          grid: { left: '3%', right: '4%', top: '20%', bottom: '15%', containLabel: true },
-          xAxis: {
-            type: 'category',
-            data: (steps as any).map((s: any) => s.name.replace('Economic Value to Customer (EVC)', 'EVC')),
-            axisLabel: { color: axisColor, fontSize: 9, rotate: 15 },
-            axisLine: { lineStyle: { color: lineColor } }
-          },
-          yAxis: {
-            type: 'value',
-            axisLabel: {
-              color: axisColor,
-              fontSize: 9,
-              formatter: (value: number) => formatCurrency(value, appState.currency, 0)
-            },
-            axisLine: { lineStyle: { color: lineColor } },
-            splitLine: { lineStyle: { color: splitLineColor } }
-          },
-          series: [
-            {
-              name: 'Placeholder',
-              type: 'bar',
-              stack: 'all',
-              itemStyle: { color: 'rgba(0,0,0,0)' },
-              emphasis: { itemStyle: { color: 'rgba(0,0,0,0)' } },
-              data: helperData
-            },
-            {
-              name: 'Waterfall',
-              type: 'bar',
-              stack: 'all',
-              data: visibleDataColored,
-              label: {
-                show: true,
-                position: 'inside',
-                formatter: (params: any) => {
-                  const val = steps[params.dataIndex].value;
-                  return formatCurrency(val, appState.currency, 0);
-                },
-                fontSize: 9,
-                fontWeight: 'bold',
-                color: '#ffffff'
-              }
-            },
-            {
-              name: 'Realized Price',
-              type: 'scatter',
-              symbol: 'diamond',
-              symbolSize: 12,
-              itemStyle: { color: '#2563eb', borderColor: '#ffffff', borderWidth: 2 },
-              data: [
-                {
-                  value: [2, waterfall.actualPrice],
-                  label: {
-                    show: Math.abs(waterfall.actualPrice - waterfall.steps[2].value) > 0.01,
-                    position: 'right',
-                    formatter: `Realized: ${formatCurrency(waterfall.actualPrice, appState.currency, 0)}`,
-                    color: textColor,
-                    fontSize: 9,
-                    fontWeight: 'bold'
-                  }
-                }
-              ]
-            }
-          ]
-        };
-
-        if (marginWaterfallInstance) {
-          marginWaterfallInstance.setOption(waterfallOption, true);
-        } else {
-          marginWaterfallInstance = echarts.init(marginWaterfallElement);
-          marginWaterfallInstance.setOption(waterfallOption, true);
-        }
-
-        if (!waterfallResizeListener) {
-          waterfallResizeListener = () => {
-            marginWaterfallInstance?.resize();
-          };
-          window.addEventListener('resize', waterfallResizeListener);
-        }
-      });
-    });
-  }
-
   function renderChart(currentRunId: number) {
     if (!chartElement) return;
 
@@ -1297,18 +778,9 @@
   $effect(() => {
     const _options = chartOptions; // Synchronous read registers dependency
     const currentRunId = ++activeEffectId;
-    if (activeTab === 'value_split') {
-      cleanupChart();
-      renderSplitCharts(currentRunId);
-    } else if (activeTab === 'pricing_corridor') {
+    if (activeTab === 'pricing_corridor') {
       cleanupChart();
       renderCorridorChart(currentRunId);
-    } else if (activeTab === 'margin_waterfall') {
-      cleanupChart();
-      renderWaterfallChart(currentRunId);
-    } else if (activeTab === 'cost_to_serve') {
-      cleanupChart();
-      renderCostToServeChart(currentRunId);
     } else if (activeTab || timeline || mode.current) {
       cleanupChart();
       renderChart(currentRunId);
@@ -1364,69 +836,11 @@
       <Button href="/scenarios/{scenario.id}/edit" variant="outline">
         <Edit2 class="h-4 w-4 mr-2" /> Edit Scenario
       </Button>
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger>
-          <Button variant="outline">
-            <Copy class="h-4 w-4 mr-2" /> Duplicate As...
-          </Button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" class="text-foreground w-56">
-          <DropdownMenu.Item class="cursor-pointer p-0">
-            <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
-              <input type="hidden" name="targetPerspective" value="" />
-              <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline">
-                Exact Copy
-              </button>
-            </form>
-          </DropdownMenu.Item>
-          <DropdownMenu.Separator />
-          <DropdownMenu.Label class="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1 select-none">Perspectives</DropdownMenu.Label>
-          
-          {#if scenario.revenue_carrier !== 'cohort'}
-            <DropdownMenu.Item class="cursor-pointer p-0">
-              <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
-                <input type="hidden" name="targetPerspective" value="cohort" />
-                <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline">
-                  Cohort / Incremental
-                </button>
-              </form>
-            </DropdownMenu.Item>
-          {/if}
-
-          {#if scenario.revenue_carrier !== 'plan'}
-            <DropdownMenu.Item class="cursor-pointer p-0">
-              <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
-                <input type="hidden" name="targetPerspective" value="plan" />
-                <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline">
-                  Plan Seats / GTM
-                </button>
-              </form>
-            </DropdownMenu.Item>
-          {/if}
-
-          {#if scenario.revenue_carrier !== 'feature'}
-            <DropdownMenu.Item class="cursor-pointer p-0">
-              <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
-                <input type="hidden" name="targetPerspective" value="feature" />
-                <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline">
-                  AI Service / Appraisal
-                </button>
-              </form>
-            </DropdownMenu.Item>
-          {/if}
-
-          {#if scenario.revenue_carrier !== 'pool'}
-            <DropdownMenu.Item class="cursor-pointer p-0" disabled={!scenario.pool_tier_id}>
-              <form method="POST" action="?/duplicateScenario" use:enhance class="w-full h-full">
-                <input type="hidden" name="targetPerspective" value="pool" />
-                <button type="submit" class="w-full h-full text-left px-2 py-1.5 hover:no-underline" disabled={!scenario.pool_tier_id}>
-                  Credit Pool
-                </button>
-              </form>
-            </DropdownMenu.Item>
-          {/if}
-        </DropdownMenu.Content>
-      </DropdownMenu.Root>
+      <form method="POST" action="?/duplicateScenario" use:enhance class="inline-block">
+        <Button type="submit" variant="outline">
+          <Copy class="h-4 w-4 mr-2" /> Duplicate
+        </Button>
+      </form>
       <Button href="/scenarios/{scenario.id}/sensitivity" variant="outline">
         <TrendingUp class="h-4 w-4 mr-2" /> Run Sensitivity
       </Button>
@@ -1454,7 +868,7 @@
       <span class="text-muted-foreground font-medium">➔</span>
       <span class="text-foreground font-bold">{scopeSummary.cohortsCount} {scopeSummary.cohortsCount === 1 ? 'Cohort' : 'Cohorts'}</span>
       <span class="text-muted-foreground/60">•</span>
-      <span class="text-foreground font-bold">~{formatNumber(scopeSummary.totalUsers)} users</span>
+      <span class="text-foreground font-bold">~{formatNumber(scopeSummary.totalUsers)} accounts</span>
     </div>
   {/if}
 
@@ -1488,31 +902,7 @@
       </div>
     {:else}
       <div id="scenario-dashboard-container" class="space-y-6">
-        {#if results.revenue_integrity_status === 'warn'}
-          <Card class="border-amber-500/30 bg-amber-500/5 p-4 select-none">
-            <CardContent class="flex items-start space-x-3 text-sm p-0">
-              <Info class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-              <div>
-                <h4 class="font-bold text-amber-600 dark:text-amber-400">Revenue Integrity Warning</h4>
-                <p class="text-muted-foreground mt-1 text-xs">{results.revenue_integrity_message}</p>
-              </div>
-            </CardContent>
-          </Card>
-        {/if}
-
-        <DiagnosticsBanner {diagnostics} />
-
-        {#if hasNoAiBenefit}
-          <Card class="border-amber-500/30 bg-amber-500/5 p-4 select-none">
-            <CardContent class="flex items-start space-x-3 text-sm p-0">
-              <Info class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-              <div>
-                <h4 class="font-bold text-amber-600 dark:text-amber-400">No AI benefit is modeled</h4>
-                <p class="text-muted-foreground mt-1 text-xs">No AI benefit is modeled — set uplift assumptions on cohorts or scenario overrides.</p>
-              </div>
-            </CardContent>
-          </Card>
-        {/if}
+        <DiagnosticsBanner items={bannerItems} />
 
       <!-- KPI widgets grid -->
       <div class="grid grid-cols-2 md:grid-cols-3 gap-4 {results.evc ? 'lg:grid-cols-6' : 'lg:grid-cols-5'}">
@@ -1535,11 +925,11 @@
         <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between">
           <div>
             <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Incremental NPV Range</span>
-            <CardTitle class="text-base font-black mt-2 block {results.npv >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
+            <CardTitle class="text-base font-black mt-2 block {npvColorClass}">
               {#if results.npv_lower !== undefined && results.npv_lower !== results.npv}
-                {formatCurrency(results.npv_lower, appState.currency, 0)} – {formatCurrency(results.npv, appState.currency, 0)}
+                {formatCurrency(results.npv_lower, appState.currency, 0, true)} do {formatCurrency(results.npv, appState.currency, 0, true)}
               {:else}
-                {formatCurrency(results.npv, appState.currency, 0)}
+                {formatCurrency(results.npv, appState.currency, 0, true)}
               {/if}
             </CardTitle>
           </div>
@@ -1589,9 +979,9 @@
         <Card class="glass border glass-glow [--glow-color:var(--color-emerald-500)] select-none p-4 flex flex-col justify-between col-span-2 lg:col-span-1">
           <div>
             <span class="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Profitability Index (PI) Range</span>
-            <span class="text-sm font-black mt-2 block {results.profitability_index >= 1.0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}">
+            <span class="text-sm font-black mt-2 block {piColorClass}">
               {#if results.profitability_index_lower !== undefined && results.profitability_index_lower !== results.profitability_index}
-                {formatPI(results.profitability_index_lower)} – {formatPI(results.profitability_index)}
+                {formatPI(results.profitability_index_lower)} do {formatPI(results.profitability_index)}
               {:else}
                 {formatPI(results.profitability_index)}
               {/if}
@@ -1713,11 +1103,11 @@
         </Card>
       {/if}
 
-    <!-- Charts & Offering breakdown -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <!-- Main Visual Projections -->
-      <Card class="border-border lg:col-span-2 glass border flex flex-col justify-between">
-        <CardHeader class="pb-2 border-b border-border glass-inset flex flex-row items-center justify-between">
+    <!-- Forecast Visualization (full-width; configuration lives in the side Sheet) -->
+    <Sheet.Root bind:open={configSheetOpen}>
+      <Card class="border-border glass border flex flex-col justify-between">
+        <CardHeader class="gap-3 pb-3 border-b border-border glass-inset flex flex-col">
+          <div class="flex flex-row items-center justify-between">
           <div>
             <CardTitle class="text-base font-bold text-foreground">Forecast Timeline Visualization</CardTitle>
             <CardDescription class="text-xs">Interactive cashflow and customer graphs.</CardDescription>
@@ -1744,31 +1134,45 @@
               Adoption
             </button>
             <button
-              class="px-2 py-1 rounded transition {activeTab === 'value_split' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-              onclick={() => activeTab = 'value_split'}
-            >
-              Value Split
-            </button>
-            <button
               class="px-2 py-1 rounded transition {activeTab === 'pricing_corridor' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
               onclick={() => activeTab = 'pricing_corridor'}
             >
               Pricing Corridor
             </button>
-            <button
-              class="px-2 py-1 rounded transition {activeTab === 'margin_waterfall' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-              onclick={() => activeTab = 'margin_waterfall'}
-            >
-              Margin Waterfall
-            </button>
-            {#if (driverProfile === 'interaction_only' || driverProfile === 'mixed') && data.agentDeflectionCorridor && data.agentDeflectionCorridor.points.length > 0}
-              <button
-                class="px-2 py-1 rounded transition {activeTab === 'cost_to_serve' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}"
-                onclick={() => activeTab = 'cost_to_serve'}
-              >
-                Cost-to-Serve
-              </button>
-            {/if}
+          </div>
+          </div>
+
+          <!-- Configuration summary strip -->
+          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pt-3 border-t border-border/40">
+            <div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+              <div>
+                <span class="block text-[10px] uppercase font-bold tracking-wider text-muted-foreground/70">Horizon</span>
+                <span class="font-mono text-sm font-bold text-foreground">{scenario.projection_months} mo</span>
+              </div>
+              <div class="h-6 w-px bg-border/60"></div>
+              <div>
+                <span class="block text-[10px] uppercase font-bold tracking-wider text-muted-foreground/70">Discount Rate</span>
+                <span class="font-mono text-sm font-bold text-primary">{formatPercent(scenario.discount_rate)}</span>
+              </div>
+              <div class="h-6 w-px bg-border/60"></div>
+              <div>
+                <span class="block text-[10px] uppercase font-bold tracking-wider text-muted-foreground/70">Scope</span>
+                <span class="text-sm font-bold text-foreground">{scopeLabel}</span>
+              </div>
+              {#if overrideCount > 0}
+                <Badge variant="outline" class="text-[10px] px-1.5 py-0 uppercase tracking-wider font-extrabold bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+                  <TrendingUp class="h-3 w-3 mr-1" />{overrideCount} Override{overrideCount === 1 ? '' : 's'}
+                </Badge>
+              {/if}
+            </div>
+
+            <Sheet.Trigger>
+              {#snippet child({ props })}
+                <Button {...props} variant="outline" size="sm">
+                  <SlidersHorizontal class="h-3.5 w-3.5 mr-1.5" /> Configuration
+                </Button>
+              {/snippet}
+            </Sheet.Trigger>
           </div>
         </CardHeader>
 
@@ -1778,81 +1182,7 @@
               No cashflow data available.
             </div>
           {:else}
-            {#if activeTab === 'value_split'}
-              <div class="space-y-6">
-                {#if !scenario.evc_nba_annual_value}
-                  <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
-                    <DollarSign class="h-10 w-10 text-muted-foreground/50" />
-                    <span>EVC parameters are not configured for this scenario.</span>
-                    <a href="/scenarios/{scenario.id}/edit" class="text-xs text-primary underline hover:text-primary/80">Edit scenario to configure Next Best Alternative & EVC</a>
-                  </div>
-                {:else}
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div bind:this={valuePieElement} class="h-[280px] w-full"></div>
-                    <div bind:this={captureCurveElement} class="h-[280px] w-full"></div>
-                  </div>
-
-                  <!-- Dual-Lens View -->
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-border/40 pt-4 text-xs select-none">
-                    <!-- Customer Lens -->
-                    <div class="p-4 rounded-xl bg-blue-500/5 border border-blue-500/10 space-y-2.5">
-                      <h4 class="font-bold text-blue-600 dark:text-blue-400 flex items-center uppercase tracking-wider text-[10px]">
-                        <Info class="h-3.5 w-3.5 mr-1" /> Customer Lens (Buying Driver)
-                      </h4>
-                      <p class="text-muted-foreground text-[11px]">
-                        How the customer evaluates the purchase compared to doing nothing (Next Best Alternative).
-                      </p>
-                      <div class="grid grid-cols-2 gap-2 font-mono text-[11px] pt-1">
-                        <div class="flex justify-between border-b border-border/40 pb-1">
-                          <span class="text-muted-foreground">EVC (Annualized):</span>
-                          <span class="font-semibold text-foreground">{formatCurrency((results?.evc?.evc ?? 0) * 12, appState.currency, 0)}</span>
-                        </div>
-                        <div class="flex justify-between border-b border-border/40 pb-1">
-                          <span class="text-muted-foreground">EVC (Monthly/User):</span>
-                          <span class="font-semibold text-foreground">{formatCurrency(results?.evc?.evc ?? 0, appState.currency, 0)}</span>
-                        </div>
-                        <div class="flex justify-between border-b border-border/40 pb-1 col-span-2 font-semibold">
-                          <span class="text-muted-foreground">Customer Surplus (Target):</span>
-                          <span class="text-emerald-600 dark:text-emerald-400">
-                            {formatCurrency(results?.evc?.customerSurplusPerUserMonth ?? 0, appState.currency, 0)}/mo ({results?.evc?.netCreatedValue ? Math.round(((results?.evc?.customerSurplusPerUserMonth ?? 0) / results?.evc?.netCreatedValue) * 100) : 0}% share)
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Vendor Lens -->
-                    <div class="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10 space-y-2.5">
-                      <h4 class="font-bold text-emerald-600 dark:text-emerald-400 flex items-center uppercase tracking-wider text-[10px]">
-                        <TrendingUp class="h-3.5 w-3.5 mr-1" /> Vendor Lens (Pricing Driver)
-                      </h4>
-                      <p class="text-muted-foreground text-[11px]">
-                        How pricing captures value and impacts overall cohort NPV considering adoption elasticity.
-                      </p>
-                      <div class="grid grid-cols-2 gap-2 font-mono text-[11px] pt-1">
-                        <div class="flex justify-between border-b border-border/40 pb-1">
-                          <span class="text-muted-foreground">Optimal Capture Share:</span>
-                          <span class="font-semibold text-foreground">
-                            {data.captureCurve ? Math.round(data.captureCurve.optimalCapture * 100) : 0}%
-                          </span>
-                        </div>
-                        <div class="flex justify-between border-b border-border/40 pb-1">
-                          <span class="text-muted-foreground">Optimal Overlay Price:</span>
-                          <span class="font-semibold text-primary">
-                            {formatCurrency(data.captureCurve?.optimalOverlayPrice ?? 0, appState.currency, 0)}/mo
-                          </span>
-                        </div>
-                        <div class="flex justify-between border-b border-border/40 pb-1 col-span-2 font-semibold">
-                          <span class="text-muted-foreground">Elasticity Sensitivity Band:</span>
-                          <span class="text-foreground">
-                            {data.captureCurve?.epsilonBand ? Math.round(data.captureCurve.epsilonBand.low * 100) : 0}% &ndash; {data.captureCurve?.epsilonBand ? Math.round(data.captureCurve.epsilonBand.high * 100) : 0}% capture
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                {/if}
-              </div>
-            {:else if activeTab === 'pricing_corridor'}
+            {#if activeTab === 'pricing_corridor'}
               <div class="space-y-6">
                 {#if !scenario.evc_nba_annual_value}
                   <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
@@ -1885,45 +1215,6 @@
                   {/if}
                 {/if}
               </div>
-            {:else if activeTab === 'margin_waterfall'}
-              <div class="space-y-6">
-                {#if !scenario.evc_nba_annual_value}
-                  <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
-                    <DollarSign class="h-10 w-10 text-muted-foreground/50" />
-                    <span>EVC parameters are not configured for this scenario.</span>
-                    <a href="/scenarios/{scenario.id}/edit" class="text-xs text-primary underline hover:text-primary/80">Edit scenario to configure Next Best Alternative & EVC</a>
-                  </div>
-                {:else}
-                  {#if !data.pocketMarginWaterfall || data.pocketMarginWaterfall.steps.length === 0}
-                    <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
-                      <Info class="h-10 w-10 text-muted-foreground/50" />
-                      <span>Failed to resolve Pocket-Margin Waterfall data.</span>
-                    </div>
-                  {:else}
-                    <div bind:this={marginWaterfallElement} class="h-[360px] w-full"></div>
-                  {/if}
-                {/if}
-              </div>
-            {:else if activeTab === 'cost_to_serve'}
-              <div class="space-y-6">
-                {#if !data.agentDeflectionCorridor || data.agentDeflectionCorridor.points.length === 0}
-                  <div class="h-[300px] flex flex-col items-center justify-center text-sm text-muted-foreground italic space-y-2">
-                    <Info class="h-10 w-10 text-muted-foreground/50" />
-                    <span>Cost-to-Serve Corridor requires an agent-archetype service with a per-customer interaction driver.</span>
-                  </div>
-                {:else}
-                  <div bind:this={costToServeElement} class="h-[360px] w-full"></div>
-                  {#if data.agentDeflectionCorridor.hasBreak}
-                    <div class="p-3.5 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive flex items-start space-x-2">
-                      <AlertTriangle class="h-4 w-4 mt-0.5 flex-shrink-0" />
-                      <div>
-                        <span class="font-bold block">Cost-to-Serve Break Detected!</span>
-                        <span class="text-muted-foreground">For at least one cohort, AI cost-to-serve plus failed-deflection cost exceeds the displaced-labor value avoided, leading to a negative deflection margin.</span>
-                      </div>
-                    </div>
-                  {/if}
-                {/if}
-              </div>
             {:else}
               <div bind:this={chartElement} class="h-[360px] w-full"></div>
             {/if}
@@ -1931,175 +1222,22 @@
         </CardContent>
       </Card>
 
-      <!-- Sideline configuration breakdown -->
-      <Card class="border-border glass border flex flex-col justify-between">
-        <CardHeader class="pb-3 border-b border-border glass-inset select-none">
-          <CardTitle class="text-base font-bold text-foreground">Scenario Configuration</CardTitle>
-          <CardDescription>Setup details, rollout dates, and expenses.</CardDescription>
-        </CardHeader>
+      <Sheet.Content side="right" class="glass-strong flex flex-col gap-0 p-0 data-[side=right]:sm:max-w-lg">
+        <Sheet.Header class="glass-inset border-b border-border/60 px-6 py-4 pr-12">
+          <Sheet.Title class="text-base font-bold">Scenario Configuration</Sheet.Title>
+          <Sheet.Description>Setup details, rollout dates, and expenses.</Sheet.Description>
+        </Sheet.Header>
 
-        <CardContent class="py-4 space-y-5 overflow-y-auto max-h-[390px] select-none text-xs">
-          <!-- Horizon -->
-          <div class="grid grid-cols-2 gap-4 bg-muted/40 p-2.5 rounded border border-border/40">
-            <div>
-              <span class="text-muted-foreground font-semibold block text-[10px] uppercase">Horizon</span>
-              <span class="font-mono text-sm font-bold text-foreground mt-0.5 block">{scenario.projection_months} months</span>
-            </div>
-            <div>
-              <span class="text-muted-foreground font-semibold block text-[10px] uppercase">Discount Rate</span>
-              <span class="font-mono text-sm font-bold text-primary mt-0.5 block">{formatPercent(scenario.discount_rate)}</span>
-            </div>
-          </div>
+        <div class="flex-1 min-h-0 overflow-y-auto px-6 py-4 text-xs">
+          <ScenarioConfigurationPanel {scenario} />
+        </div>
 
-          <!-- Target Scope -->
-          <div class="space-y-2">
-            <span class="text-[10px] uppercase font-bold text-muted-foreground/80 flex items-center">
-              <Users2 class="h-3.5 w-3.5 mr-1 text-primary opacity-80" /> Target Audience Scope
-            </span>
-            <div class="pl-4.5 border-l border-border/60 space-y-2 text-muted-foreground font-medium">
-              <div>
-                Scope Type: 
-                <strong class="text-foreground capitalize">
-                  {#if scenario.scope_type === 'all_clients'}
-                    Global Client Base
-                  {:else}
-                    {scenario.scope_type}
-                  {/if}
-                </strong>
-              </div>
-
-              {#if scenario.scope_type === 'verticals' && scenario.scope_verticals && scenario.scope_verticals.length > 0}
-                <div class="text-xs">
-                  <div class="mb-1 text-muted-foreground">Targeted Verticals:</div>
-                  <div class="flex flex-wrap gap-1">
-                    {#each scenario.scope_verticals as v}
-                      <Badge variant="outline" class="glass-inset py-0 text-[10px]">{v.name}</Badge>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-
-              {#if scenario.scope_type === 'cohorts' && scenario.scope_cohorts && scenario.scope_cohorts.length > 0}
-                <div class="text-xs">
-                  <div class="mb-1 text-muted-foreground">Targeted Cohorts:</div>
-                  <div class="flex flex-wrap gap-1">
-                    {#each scenario.scope_cohorts as c}
-                      <Badge variant="outline" class="glass-inset py-0 text-[10px]">{c.name}</Badge>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-
-              {#if scenario.scope_overrides && scenario.scope_overrides.length > 0}
-                {#snippet renderComparison(label: string, baseVal: number | null | undefined, ovVal: number | null | undefined, formatFn: (val: number) => string)}
-                  {#if ovVal !== null && ovVal !== undefined}
-                    <div class="flex justify-between items-center text-[10px] py-1 border-b border-border/10 last:border-b-0">
-                      <span class="text-muted-foreground/85">{label}</span>
-                      <span class="font-mono text-foreground flex items-center">
-                        {#if baseVal !== null && baseVal !== undefined && Math.abs(baseVal - ovVal) > 0.00001}
-                          <span class="opacity-40 line-through mr-1 text-muted-foreground">{formatFn(baseVal)}</span>
-                          <span class="text-amber-500 dark:text-amber-400 font-bold mr-1 text-[9px]">➔</span>
-                        {/if}
-                        <span class="text-foreground font-semibold">{formatFn(ovVal)}</span>
-                      </span>
-                    </div>
-                  {/if}
-                {/snippet}
-
-                <div class="mt-2 text-xs">
-                  <div class="mb-1.5 text-amber-500 font-bold flex items-center select-none text-[10px] uppercase tracking-wider">
-                    <TrendingUp class="h-3.5 w-3.5 mr-1" /> Parameter Overrides Applied
-                  </div>
-                  <div class="space-y-2">
-                    {#each scenario.scope_overrides as ov}
-                      <div class="bg-muted/30 p-2.5 rounded border border-border/40 border-l-2 border-l-amber-500/80 space-y-1.5">
-                        <div class="flex justify-between items-center border-b border-border/45 pb-1 select-none">
-                          <span class="font-bold text-foreground truncate max-w-[170px]" title={ov.target_name}>{ov.target_name}</span>
-                          <Badge variant="outline" class="text-[8px] px-1 py-0 uppercase tracking-wider font-extrabold bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
-                            {ov.target_type === 'all_clients' ? 'Global' : ov.target_type}
-                          </Badge>
-                        </div>
-                        <div class="space-y-0">
-                          {@render renderComparison('ARPU Base', ov.base_values?.arpu_override, ov.arpu_override, (v: number) => formatCurrency(v, appState.currency, 0))}
-                          {@render renderComparison('Monthly Churn', ov.base_values?.monthly_churn_rate, ov.monthly_churn_rate, formatPercent)}
-                          {@render renderComparison('Adoption Rate', ov.base_values?.ai_adoption_rate, ov.ai_adoption_rate, formatPercent)}
-                          {@render renderComparison('New Customers', ov.base_values?.monthly_acquisition, ov.monthly_acquisition, (v: number) => `${formatNumber(v)}/mo`)}
-                          {@render renderComparison('Acquisition Growth', ov.base_values?.acquisition_growth_rate, ov.acquisition_growth_rate, formatPercent)}
-                          {@render renderComparison('Retention Floor', ov.base_values?.retention_floor, ov.retention_floor, formatPercent)}
-                          {@render renderComparison('Expansion Rate', ov.base_values?.expansion_rate, ov.expansion_rate, formatPercent)}
-                          {@render renderComparison('AI ARPU Uplift ($)', ov.base_values?.arpu_uplift, ov.arpu_uplift, (v: number) => formatCurrency(v, appState.currency, 0))}
-                          {@render renderComparison('AI ARPU Uplift (%)', ov.base_values?.arpu_uplift_percent, ov.arpu_uplift_percent, formatPercent)}
-                          {@render renderComparison('AI Churn Reduction', ov.base_values?.churn_reduction, ov.churn_reduction, formatPercent)}
-                          {@render renderComparison('AI Acquisition Uplift', ov.base_values?.acquisition_uplift, ov.acquisition_uplift, formatPercent)}
-                          {@render renderComparison('Gross Margin', ov.base_values?.gross_margin, ov.gross_margin, formatPercent)}
-                          {@render renderComparison('Adoption Ramp', ov.base_values?.adoption_ramp_months, ov.adoption_ramp_months, (v: number) => `${v} mo`)}
-                        </div>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-            </div>
-          </div>
-
-          <!-- Rollout scheduler items -->
-          <div class="space-y-2">
-            <span class="text-[10px] uppercase font-bold text-muted-foreground/80 flex items-center">
-              <BrainCircuit class="h-3.5 w-3.5 mr-1 text-primary opacity-80" /> Offerings Rollout Month
-            </span>
-            <div class="pl-4.5 border-l border-border/60 space-y-1 text-muted-foreground font-medium">
-              {#if (!scenario.plans || scenario.plans.length === 0) && (!scenario.packs || scenario.packs.length === 0) && (!scenario.services || scenario.services.length === 0)}
-                <div class="italic">No offerings rolled out.</div>
-              {:else}
-                {#each scenario.plans || [] as plan}
-                  <div class="flex justify-between items-center">
-                    <span>Plan: <strong>{plan.name}</strong></span>
-                    <Badge variant="outline" class="font-mono glass-inset py-0 px-1.5 text-[10px]">M{plan.rollout_month}</Badge>
-                  </div>
-                {/each}
-                {#each scenario.packs || [] as pack}
-                  <div class="flex justify-between items-center">
-                    <span>Pack: <strong>{pack.name}</strong></span>
-                    <Badge variant="outline" class="font-mono glass-inset py-0 px-1.5 text-[10px]">M{pack.rollout_month}</Badge>
-                  </div>
-                {/each}
-                {#each scenario.services || [] as service}
-                  <div class="flex justify-between items-center">
-                    <span>Service: <strong>{service.name}</strong></span>
-                    <Badge variant="outline" class="font-mono glass-inset py-0 px-1.5 text-[10px]">M{service.rollout_month}</Badge>
-                  </div>
-                {/each}
-              {/if}
-            </div>
-          </div>
-
-          <!-- Capex / Opex itemized -->
-          <div class="space-y-2">
-            <span class="text-[10px] uppercase font-bold text-muted-foreground/80 flex items-center">
-              <Wallet class="h-3.5 w-3.5 mr-1 text-primary opacity-80" /> Capital & Operating Expenses
-            </span>
-            <div class="pl-4.5 border-l border-border/60 space-y-1 text-muted-foreground font-medium">
-              {#if !scenario.costs || scenario.costs.length === 0}
-                <div class="italic">No expense items mapped.</div>
-              {:else}
-                {#each scenario.costs as cost}
-                  <div class="flex justify-between items-center">
-                    <span class="truncate pr-2">{cost.name} ({cost.category})</span>
-                    <span class="font-mono text-rose-600 dark:text-rose-400 font-bold shrink-0">{formatCurrency(cost.amount, cost.currency || 'USD', 0)}</span>
-                  </div>
-                {/each}
-              {/if}
-            </div>
-          </div>
-        </CardContent>
-
-        <!-- Help Info -->
-        <CardFooter class="border-t border-border glass-inset py-3 select-none flex items-start space-x-2 text-[10px] text-muted-foreground">
+        <Sheet.Footer class="glass-inset border-t border-border/60 flex-row items-start gap-2 px-6 py-3 text-[10px] text-muted-foreground">
           <Info class="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
           <p>Discounting is calculated on a monthly compounding basis. Projections assume linear rollout starting points matching the specified month offsets.</p>
-        </CardFooter>
-      </Card>
-    </div>
+        </Sheet.Footer>
+      </Sheet.Content>
+    </Sheet.Root>
     </div>
 
     {#if perspectives}
