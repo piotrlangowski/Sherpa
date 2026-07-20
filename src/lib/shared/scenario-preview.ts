@@ -1,4 +1,4 @@
-import type { CohortConfig, Scenario, ScopeOverride, Service, Pack, Plan, CostItem, ServiceStatus, Currency, CostCategory, CostFrequency, ModelingType, RevenueCarrier, RevenueBridge, ExpansionConfig } from './types.js';
+import type { CohortConfig, Scenario, ScopeOverride, Service, Pack, Plan, CostItem, ServiceStatus, Currency, CostCategory, CostFrequency, ModelingType, RevenueCarrier, RevenueBridge, ExpansionConfig, MonetizationConfig, PoolTier, PoolBurnRate } from './types.js';
 import { applyScopeOverrides } from './financial-math.js';
 
 /**
@@ -44,6 +44,7 @@ interface DraftFormState {
   evc_capture_floor_pct?: number | null;
   price_from_evc?: boolean;
   adoption_elasticity?: number;
+  arpu_uplift_includes_monetization?: boolean;
 }
 
 
@@ -65,12 +66,20 @@ export function buildDraftScenario(
   allPacks: Pack[],
   allPlans: Plan[],
   allCosts: CostItem[],
-  expansionVertical?: { tam_users?: number; sam_users?: number; som_users?: number }
+  expansionVertical?: { tam_users?: number; sam_users?: number; som_users?: number },
+  seatsPlans?: Record<string, number>,
+  // Effective monetization per entity key (`service:{id}` / `pack:{id}` / `plan:{id}`) — catalog
+  // merged with scenario/buffered overrides. Only SERVICE-level configs are attached here:
+  // pack/plan inheritance needs the pack_services/plan_services membership joins, which are not
+  // shipped to the client. Those inherited configs appear once the scenario is saved.
+  monetizationByEntity?: Record<string, MonetizationConfig | null>,
+  poolTier?: (PoolTier & { burn_rates?: PoolBurnRate[] }) | null
 ): Omit<Scenario, 'created_at' | 'updated_at'> {
   const services = Object.keys(selectedServices)
     .filter(id => selectedServices[id])
     .map(id => {
       const s = allServices.find(srv => srv.id === id);
+      const effectiveMon = monetizationByEntity?.[`service:${id}`];
       return {
         ...(s || {
           id,
@@ -83,6 +92,7 @@ export function buildDraftScenario(
           fixed_cost_per_month: 0,
           fixed_cost_currency: 'USD' as Currency
         }),
+        ...(effectiveMon && effectiveMon.monetization_type !== 'none' ? { monetization: effectiveMon } : {}),
         rollout_month: rolloutServices[id] || 0
       };
     });
@@ -103,7 +113,8 @@ export function buildDraftScenario(
       const pl = allPlans.find(p => p.id === id);
       return {
         ...(pl || { id, name: '', base_price: 0, billing_frequency: 'monthly', features: '' }),
-        rollout_month: rolloutPlans[id] || 0
+        rollout_month: rolloutPlans[id] || 0,
+        seats: seatsPlans?.[id] ?? 0
       };
     });
 
@@ -156,6 +167,10 @@ export function buildDraftScenario(
     evc_capture_floor_pct: formState.evc_capture_floor_pct ?? null,
     price_from_evc: formState.price_from_evc ?? false,
     adoption_elasticity: formState.adoption_elasticity ?? 0,
+    arpu_uplift_includes_monetization: formState.arpu_uplift_includes_monetization ?? true,
+    pool_tier_id: poolTier?.id ?? null,
+    pool_tier: poolTier ?? undefined,
+    pool_burn_rates: poolTier?.burn_rates ?? [],
     expansion,
     scope_cohorts: resolvedCohorts,
     scope_overrides: overrides,

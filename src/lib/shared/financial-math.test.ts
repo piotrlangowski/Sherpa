@@ -31,7 +31,8 @@ import {
   DEFAULT_AGENT_MARGIN_THRESHOLD,
   HYBRID_OVERAGE_MARKUP,
   suggestEvcMultipliers,
-  buildAgentDeflectionCorridor
+  buildAgentDeflectionCorridor,
+  resolveCompositeComponents
 } from './financial-math.js';
 import type { Provider, Scenario, CohortConfig, CostItem, Service, ScopeOverride, MonetizationConfig, Settings, Plan, EvcResult, CreditSettings } from './types.js';
 
@@ -3698,6 +3699,152 @@ describe('ADR 0012 amendment — two knobs', () => {
       const resultsRamp6 = calculateScenario(scenarioRamp6, [rampProvider]);
 
       expect(resultsNoRamp.npvUpper).toBeGreaterThan(resultsRamp6.npvUpper);
+    });
+  });
+});
+
+describe('ADR 0014 — composite carrier engine ↔ breakdown integrity', () => {
+  const provider: Provider = {
+    id: 'p1', name: 'Prov', model_name: 'm', input_price: 0, output_price: 0,
+    is_predefined: true, currency: 'USD', input_tokens_per_credit: 1000000, output_tokens_per_credit: 333333, updated_at: ''
+  };
+
+  // base_arpu = 0 keeps the cohort economy silent so stream bookings are directly assertable.
+  const cohort: CohortConfig = {
+    id: 'c1', name: 'Cohort', current_users: 1000, monthly_acquisition: 0,
+    acquisition_growth_rate: 0, monthly_churn_rate: 0, retention_floor: 0,
+    monthly_expansion_rate: 0, ai_adoption_rate: 1.0, base_arpu: 0
+  };
+
+  function makeAddonAgent(): Service & { rollout_month: number } {
+    return {
+      id: 's_agent', name: 'Support Agent', status: 'planned', service_type: 'agent',
+      interaction_driver_type: 'flat', monthly_volume: 10000, volume_growth_rate: 0,
+      interactions_per_customer_month: 0, fully_loaded_cost_per_fte_month: 5000,
+      productive_hours_per_fte_month: 100, average_handle_time_seconds: 360,
+      baseline_fte: 0, staffing_realization_lag_months: 0,
+      containment_rate: 1.0, containment_start_rate: 1.0, containment_ramp_months: 0,
+      escalation_rate: 0, failed_deflection_penalty: 0, churn_rate_uplift: 0,
+      rollout_month: 0, provider_id: 'p1',
+      avg_input_tokens: 0, avg_output_tokens: 0, avg_requests_per_user_month: 0,
+      monetization: { monetization_type: 'addon', addon_monthly_fee: 10 }
+    };
+  }
+
+  describe('pool membership without a billable tier (engine must match resolveCompositeComponents)', () => {
+    const scenario: Scenario = {
+      id: 'sc_comp', name: 'C', projection_months: 3, discount_rate: 0.10, scope_type: 'cohorts',
+      modeling_type: 'composite', revenue_carrier: 'composite',
+      scope_cohorts: [cohort], services: [makeAddonAgent()], costs: [],
+      // Burn rates present but NO pool_tier attached — the pool cannot bill.
+      pool_burn_rates: [{ id: 'br1', tier_id: 'ghost', service_id: 's_agent', burn_rate: 1 }]
+    };
+
+    it('classifies the agent monetization as booking (a pool without a tier cannot bill)', () => {
+      const res = resolveCompositeComponents(scenario);
+      expect(res.pool.role).toBe('empty');
+      expect(res.agentMonetization.role).toBe('books');
+    });
+
+    it('books the per-service addon revenue the breakdown claims', () => {
+      const results = calculateScenario(scenario, [provider]);
+      const m0 = results.timeline[0];
+      // addon fee (10) × active AI users (1000); the monetized agent's labor savings stay memo-only.
+      expect(m0.revenue).toBeCloseTo(10000, 1);
+      expect(results.compositeBreakdown!.agentMonetization.revenuePv).toBeGreaterThan(0);
+    });
+
+    it('pool-bills the same service once a tier is attached (tier fee replaces per-service revenue)', () => {
+      const withTier: Scenario = {
+        ...scenario,
+        pool_tier_id: 'tier1',
+        pool_tier: { id: 'tier1', name: 'T', monthly_fee: 3000, credit_pool_size: 1e9, capture: 0.5 }
+      };
+      const res = resolveCompositeComponents(withTier);
+      expect(res.pool.role).toBe('books');
+      expect(res.agentMonetization.role).toBe('pool_billed');
+      const results = calculateScenario(withTier, [provider]);
+      expect(results.timeline[0].revenue).toBeCloseTo(3000, 1);
+    });
+  });
+
+  describe('credit-pool overage banding under an expansion curve', () => {
+    function makePoolScenario(creditPoolSize: number): Scenario {
+      const copilotMember: Service & { rollout_month: number } = {
+        id: 's_cop', name: 'Copilot', status: 'planned', service_type: 'copilot',
+        provider_id: 'p1', avg_input_tokens: 0, avg_output_tokens: 0,
+        avg_requests_per_user_month: 10, fixed_cost_per_month: 0,
+        value_per_outcome: 1,
+        monetization: { monetization_type: 'usage' },
+        rollout_month: 0
+      };
+      return {
+        id: 'sc_pool', name: 'P', projection_months: 24, discount_rate: 0.10, scope_type: 'cohorts',
+        modeling_type: 'appraisal', revenue_carrier: 'pool',
+        scope_cohorts: [{ ...cohort, ai_adoption_rate: 0 }],
+        services: [copilotMember], costs: [],
+        expansion_vertical_id: 'v1',
+        expansion: {
+          expansion_vertical_id: 'v1', penetration_baseline_months: 6,
+          ai_acceleration_factor: 1.0, ai_som_lift_pct: 1.0,
+          tam_users: 10000, sam_users: 5000, som_users: 1000
+        },
+        pool_tier_id: 'tier1',
+        pool_tier: { id: 'tier1', name: 'T', monthly_fee: 1000, credit_pool_size: creditPoolSize, capture: 0.5, fee_basis: 'flat', pool_size_basis: 'absolute' },
+        pool_burn_rates: [{ id: 'br1', tier_id: 'tier1', service_id: 's_cop', burn_rate: 1 }]
+      };
+    }
+
+    it('books overage in the upper band while the lower band stays within its allowance', () => {
+      // Saturated expansion: upper ≈ 2000 users × 10 credits = 20k > 15k allowance (overage);
+      // lower ≈ 1000 users × 10 credits = 10k < 15k (no overage).
+      const withOverage = calculateScenario(makePoolScenario(15000), [provider]);
+      const unlimited = calculateScenario(makePoolScenario(1e9), [provider]);
+      const last = withOverage.timeline.length - 1;
+
+      expect(withOverage.timeline[last].poolOverageRevenue).toBeGreaterThan(0);
+      expect(withOverage.timeline[last].cumulativeCashFlow).toBeGreaterThan(unlimited.timeline[last].cumulativeCashFlow);
+
+      // The lower band never exceeds its allowance, so it must be identical to the unlimited pool —
+      // it must NOT inherit the upper band's overage.
+      expect(withOverage.timeline[last].cumulativeCashFlowLower).toBeCloseTo(unlimited.timeline[last].cumulativeCashFlowLower!, 1);
+    });
+  });
+
+  describe('copilot stream attribution excludes unbooked plan seats', () => {
+    const seatPlan = { id: 'pl1', name: 'Pro', rollout_month: 0, base_price: 50, seats: 100 };
+
+    function makeSeatScenario(overrides: Partial<Scenario>): Scenario {
+      return {
+        id: 'sc_seats', name: 'S', projection_months: 3, discount_rate: 0.10, scope_type: 'cohorts',
+        scope_cohorts: [cohort], services: [], costs: [], plans: [seatPlan],
+        modeling_type: 'incremental', revenue_carrier: 'cohort',
+        ...overrides
+      };
+    }
+
+    it('cohort carrier without a bridge keeps seats as perspective data — no copilot revenue', () => {
+      const m0 = calculateScenario(makeSeatScenario({}), [provider]).timeline[0];
+      expect(m0.revenue).toBeCloseTo(0, 1);
+      expect(m0.copilotRevenue).toBeCloseTo(0, 1);
+    });
+
+    it('separate_market bridge books the seats and attributes them to the copilot stream', () => {
+      const m0 = calculateScenario(
+        makeSeatScenario({ modeling_type: 'appraisal', revenue_bridge: 'separate_market' }),
+        [provider]
+      ).timeline[0];
+      expect(m0.revenue).toBeCloseTo(5000, 1);
+      expect(m0.copilotRevenue).toBeCloseTo(5000, 1);
+    });
+
+    it('composite upsell fold suppresses seat revenue in BOTH the P&L and the copilot stream', () => {
+      const m0 = calculateScenario(
+        makeSeatScenario({ modeling_type: 'composite', revenue_carrier: 'composite', revenue_bridge: 'upsell_on_cohort' }),
+        [provider]
+      ).timeline[0];
+      expect(m0.revenue).toBeCloseTo(0, 1);
+      expect(m0.copilotRevenue).toBeCloseTo(0, 1);
     });
   });
 });

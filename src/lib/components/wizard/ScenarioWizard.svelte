@@ -422,7 +422,8 @@
         evc_capture_target_pct,
         evc_capture_floor_pct,
         price_from_evc,
-        adoption_elasticity
+        adoption_elasticity,
+        arpu_uplift_includes_monetization: arpuUpliftIncludesMonetization
       },
       resolvedCohortsClient,
       formattedOverrides as any[],
@@ -437,7 +438,13 @@
       data.packs,
       data.plans,
       data.costs,
-      currentSelectedVerticalObj
+      currentSelectedVerticalObj,
+      seatsPlans,
+      // Effective monetization for the preview: catalog < saved scenario overrides < in-wizard buffer.
+      { ...(data.monetizationCatalog ?? {}), ...(data.monetizationOverrides ?? {}), ...bufferedMonetizationConfigs },
+      (resolvedCarrier === 'pool' || resolvedCarrier === 'composite')
+        ? ((data.poolTiers ?? []).find((tier: any) => tier.id === poolTierId) ?? null)
+        : null
     );
   });
 

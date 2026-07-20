@@ -31,7 +31,12 @@ export const load: PageServerLoad = async ({ params }) => {
   const costs = costsRepository.getAll();
   const providers = providersRepository.getAll();
   const settings = settingsRepository.get();
-  const poolTiers = poolTiersRepository.getAll();
+  // Burn rates ride along so the wizard's client-side preview can bill the pool
+  // exactly like the saved engine does (calculateScenario reads pool_burn_rates).
+  const poolTiers = poolTiersRepository.getAll().map(t => ({
+    ...t,
+    burn_rates: poolTiersRepository.getBurnRates(t.id)
+  }));
 
   // Monetization: catalog configs (all) + this scenario's overrides, keyed `${type}:${id}`.
   const monetizationCatalog = Object.fromEntries(monetizationRepository.getCatalogMap());

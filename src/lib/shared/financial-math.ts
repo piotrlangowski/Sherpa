@@ -562,7 +562,10 @@ export function resolveCompositeComponents(scenario: Scenario): CompositeCompone
   const bridge = scenario.revenue_bridge;
   const includesMon = scenario.arpu_uplift_includes_monetization ?? true;
   const poolServiceIds = new Set((scenario.pool_burn_rates ?? []).map(br => br.service_id));
-  const hasPool = !!scenario.pool_tier_id;
+  // Keyed on the tier OBJECT, not the id — the engine's billing block only runs when the tier
+  // is attached, so classifying roles off the bare id would let the breakdown claim pool/pool_billed
+  // revenue the calculation never books (e.g. a tier deleted after the scenario saved).
+  const hasPool = !!scenario.pool_tier;
 
   const hasCopilotMon = (scenario.services ?? []).some(s => s.service_type === 'copilot' && s.monetization && s.monetization.monetization_type !== 'none' && s.monetization.monetization_type !== 'outcome');
   const hasAgentMon = (scenario.services ?? []).some(s => s.service_type === 'agent' && s.monetization && s.monetization.monetization_type !== 'none' && s.monetization.monetization_type !== 'outcome');
@@ -1644,6 +1647,13 @@ export function calculateScenario(
 
   // Credit pool (ADR 0010) — map of service -> credits burned per activity unit.
   const poolBurnRateMap = new Map((scenario.pool_burn_rates ?? []).map(br => [br.service_id, br.burn_rate]));
+  // A pool only bills when its tier object is attached (the billing block below reads
+  // scenario.pool_tier). Pool MEMBERSHIP alone must therefore not suppress a service's own
+  // monetization — otherwise burn rates without a billable tier (pure-API callers, or a tier
+  // deleted after save) drop that revenue from both the pool and the per-service stream, and
+  // the engine would disagree with resolveCompositeComponents' role classification.
+  const poolBillingActive = !!scenario.pool_tier;
+  const inActivePool = (serviceId: string) => poolBillingActive && poolBurnRateMap.has(serviceId);
 
   const timeline: MonthlyBreakdown[] = [];
   let cumulativeCashFlow = 0;
@@ -1794,9 +1804,9 @@ export function calculateScenario(
       const activeServices = (scenario.services ?? [])
         .filter(s => t >= (s.rollout_month ?? 0))
         .filter(s => {
-          if (carrier === 'pool' && poolBurnRateMap.has(s.id)) return false;
+          if (carrier === 'pool' && inActivePool(s.id)) return false;
           if (carrier === 'composite') {
-            if (poolBurnRateMap.has(s.id)) return false;
+            if (inActivePool(s.id)) return false;
             if (s.service_type === 'copilot' && (scenario.arpu_uplift_includes_monetization ?? true) !== false) return false;
           }
           return true;
@@ -1835,10 +1845,10 @@ export function calculateScenario(
 
     const copilotNonPoolServices = (scenario.services ?? [])
       .filter(s => t >= (s.rollout_month ?? 0))
-      .filter(s => s.service_type === 'copilot' && !poolBurnRateMap.has(s.id));
+      .filter(s => s.service_type === 'copilot' && !inActivePool(s.id));
     const agentNonPoolServices = (scenario.services ?? [])
       .filter(s => t >= (s.rollout_month ?? 0))
-      .filter(s => s.service_type === 'agent' && !poolBurnRateMap.has(s.id));
+      .filter(s => s.service_type === 'agent' && !inActivePool(s.id));
 
     let copilotMonUpper = 0;
     let agentMonUpper = 0;
@@ -1872,6 +1882,10 @@ export function calculateScenario(
         lowerRevenue = monetizationLower.totalRevenue;
         break;
       case 'composite':
+        // ADR 0014 — sums the streams that "book" per resolveCompositeComponents. The margin
+        // basis is intentionally mixed: cohort uplift books at contribution margin (its serving
+        // costs are not modeled explicitly), while plan seats / service monetization / pool fees
+        // book gross with their direct costs carried explicitly (token + fixed + opex/capex).
         upperRevenue = upperMarginSum + (scenario.revenue_bridge === 'separate_market' ? planSubscriptionRevenueUpper : 0) + monetizationUpper.totalRevenue;
         lowerRevenue = lowerMarginSum + (scenario.revenue_bridge === 'separate_market' ? planSubscriptionRevenueLower : 0) + monetizationLower.totalRevenue;
         break;
@@ -2224,9 +2238,13 @@ export function calculateScenario(
     // copilot stream margin = null. The copilot margin guardrail (e.g. 78%) is inactive in this case.
     const agentRevenueUpper = monthLaborSavingsCash + monthAgentOutcomeRevenueUpper;
     // Plan-seat subscription revenue is the seat economy (ADR 0009 Phase A: two-track hybrid
-    // billing) — attributed to copilot whenever it's booked above (carrier 'plan', or 'cohort'
-    // with a 'separate_market' bridge). Zero in every other case, so this is always safe to add.
-    const copilotRevenueUpper = monthCopilotOutcomeRevenueUpper + planSubscriptionRevenueUpper;
+    // billing) — attribute it to the copilot stream ONLY when the carrier switch above actually
+    // booked it. Seats retained as perspective data (cohort carrier without a separate_market
+    // bridge, composite upsell fold, feature/pack/pool carriers) must not inflate the copilot
+    // margin guardrail with revenue the P&L never books.
+    const planSeatsBooked = carrier === 'plan'
+      || ((carrier === 'cohort' || carrier === 'composite') && scenario.revenue_bridge === 'separate_market');
+    const copilotRevenueUpper = monthCopilotOutcomeRevenueUpper + (planSeatsBooked ? planSubscriptionRevenueUpper : 0);
     const agentCogs = monthAgentTokenCosts + monthFailedDeflectionCost;
     const copilotCogs = monthCopilotTokenCosts;
 
@@ -2263,17 +2281,22 @@ export function calculateScenario(
       // (homogeneity is enforced by validateRevenueIntegrity, so any one service's type applies).
       const poolService = (scenario.services ?? []).find(s => poolBurnRateMap.has(s.id));
       const poolBillingType = poolService?.monetization?.monetization_type;
-      let overageRevenueUpper = 0;
-      if (monthPoolConsumedCreditsUpper > effectivePoolUpper) {
-        const overageCreditsUpper = monthPoolConsumedCreditsUpper - effectivePoolUpper;
-        if (poolBillingType === 'hybrid') {
-          overageRevenueUpper = overageCreditsUpper * creditValueUpper * HYBRID_OVERAGE_MARKUP;
-        } else if (poolBillingType === 'usage') {
-          overageRevenueUpper = overageCreditsUpper * creditValueUpper;
-        }
+      // Overage prices BOTH bands at the upper-band credit value (the price is a rate-card
+      // choice, not an attribution question) — but the consumed VOLUME and the allowance are
+      // banded, mirroring how the tier fee is banded via activeAiUsers. Under an expansion
+      // curve the lower band consumes fewer credits and may not exceed its allowance at all.
+      const effectivePoolLower = poolSizeBasis === 'per_member' ? tier.credit_pool_size * activeAiUsersLower : tier.credit_pool_size;
+      const overageFor = (consumedCredits: number, allowance: number): number => {
+        if (consumedCredits <= allowance) return 0;
+        const overageCredits = consumedCredits - allowance;
+        if (poolBillingType === 'hybrid') return overageCredits * creditValueUpper * HYBRID_OVERAGE_MARKUP;
+        if (poolBillingType === 'usage') return overageCredits * creditValueUpper;
         // 'addon' -> hard cap: no overage revenue: the excess activity's COGS (already booked via
         // tokenCostsUpper above) becomes a margin hit, modeling real hard-cap risk.
-      }
+        return 0;
+      };
+      const overageRevenueUpper = overageFor(monthPoolConsumedCreditsUpper, effectivePoolUpper);
+      const overageRevenueLower = overageFor(monthPoolConsumedCreditsLower, effectivePoolLower);
 
       // Tier fee basis (ADR 0012 Decision 1 / Amendment 2026-07)
       // 'flat' (default) books monthly_fee once;
@@ -2289,11 +2312,8 @@ export function calculateScenario(
       monthPoolTierFeeUpper = tierFeeUpper;
       monthPoolOverageRevenueUpper = overageRevenueUpper;
 
-      // Overage pricing only varies the volume by band in principle; reusing the upper-band
-      // credit value for both keeps this in line with how plan/seat figures are also only
-      // banded when an expansion curve is active (none here).
       upperRevenue += tierFeeUpper + overageRevenueUpper;
-      lowerRevenue += tierFeeLower + overageRevenueUpper;
+      lowerRevenue += tierFeeLower + overageRevenueLower;
 
       sumPoolConsumedCreditsUpper += monthPoolConsumedCreditsUpper;
       sumCopilotEvcValue += monthCopilotEvcValueUpper;
